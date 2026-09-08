@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd \"E:/Digi Guru-Sep-2026\" && if [ -n \"$(git status --porcelain)\" ]; then git add -A && git commit -m \"auto: task sync $(date '+%Y-%m-%d %H:%M')\" && git push origin master; fi",
+            "shell": "bash",
+            "timeout": 60,
+            "statusMessage": "Syncing changes to GitHub..."
+          }
+        ]
+      }
+    ]
+  }
+}
