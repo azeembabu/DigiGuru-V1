@@ -30,17 +30,16 @@ body {
   min-height: 100vh;
 }
 
-/* Gradient overlay for text readability and premium feel */
+/* Gradient overlay — 20% opacity so the nature photo shows through */
 .bg-nature::before {
   content: '';
   position: absolute;
   inset: 0;
   background:
     linear-gradient(180deg,
-      rgba(255, 255, 255, 0.88) 0%,
-      rgba(255, 255, 255, 0.82) 30%,
-      rgba(255, 255, 255, 0.75) 60%,
-      rgba(248, 250, 246, 0.80) 100%
+      rgba(255, 255, 255, 0.20) 0%,
+      rgba(255, 255, 255, 0.20) 60%,
+      rgba(248, 250, 246, 0.24) 100%
     );
   pointer-events: none;
 }
