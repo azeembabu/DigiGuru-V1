@@ -379,16 +379,7 @@ export async function changePassword(
 
   // Resolve the caller's current session (by presented refresh token hash) so
   // it survives the revocation sweep below.
-  let keepSessionId: string | null = null;
-  if (currentSessionId) {
-    keepSessionId = currentSessionId;
-  } else if (meta.refreshTokenHash) {
-    const row = await prisma.sessions.findUnique({
-      where: { refresh_token_hash: meta.refreshTokenHash },
-      select: { id: true },
-    });
-    keepSessionId = row?.id ?? null;
-  }
+  const keepSessionId = currentSessionId ?? (await resolveSessionIdByHash(userId, meta.refreshTokenHash ?? null));
 
   const revoked = await prisma.$transaction(async (tx) => {
     await tx.users.update({ where: { id: userId }, data: { password_hash: passwordHash } });
@@ -429,7 +420,25 @@ export interface SessionView {
   isActive: boolean;
 }
 
-export async function listSessions(userId: string, currentSessionId: string | null): Promise<SessionView[]> {
+/** Look up the session id owning a presented refresh token, scoped to the user. */
+async function resolveSessionIdByHash(userId: string, refreshTokenHash: string | null): Promise<string | null> {
+  if (!refreshTokenHash) return null;
+  const row = await prisma.sessions.findFirst({
+    where: { refresh_token_hash: refreshTokenHash, user_id: userId },
+    select: { id: true },
+  });
+  return row?.id ?? null;
+}
+
+export async function listSessions(
+  userId: string,
+  currentSessionId: string | null,
+  refreshTokenHash: string | null,
+): Promise<SessionView[]> {
+  // Resolve the caller's own session from the presented refresh token when no
+  // explicit id is available, so the UI can badge "This device".
+  const resolvedCurrent = currentSessionId ?? (await resolveSessionIdByHash(userId, refreshTokenHash));
+
   const rows = await prisma.sessions.findMany({
     where: { user_id: userId },
     // DESC + NULLS FIRST (Postgres default) → active sessions before revoked.
@@ -445,7 +454,7 @@ export async function listSessions(userId: string, currentSessionId: string | nu
     createdAt: s.created_at,
     expiresAt: s.expires_at,
     revokedAt: s.revoked_at,
-    isCurrent: currentSessionId === s.id,
+    isCurrent: resolvedCurrent === s.id,
     isActive: !s.revoked_at && s.expires_at.getTime() > now.getTime(),
   }));
 }

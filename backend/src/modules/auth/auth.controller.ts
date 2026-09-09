@@ -131,7 +131,7 @@ export async function listSessions(req: Request, res: Response, next: NextFuncti
       res.status(401).json({ success: false, error: 'Authentication required' });
       return;
     }
-    const sessions = await authService.listSessions(req.user.id, null);
+    const sessions = await authService.listSessions(req.user.id, null, getMeta(req).refreshTokenHash ?? null);
     res.json({ success: true, data: sessions });
   } catch (err) {
     next(err);
