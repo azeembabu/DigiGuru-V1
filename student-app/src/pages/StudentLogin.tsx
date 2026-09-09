@@ -27,12 +27,14 @@ export default function StudentLogin() {
   async function onSubmit(values: LoginInput) {
     setServerError(null);
     try {
-      const { data } = await api.post('/auth/student/login', {
+      const { data: envelope } = await api.post('/auth/student/login', {
         identifier: values.identifier.trim(),
         password: values.password,
         rememberMe: values.rememberMe,
       });
 
+      // Backend response envelope: { success, data: { accessToken, refreshToken, user, student } }
+      const data = envelope?.data ?? envelope;
       const accessToken: string = data.accessToken ?? data.access_token ?? data.token;
       const refreshToken: string = data.refreshToken ?? data.refresh_token ?? '';
       const user = data.user ?? data.student ?? null;
