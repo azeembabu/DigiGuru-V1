@@ -1,0 +1,62 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    @apply border-admin-200;
+  }
+
+  html {
+    @apply antialiased;
+  }
+
+  body {
+    @apply bg-admin-50 text-admin-900 font-sans min-h-screen;
+  }
+
+  /* Focus ring for keyboard navigation */
+  :focus-visible {
+    @apply outline-none ring-2 ring-indigo-500 ring-offset-2;
+  }
+}
+
+/* ── Admin login background ──
+   Professional, clean aesthetic for admin portal. */
+.bg-admin-login {
+  position: relative;
+  background: linear-gradient(135deg, #1e293b 0%, #334155 50%, #1e293b 100%);
+  overflow: hidden;
+  min-height: 100vh;
+}
+
+/* Subtle pattern overlay */
+.bg-admin-login::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image:
+    radial-gradient(circle at 25% 25%, rgba(99, 102, 241, 0.1) 0%, transparent 50%),
+    radial-gradient(circle at 75% 75%, rgba(129, 140, 248, 0.08) 0%, transparent 50%);
+  pointer-events: none;
+}
+
+@layer components {
+  /* Scrollbar — subtle, professional */
+  .admin-scrollbar::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  .admin-scrollbar::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+
+  .admin-scrollbar::-webkit-scrollbar-thumb {
+    @apply bg-admin-300 rounded-full;
+  }
+
+  .admin-scrollbar::-webkit-scrollbar-thumb:hover {
+    @apply bg-admin-400;
+  }
+}
