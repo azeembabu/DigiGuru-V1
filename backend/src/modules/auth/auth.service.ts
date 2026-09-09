@@ -11,6 +11,8 @@ import type { StudentSignupInput, StudentLoginInput, AdminLoginInput } from '../
 export interface RequestMeta {
   ip?: string | null;
   deviceInfo?: string | null;
+  /** SHA-256 of the presented refresh token — identifies the caller's session. */
+  refreshTokenHash?: string | null;
 }
 
 export interface IssuedTokens {
@@ -340,6 +342,132 @@ async function revokeAllSessions(userId: string): Promise<void> {
   await prisma.sessions.updateMany({
     where: { user_id: userId, revoked_at: null },
     data: { revoked_at: new Date() },
+  });
+}
+
+// ── changePassword (authenticated) ─────────────────────────────────────────
+// Verifies the current password, then rotates it and revokes every session
+// except the caller's current one (so other devices are forced to re-login).
+
+export async function changePassword(
+  userId: string,
+  currentPassword: string,
+  newPassword: string,
+  currentSessionId: string | null,
+  meta: RequestMeta,
+): Promise<{ revokedCount: number }> {
+  const user = await prisma.users.findUnique({ where: { id: userId } });
+  if (!user) throw new AppError('User not found', 404);
+
+  const valid = await verifyPassword(user.password_hash, currentPassword);
+  if (!valid) {
+    await createAuditLog({
+      userId,
+      action: AUDIT_ACTIONS.PASSWORD_CHANGED,
+      ipAddress: meta.ip,
+      deviceInfo: meta.deviceInfo,
+      metadata: { result: 'rejected_bad_current_password' },
+    });
+    throw new AppError('Current password is incorrect', 401);
+  }
+
+  if (await verifyPassword(user.password_hash, newPassword)) {
+    throw new AppError('New password must be different from the current password', 400);
+  }
+
+  const passwordHash = await hashPassword(newPassword);
+
+  // Resolve the caller's current session (by presented refresh token hash) so
+  // it survives the revocation sweep below.
+  let keepSessionId: string | null = null;
+  if (currentSessionId) {
+    keepSessionId = currentSessionId;
+  } else if (meta.refreshTokenHash) {
+    const row = await prisma.sessions.findUnique({
+      where: { refresh_token_hash: meta.refreshTokenHash },
+      select: { id: true },
+    });
+    keepSessionId = row?.id ?? null;
+  }
+
+  const revoked = await prisma.$transaction(async (tx) => {
+    await tx.users.update({ where: { id: userId }, data: { password_hash: passwordHash } });
+    return tx.sessions.updateMany({
+      where: {
+        user_id: userId,
+        revoked_at: null,
+        expires_at: { gt: new Date() },
+        ...(keepSessionId ? { NOT: { id: keepSessionId } } : {}),
+      },
+      data: { revoked_at: new Date() },
+    });
+  });
+
+  await createAuditLog({
+    userId,
+    action: AUDIT_ACTIONS.PASSWORD_CHANGED,
+    ipAddress: meta.ip,
+    deviceInfo: meta.deviceInfo,
+    metadata: { result: 'success', revoked_sessions: revoked.count },
+  });
+
+  return { revokedCount: revoked.count };
+}
+
+// ── listSessions / revokeSession (authenticated) ───────────────────────────
+// Device/session management for the profile Security section. Only metadata
+// (device, ip, timestamps) is ever returned — never token material.
+
+export interface SessionView {
+  id: string;
+  deviceInfo: string | null;
+  ipAddress: string | null;
+  createdAt: Date;
+  expiresAt: Date;
+  revokedAt: Date | null;
+  isCurrent: boolean;
+  isActive: boolean;
+}
+
+export async function listSessions(userId: string, currentSessionId: string | null): Promise<SessionView[]> {
+  const rows = await prisma.sessions.findMany({
+    where: { user_id: userId },
+    // DESC + NULLS FIRST (Postgres default) → active sessions before revoked.
+    orderBy: [{ revoked_at: 'desc' }, { created_at: 'desc' }],
+    take: 50,
+  });
+
+  const now = new Date();
+  return rows.map((s) => ({
+    id: s.id,
+    deviceInfo: s.device_info,
+    ipAddress: s.ip_address,
+    createdAt: s.created_at,
+    expiresAt: s.expires_at,
+    revokedAt: s.revoked_at,
+    isCurrent: currentSessionId === s.id,
+    isActive: !s.revoked_at && s.expires_at.getTime() > now.getTime(),
+  }));
+}
+
+export async function revokeSession(userId: string, sessionId: string, meta: RequestMeta): Promise<void> {
+  // updateMany + user_id scoping: another user's session id can never be revoked.
+  const claim = await prisma.sessions.updateMany({
+    where: { id: sessionId, user_id: userId, revoked_at: null },
+    data: { revoked_at: new Date() },
+  });
+  if (claim.count === 0) {
+    // Same error whether it doesn't exist, belongs to someone else, or is
+    // already revoked — never leak which.
+    throw new AppError('Session not found or already signed out', 404);
+  }
+
+  await createAuditLog({
+    userId,
+    action: AUDIT_ACTIONS.SESSION_REVOKED,
+    ipAddress: meta.ip,
+    deviceInfo: meta.deviceInfo,
+    metadata: { session_id: sessionId },
   });
 }
 

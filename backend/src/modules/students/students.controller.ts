@@ -74,13 +74,17 @@ export async function updateProfile(req: Request, res: Response, next: NextFunct
   try {
     if (!req.user) throw new AppError('Authentication required', 401);
 
-    const { full_name, phone_number } = req.body as { full_name?: string; phone_number?: string };
+    // Allow-list (schema is also .strict(), so unauthorized keys are rejected
+    // with 400 before reaching here — this spread is defense-in-depth).
+    const body = req.body as Record<string, unknown>;
+    const { full_name, phone_number } = body as { full_name?: string; phone_number?: string };
+    const rejectedFields = Object.keys(body).filter((k) => k !== 'full_name' && k !== 'phone_number');
 
     const existing = await prisma.students.findUnique({ where: { user_id: req.user.id } });
     if (!existing) throw new AppError('Student profile not found', 404);
 
     const updated = await prisma.students.update({
-      where: { user_id: req.user.id },
+      where: { user_id: req.user.id }, // student derived from session, never from body
       data: {
         ...(full_name !== undefined ? { full_name } : {}),
         ...(phone_number !== undefined ? { phone_number } : {}),
@@ -97,7 +101,10 @@ export async function updateProfile(req: Request, res: Response, next: NextFunct
       userId: req.user.id,
       action: AUDIT_ACTIONS.STUDENT_UPDATED,
       ipAddress: req.ip,
-      metadata: { fields: Object.keys(req.body) },
+      metadata: {
+        fields: Object.keys(body).filter((k) => k === 'full_name' || k === 'phone_number'),
+        ...(rejectedFields.length ? { rejected_fields: rejectedFields } : {}),
+      },
     });
 
     res.json({ success: true, data: updated });

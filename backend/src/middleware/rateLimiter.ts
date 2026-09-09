@@ -42,4 +42,13 @@ export const forgotPasswordRateLimiter = rateLimit({
   message: { success: false, error: 'Too many password reset attempts, please try again later' },
 });
 
+// Change-password verifies a current password — same brute-force surface as
+// login, so it gets an equally strict limiter.
+export const passwordChangeRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  ...RATE_LIMIT_HEADERS,
+  message: { success: false, error: 'Too many password change attempts, please try again later' },
+});
+
 export default loginRateLimiter;

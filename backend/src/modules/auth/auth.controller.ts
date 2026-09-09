@@ -2,11 +2,16 @@ import type { Request, Response, NextFunction } from 'express';
 import * as authService from './auth.service';
 import { setAuthCookies, clearAuthCookies, REFRESH_TOKEN_COOKIE } from '../../utils/cookies';
 import { isProduction } from '../../config/env';
+import { sha256Hex } from '../../utils/tokens';
 
 function getMeta(req: Request): authService.RequestMeta {
+  const presentedRefresh =
+    (req.body?.refreshToken as string | undefined) ??
+    (req.cookies?.[REFRESH_TOKEN_COOKIE] as string | undefined);
   return {
     ip: req.ip ?? req.socket.remoteAddress ?? null,
     deviceInfo: (req.headers['user-agent'] as string | undefined) ?? null,
+    refreshTokenHash: presentedRefresh ? sha256Hex(presentedRefresh) : null,
   };
 }
 
@@ -85,6 +90,65 @@ export async function logout(req: Request, res: Response, next: NextFunction): P
     await authService.logout(refreshToken, req.user.id, getMeta(req));
     clearAuthCookies(res);
     res.json({ success: true, data: { message: 'Logged out successfully' } });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// ── POST /api/auth/change-password ────────────────────────────────────────
+
+export async function changePassword(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ success: false, error: 'Authentication required' });
+      return;
+    }
+    const { currentPassword, newPassword } = req.body as {
+      currentPassword: string;
+      newPassword: string;
+    };
+
+    const result = await authService.changePassword(
+      req.user.id, // identity from the authenticated session, never the body
+      currentPassword,
+      newPassword,
+      null,
+      getMeta(req),
+    );
+
+    // Never return token material — the caller's current session stays valid.
+    res.json({ success: true, data: { message: 'Password changed successfully', revokedSessions: result.revokedCount } });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// ── GET /api/auth/sessions ────────────────────────────────────────────────
+
+export async function listSessions(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ success: false, error: 'Authentication required' });
+      return;
+    }
+    const sessions = await authService.listSessions(req.user.id, null);
+    res.json({ success: true, data: sessions });
+  } catch (err) {
+    next(err);
+  }
+}
+
+// ── DELETE /api/auth/sessions/:id ─────────────────────────────────────────
+
+export async function revokeSession(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({ success: false, error: 'Authentication required' });
+      return;
+    }
+    const { id } = req.params as { id: string };
+    await authService.revokeSession(req.user.id, id, getMeta(req));
+    res.json({ success: true, data: { message: 'Session signed out' } });
   } catch (err) {
     next(err);
   }

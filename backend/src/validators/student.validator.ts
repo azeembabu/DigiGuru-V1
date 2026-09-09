@@ -1,6 +1,11 @@
 import { z } from 'zod';
 
-/** Student-side self-service profile update — academic fields are admin-only. */
+/**
+ * Student-side self-service profile update — the ONLY fields a Student may
+ * change. `.strict()` makes any other key (roll_number, program_id,
+ * semester_id, lsc_id, role, status, user_id, …) a validation error, so
+ * unauthorized fields are rejected — never silently accepted or ignored.
+ */
 export const updateStudentProfileSchema = z
   .object({
     full_name: z.string().min(2).max(100).optional(),
@@ -12,6 +17,7 @@ export const updateStudentProfileSchema = z
       .regex(/^[0-9+\-\s]+$/, 'Phone number contains invalid characters')
       .optional(),
   })
+  .strict()
   .refine((data) => Object.keys(data).length > 0, { message: 'At least one field is required' });
 
 export type UpdateStudentProfileInput = z.infer<typeof updateStudentProfileSchema>;

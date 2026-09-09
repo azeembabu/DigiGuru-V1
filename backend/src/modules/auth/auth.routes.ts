@@ -2,13 +2,14 @@ import { Router } from 'express';
 import * as authController from './auth.controller';
 import { authenticate } from '../../middleware/authenticate';
 import { validate } from '../../middleware/validate';
-import { loginRateLimiter, signupRateLimiter, refreshRateLimiter, forgotPasswordRateLimiter } from '../../middleware/rateLimiter';
+import { loginRateLimiter, signupRateLimiter, refreshRateLimiter, forgotPasswordRateLimiter, passwordChangeRateLimiter } from '../../middleware/rateLimiter';
 import {
   studentSignupSchema,
   studentLoginSchema,
   adminLoginSchema,
   forgotPasswordSchema,
   resetPasswordSchema,
+  changePasswordSchema,
 } from '../../validators/auth.validator';
 
 const router = Router();
@@ -30,6 +31,11 @@ router.post('/reset-password', forgotPasswordRateLimiter, validate(resetPassword
 // ── Authenticated routes ───────────────────────────────────────────────────
 
 router.get('/me', authenticate, authController.getMe);
+
+// Security endpoints — identity always from the authenticated session.
+router.post('/change-password', authenticate, passwordChangeRateLimiter, validate(changePasswordSchema), authController.changePassword);
+router.get('/sessions', authenticate, authController.listSessions);
+router.delete('/sessions/:id', authenticate, authController.revokeSession);
 
 // Single logout endpoint — role-agnostic; students use it too.
 router.post('/logout', authenticate, authController.logout);

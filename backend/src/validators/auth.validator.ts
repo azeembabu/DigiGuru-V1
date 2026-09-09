@@ -65,3 +65,16 @@ export const refreshSchema = z.object({
 });
 
 export type RefreshInput = z.infer<typeof refreshSchema>;
+
+/** Change password (authenticated) — current password must be proven first. */
+export const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1, 'Current password is required').max(128),
+  newPassword: z
+    .string()
+    .min(8, 'Password must be at least 8 characters')
+    .max(128)
+    .regex(/[A-Za-z]/, 'Password must contain a letter')
+    .regex(/[0-9]/, 'Password must contain a number'),
+});
+
+export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
