@@ -98,9 +98,11 @@ export default function StudentSignup() {
         // role is intentionally NOT sent — backend defaults to STUDENT
       });
 
-      const accessToken: string | undefined = data.accessToken ?? data.access_token ?? data.token;
-      const refreshToken: string | undefined = data.refreshToken ?? data.refresh_token;
-      const user = data.user ?? data.student ?? null;
+      // Backend response envelope: { success, data: { accessToken, refreshToken, user } }
+      const payload = data?.data ?? data;
+      const accessToken: string | undefined = payload.accessToken ?? payload.access_token ?? payload.token;
+      const refreshToken: string | undefined = payload.refreshToken ?? payload.refresh_token;
+      const user = payload.user ?? payload.student ?? null;
 
       // If backend returns tokens, auto-login. Otherwise redirect to login.
       if (accessToken) {
