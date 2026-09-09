@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { Navigate, Route, Routes, useLocation } from 'react-router-dom';
 import { useAuthStore } from './store/authStore';
-import { Layout } from './components/Layout';
+import { StudentLayout } from './components/layout/StudentLayout';
 import { ProtectedRoute } from './components/ProtectedRoute';
 
 import LandingPage from './pages/LandingPage';
@@ -12,6 +12,7 @@ import ResetPassword from './pages/ResetPassword';
 import StudentDashboard from './pages/StudentDashboard';
 import StudentProfile from './pages/StudentProfile';
 import StudentCourses from './pages/StudentCourses';
+import StudentProgress from './pages/StudentProgress';
 import StudentSettings from './pages/StudentSettings';
 
 /**
@@ -68,9 +69,9 @@ export default function App() {
         path="/student/dashboard"
         element={
           <ProtectedRoute>
-            <Layout>
+            <StudentLayout>
               <StudentDashboard />
-            </Layout>
+            </StudentLayout>
           </ProtectedRoute>
         }
       />
@@ -78,9 +79,9 @@ export default function App() {
         path="/student/profile"
         element={
           <ProtectedRoute>
-            <Layout>
+            <StudentLayout>
               <StudentProfile />
-            </Layout>
+            </StudentLayout>
           </ProtectedRoute>
         }
       />
@@ -88,9 +89,19 @@ export default function App() {
         path="/student/courses"
         element={
           <ProtectedRoute>
-            <Layout>
+            <StudentLayout>
               <StudentCourses />
-            </Layout>
+            </StudentLayout>
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/student/progress"
+        element={
+          <ProtectedRoute>
+            <StudentLayout>
+              <StudentProgress />
+            </StudentLayout>
           </ProtectedRoute>
         }
       />
@@ -98,9 +109,9 @@ export default function App() {
         path="/student/settings"
         element={
           <ProtectedRoute>
-            <Layout>
+            <StudentLayout>
               <StudentSettings />
-            </Layout>
+            </StudentLayout>
           </ProtectedRoute>
         }
       />

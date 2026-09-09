@@ -15,9 +15,9 @@ body,
 }
 
 body {
-  font-family: 'Instrument Sans', ui-sans-serif, system-ui, sans-serif;
+  font-family: 'Inter', 'Noto Sans Malayalam', ui-sans-serif, system-ui, sans-serif;
   color: #0f172a;
-  background: #f8faf8;
+  background: #F8FAFC;
 }
 
 /* ── Nature / Evolve-inspired page background ──

@@ -25,8 +25,8 @@ export default {
         },
       },
       fontFamily: {
-        sans: ['Instrument Sans', 'ui-sans-serif', 'system-ui', 'sans-serif'],
-        display: ['Newsreader', 'serif'],
+        sans: ['Inter', 'Noto Sans Malayalam', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        display: ['Inter', 'Noto Sans Malayalam', 'ui-sans-serif', 'system-ui', 'sans-serif'],
       },
       borderRadius: {
         '4xl': '2rem',
