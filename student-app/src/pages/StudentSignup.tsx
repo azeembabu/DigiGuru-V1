@@ -12,6 +12,7 @@ import { Select } from '../components/ui/Select';
 interface RefOption {
   value: string;
   label: string;
+  programId?: string;
 }
 
 interface RefRow {
@@ -51,6 +52,7 @@ export default function StudentSignup() {
           (s.data.data as RefRow[]).map((row) => ({
             value: row.id,
             label: row.name ?? `Semester ${row.semester_number ?? ''}`,
+            programId: row.program_id,
           })),
         );
         setLscOptions((l.data.data as RefRow[]).map((row) => ({ value: row.id, label: row.name })));
@@ -66,6 +68,8 @@ export default function StudentSignup() {
   const {
     register,
     handleSubmit,
+    resetField,
+    watch,
     formState: { errors, isSubmitting },
   } = useForm<SignupInput>({
     resolver: zodResolver(signupSchema),
@@ -82,6 +86,19 @@ export default function StudentSignup() {
       terms: undefined,
     },
   });
+
+  // A program owns its own semesters (e.g. every program has a "Semester 1"),
+  // so the unfiltered list would show each semester name once per program.
+  const selectedProgram = watch('program');
+  const programSemesterOptions = React.useMemo(
+    () => semesterOptions.filter((opt) => opt.programId === selectedProgram),
+    [semesterOptions, selectedProgram],
+  );
+
+  // Changing program invalidates the previous semester selection.
+  React.useEffect(() => {
+    if (selectedProgram) resetField('semester');
+  }, [selectedProgram, resetField]);
 
   async function onSubmit(values: SignupInput) {
     setServerError(null);
@@ -245,8 +262,9 @@ export default function StudentSignup() {
                   />
                   <Select
                     label="Semester"
-                    placeholder="Select semester"
-                    options={semesterOptions}
+                    placeholder={selectedProgram ? 'Select semester' : 'Select program first'}
+                    options={programSemesterOptions}
+                    disabled={!selectedProgram}
                     required
                     error={errors.semester?.message}
                     {...register('semester')}
