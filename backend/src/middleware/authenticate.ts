@@ -11,7 +11,7 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
       return;
     }
 
-    let payload: { userId: string; email: string; role: string };
+    let payload: { userId: string; email: string; role: string; sid?: string };
     try {
       payload = verifyAccessToken(token);
     } catch {
@@ -35,10 +35,32 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
       return;
     }
 
+    // The access token names the session it was minted for, so a session that
+    // has since been revoked (signed out on another device, revoked from the
+    // Active Sessions list, or invalidated by a password change) stops working
+    // immediately instead of surviving until the token expires.
+    // Tokens minted before `sid` existed are still accepted.
+    if (payload.sid) {
+      const session = await prisma.sessions.findFirst({
+        where: {
+          id: payload.sid,
+          user_id: user.id,
+          revoked_at: null,
+          expires_at: { gt: new Date() },
+        },
+        select: { id: true },
+      });
+      if (!session) {
+        res.status(401).json({ success: false, error: 'Session has ended. Please sign in again.' });
+        return;
+      }
+    }
+
     req.user = {
       id: user.id,
       email: user.email,
       role: user.role,
+      ...(payload.sid ? { sessionId: payload.sid } : {}),
     };
 
     next();

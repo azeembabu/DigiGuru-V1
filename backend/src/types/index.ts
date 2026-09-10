@@ -27,6 +27,7 @@ export interface AuthenticatedRequest extends Request {
     id: string;
     email: string;
     role: Role;
+    sessionId?: string;
   };
 }
 

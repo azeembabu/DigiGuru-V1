@@ -64,4 +64,36 @@ export const refreshSchema = z.object({
   refreshToken: z.string().min(1).max(512).optional(),
 });
 
+/**
+ * Change password for an already-authenticated user.
+ *
+ * `refreshToken` is optional and only used to recognise *this* session so it can
+ * be kept alive while every other device is signed out. It is never logged,
+ * stored or echoed back. `.strict()` rejects unknown keys rather than letting a
+ * caller smuggle in fields such as a target user id.
+ */
+export const changePasswordSchema = z
+  .object({
+    currentPassword: z.string().min(1, 'Current password is required').max(128),
+    newPassword: z
+      .string()
+      .min(8, 'New password must be at least 8 characters')
+      .max(128)
+      .regex(/[A-Za-z]/, 'New password must contain a letter')
+      .regex(/[0-9]/, 'New password must contain a number'),
+    confirmPassword: z.string().min(1, 'Please confirm your new password').max(128),
+    refreshToken: z.string().min(1).max(512).optional(),
+  })
+  .strict()
+  .refine((data) => data.newPassword === data.confirmPassword, {
+    path: ['confirmPassword'],
+    message: 'Passwords do not match',
+  })
+  .refine((data) => data.newPassword !== data.currentPassword, {
+    path: ['newPassword'],
+    message: 'New password must be different from your current password',
+  });
+
+export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
+
 export type RefreshInput = z.infer<typeof refreshSchema>;

@@ -4,9 +4,15 @@ import { signAccessToken, getRefreshExpiresAt, inferRememberMe } from '../../uti
 import { generateOpaqueToken, sha256Hex } from '../../utils/tokens';
 import { createAuditLog, AUDIT_ACTIONS } from '../../utils/audit';
 import { isThrottled, recordFailedAttempt, clearFailedAttempts } from '../../utils/loginThrottle';
+import { describeDevice } from '../../utils/userAgent';
 import { AppError } from '../../middleware/errorHandler';
 import type { users } from '@prisma/client';
-import type { StudentSignupInput, StudentLoginInput, AdminLoginInput } from '../../validators/auth.validator';
+import type {
+  StudentSignupInput,
+  StudentLoginInput,
+  AdminLoginInput,
+  ChangePasswordInput,
+} from '../../validators/auth.validator';
 
 export interface RequestMeta {
   ip?: string | null;
@@ -35,7 +41,7 @@ async function issueTokens(user: users, rememberMe: boolean, meta: RequestMeta):
   const refreshToken = generateOpaqueToken();
   const refreshExpiresAt = getRefreshExpiresAt(rememberMe);
 
-  await prisma.sessions.create({
+  const session = await prisma.sessions.create({
     data: {
       user_id: user.id,
       refresh_token_hash: sha256Hex(refreshToken),
@@ -43,9 +49,18 @@ async function issueTokens(user: users, rememberMe: boolean, meta: RequestMeta):
       ip_address: meta.ip ?? null,
       expires_at: refreshExpiresAt,
     },
+    select: { id: true },
   });
 
-  const accessToken = signAccessToken({ userId: user.id, email: user.email, role: user.role });
+  // The access token carries the session id so any later request can confirm the
+  // session is still live (see middleware/authenticate.ts). This is what makes
+  // revoking a session — or changing a password — take effect straight away.
+  const accessToken = signAccessToken({
+    userId: user.id,
+    email: user.email,
+    role: user.role,
+    sid: session.id,
+  });
   return { accessToken, refreshToken, refreshExpiresAt };
 }
 
@@ -341,6 +356,192 @@ async function revokeAllSessions(userId: string): Promise<void> {
     where: { user_id: userId, revoked_at: null },
     data: { revoked_at: new Date() },
   });
+}
+
+// ── changePassword ─────────────────────────────────────────────────────────
+
+export interface ChangePasswordResult {
+  otherSessionsRevoked: number;
+  currentSessionPreserved: boolean;
+}
+
+/**
+ * Change the password of the authenticated user.
+ *
+ * - The caller is identified by `userId` from the verified access token; the
+ *   request can never target another account.
+ * - The current password is re-verified server-side even though the client
+ *   already checked it, because the client cannot be trusted.
+ * - A wrong current password answers 400, not 401: the session itself is valid,
+ *   and a 401 would make the client treat the response as an expired token and
+ *   try to refresh and replay the request.
+ * - Every other device is signed out, while the session making the call is kept
+ *   alive so the student is not kicked off the page they are standing on.
+ */
+export async function changePassword(
+  userId: string,
+  input: ChangePasswordInput,
+  presentedRefreshToken: string | undefined,
+  meta: RequestMeta,
+): Promise<ChangePasswordResult> {
+  const user = await prisma.users.findUnique({ where: { id: userId } });
+  if (!user) throw new AppError('User not found', 404);
+
+  const currentValid = await verifyPassword(user.password_hash, input.currentPassword);
+  if (!currentValid) {
+    await createAuditLog({
+      userId,
+      action: AUDIT_ACTIONS.PASSWORD_CHANGE_FAILED,
+      ipAddress: meta.ip,
+      deviceInfo: meta.deviceInfo,
+      metadata: { reason: 'bad_current_password' },
+    });
+    throw new AppError('Current password is incorrect', 400);
+  }
+
+  // Verified through the hash so an identical password is rejected without ever
+  // holding on to a second plaintext copy.
+  const unchanged = await verifyPassword(user.password_hash, input.newPassword);
+  if (unchanged) {
+    throw new AppError('New password must be different from your current password', 400);
+  }
+
+  const passwordHash = await hashPassword(input.newPassword);
+  const currentSessionId = await findLiveSessionId(userId, presentedRefreshToken);
+
+  const revoked = await prisma.$transaction(async (tx) => {
+    await tx.users.update({ where: { id: userId }, data: { password_hash: passwordHash } });
+    return tx.sessions.updateMany({
+      where: {
+        user_id: userId,
+        revoked_at: null,
+        ...(currentSessionId ? { id: { not: currentSessionId } } : {}),
+      },
+      data: { revoked_at: new Date() },
+    });
+  });
+
+  await createAuditLog({
+    userId,
+    action: AUDIT_ACTIONS.PASSWORD_CHANGED,
+    ipAddress: meta.ip,
+    deviceInfo: meta.deviceInfo,
+    metadata: {
+      other_sessions_revoked: revoked.count,
+      current_session_preserved: Boolean(currentSessionId),
+    },
+  });
+
+  return { otherSessionsRevoked: revoked.count, currentSessionPreserved: Boolean(currentSessionId) };
+}
+
+// ── Sessions (Active Sessions list) ────────────────────────────────────────
+
+export interface SessionSummary {
+  id: string;
+  device: string;
+  ipAddress: string | null;
+  createdAt: Date;
+  expiresAt: Date;
+  /** Remember Me was chosen for this session (long-lived rather than 8h). */
+  remembered: boolean;
+  isCurrent: boolean;
+}
+
+/** Resolve a presented refresh token to a live session id owned by `userId`. */
+async function findLiveSessionId(
+  userId: string,
+  presentedRefreshToken?: string | null,
+): Promise<string | null> {
+  if (!presentedRefreshToken) return null;
+  const session = await prisma.sessions.findFirst({
+    where: {
+      user_id: userId,
+      refresh_token_hash: sha256Hex(presentedRefreshToken),
+      revoked_at: null,
+      expires_at: { gt: new Date() },
+    },
+    select: { id: true },
+  });
+  return session?.id ?? null;
+}
+
+/**
+ * Live sessions for the authenticated user.
+ *
+ * `refresh_token_hash` is never selected, so no token material can reach the
+ * client — the response is limited to what the Active Sessions list renders.
+ */
+export async function listSessions(
+  userId: string,
+  currentSessionId?: string | null,
+): Promise<SessionSummary[]> {
+  const sessions = await prisma.sessions.findMany({
+    where: { user_id: userId, revoked_at: null, expires_at: { gt: new Date() } },
+    orderBy: { created_at: 'desc' },
+    take: 50,
+    select: {
+      id: true,
+      device_info: true,
+      ip_address: true,
+      created_at: true,
+      expires_at: true,
+    },
+  });
+
+  return sessions.map((session) => ({
+    id: session.id,
+    device: describeDevice(session.device_info),
+    ipAddress: session.ip_address,
+    createdAt: session.created_at,
+    expiresAt: session.expires_at,
+    remembered: inferRememberMe(session.created_at, session.expires_at),
+    isCurrent: Boolean(currentSessionId) && session.id === currentSessionId,
+  }));
+}
+
+export interface RevokeSessionResult {
+  /** False when the row was already revoked — the call is idempotent. */
+  revoked: boolean;
+  revokedCurrent: boolean;
+}
+
+/**
+ * Revoke one of the caller's own sessions.
+ *
+ * Scoping the lookup by `user_id` means another user's session id is simply not
+ * found, so one account can never sign another out.
+ */
+export async function revokeSession(
+  userId: string,
+  sessionId: string,
+  currentSessionId: string | null | undefined,
+  meta: RequestMeta,
+): Promise<RevokeSessionResult> {
+  const session = await prisma.sessions.findFirst({
+    where: { id: sessionId, user_id: userId },
+    select: { id: true, revoked_at: true },
+  });
+  if (!session) throw new AppError('Session not found', 404);
+
+  const revokedCurrent = session.id === currentSessionId;
+
+  if (session.revoked_at) return { revoked: false, revokedCurrent };
+
+  await prisma.sessions.update({
+    where: { id: session.id },
+    data: { revoked_at: new Date() },
+  });
+
+  await createAuditLog({
+    userId,
+    action: AUDIT_ACTIONS.SESSION_REVOKED,
+    ipAddress: meta.ip,
+    deviceInfo: meta.deviceInfo,
+    metadata: { session_id: session.id, revoked_current: revokedCurrent },
+  });
+
+  return { revoked: true, revokedCurrent };
 }
 
 // ── forgotPassword ─────────────────────────────────────────────────────────

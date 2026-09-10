@@ -1,85 +1,106 @@
 import * as React from 'react';
-import { Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
+import { ProfileHeader } from '../components/profile/ProfileHeader';
+import { StudentIdentityCard } from '../components/profile/StudentIdentityCard';
+import { PersonalInformationCard } from '../components/profile/PersonalInformationCard';
+import { AcademicInformationCard } from '../components/profile/AcademicInformationCard';
+import { AccountInformationCard } from '../components/profile/AccountInformationCard';
+import { ChangePasswordCard } from '../components/profile/ChangePasswordCard';
+import { ActiveSessionsCard } from '../components/profile/ActiveSessionsCard';
+import { LogoutCard } from '../components/profile/LogoutCard';
+import { PreferencesCard } from '../components/profile/PreferencesCard';
+import { ProfileSkeleton } from '../components/profile/ProfileSkeleton';
+import { ProfileErrorState } from '../components/profile/ProfileErrorState';
+import { useStudentProfile } from '../hooks/useStudentProfile';
+import { useActiveSessions } from '../hooks/useActiveSessions';
+import { clearTokens } from '../lib/api';
 import { useAuthStore } from '../store/authStore';
-import { Card } from '../components/ui/Card';
 
-function Field({ label, value, readOnly }: { label: string; value: string; readOnly?: boolean }) {
-  return (
-    <div className="space-y-1.5">
-      <p className="text-xs font-medium uppercase tracking-wide text-ink-500">
-        {label} {readOnly && <span className="ml-1 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-ink-500">read-only</span>}
-      </p>
-      <div
-        className={[
-          'rounded-xl border px-3.5 py-3 text-sm',
-          readOnly ? 'border-slate-200 bg-slate-50 text-ink-700' : 'border-slate-200 bg-white text-ink-900',
-        ].join(' ')}
-      >
-        {value || '—'}
-      </div>
-    </div>
-  );
-}
-
+/**
+ * Student Profile.
+ *
+ * Identity is taken from the authenticated session only — the page never sends
+ * a student id, so it can only ever read or change the signed-in student's own
+ * record. No Admin navigation or controls exist here.
+ *
+ * Layout: on desktop the main column holds Personal Information, Academic
+ * Information and Security, while the narrower secondary column holds the
+ * Student Identity, Account Information and Preferences cards.
+ *
+ * Below the `lg` breakpoint the two column wrappers become `display: contents`,
+ * so their cards join the grid directly and a single `order-*` sequence gives
+ * the specified reading order: Student Identity → Personal Information →
+ * Academic Information → Account Information → Security → Preferences.
+ */
 export default function StudentProfile() {
-  const user = useAuthStore((s) => s.user);
+  const navigate = useNavigate();
+  const logout = useAuthStore((s) => s.logout);
+
+  const { profile, state, errorMessage, reload, save } = useStudentProfile();
+  const { sessions, state: sessionsState, reload: reloadSessions, revoke } = useActiveSessions();
+
+  const currentSession = React.useMemo(
+    () => sessions.find((s) => s.isCurrent) ?? null,
+    [sessions],
+  );
+
+  // Revoking the session you are using effectively signs you out.
+  const handleSignedOut = React.useCallback(() => {
+    clearTokens();
+    logout();
+    navigate('/login', { replace: true });
+  }, [logout, navigate]);
+
+  if (state === 'loading') return <ProfileSkeleton />;
+
+  if (state === 'error' || !profile) {
+    return <ProfileErrorState message={errorMessage ?? undefined} onRetry={() => void reload()} />;
+  }
 
   return (
-    <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6 lg:px-8">
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
-        <div>
-          <h1 className="font-display text-2xl font-semibold tracking-tight text-ink-900 sm:text-[28px]">Profile</h1>
-          <p className="mt-1 text-sm text-ink-500">Your personal and academic information.</p>
+    <div className="mx-auto w-full max-w-6xl px-4 py-6 sm:px-6 lg:px-8">
+      <ProfileHeader />
+
+      <div className="grid gap-6 lg:grid-cols-3">
+        {/* On mobile the column wrappers dissolve (`contents`), so each card below
+            joins the grid directly and `order-*` sets the specified reading order.
+            From `lg` up the wrappers become real flex columns and source order wins. */}
+        <div className="contents lg:block lg:col-span-2 lg:space-y-6">
+          <div className="order-2 lg:order-none">
+            <PersonalInformationCard profile={profile} onSave={save} />
+          </div>
+          <div className="order-3 lg:order-none">
+            <AcademicInformationCard profile={profile} />
+          </div>
+
+          <section className="order-5 space-y-6 lg:order-none" aria-labelledby="security-heading">
+            <h2 id="security-heading" className="sr-only">
+              Security
+            </h2>
+            <ChangePasswordCard />
+            <ActiveSessionsCard
+              sessions={sessions}
+              state={sessionsState}
+              onReload={reloadSessions}
+              onRevoke={revoke}
+              onSignedOut={handleSignedOut}
+            />
+            <LogoutCard />
+          </section>
         </div>
-        <Link to="/student/dashboard" className="inline-flex rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-ink-700 hover:bg-slate-50 focus-ring">
-          ← Back to dashboard
-        </Link>
-      </div>
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        <Card variant="solid" padding="md">
-          <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-ink-700">
-            <span className="h-2 w-2 rounded-full bg-dg-500" aria-hidden /> Personal information
-          </h2>
-          <div className="mt-5 grid gap-4">
-            <Field label="Full name" value={user?.fullName ?? ''} />
-            <Field label="Roll Number" value={user?.rollNumber ?? ''} readOnly />
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Email" value={user?.email ?? ''} />
-              <Field label="Phone number" value={user?.phoneNumber ?? ''} />
-            </div>
-            <p className="text-xs leading-relaxed text-ink-400">
-              Roll Number is your permanent identity and cannot be changed. Contact your LSC for corrections.
-            </p>
+        <div className="contents lg:block lg:space-y-6">
+          <div className="order-1 lg:order-none">
+            <StudentIdentityCard profile={profile} />
           </div>
-        </Card>
-
-        <Card variant="solid" padding="md">
-          <h2 className="flex items-center gap-2 text-sm font-semibold uppercase tracking-wide text-ink-700">
-            <span className="h-2 w-2 rounded-full bg-teal-500" aria-hidden /> Academic information
-          </h2>
-          <div className="mt-5 grid gap-4">
-            <Field label="Program" value={user?.program ?? ''} readOnly />
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Semester" value={user?.semester ?? ''} readOnly />
-              <Field label="LSC" value={user?.lsc ?? ''} readOnly />
-            </div>
-            <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/60 px-4 py-3">
-              <p className="text-xs font-medium text-ink-700">Academic details are read-only</p>
-              <p className="mt-1 text-xs leading-relaxed text-ink-500">
-                Program, Semester, and LSC are set at admission. To update them, please contact your Learner Support Centre.
-              </p>
-            </div>
+          <div className="order-4 lg:order-none">
+            <AccountInformationCard profile={profile} currentSession={currentSession} />
           </div>
-        </Card>
+          <div className="order-6 lg:order-none">
+            <PreferencesCard currentSession={currentSession} />
+          </div>
+        </div>
       </div>
-
-      <Card variant="subtle" padding="md" className="mt-6 border-dashed">
-        <p className="text-sm font-medium text-ink-900">Privacy</p>
-        <p className="mt-1 text-sm leading-relaxed text-ink-500">
-          Your profile is visible only to you. No other student can see your data. Everything is separated by Roll Number.
-        </p>
-      </Card>
     </div>
   );
 }

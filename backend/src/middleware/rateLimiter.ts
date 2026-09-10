@@ -42,4 +42,14 @@ export const forgotPasswordRateLimiter = rateLimit({
   message: { success: false, error: 'Too many password reset attempts, please try again later' },
 });
 
+// Change-password is an authenticated, password-verifying endpoint — throttle it
+// so a borrowed session cannot be used to brute-force the current password.
+export const passwordChangeRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  ...RATE_LIMIT_HEADERS,
+  skipSuccessfulRequests: true,
+  message: { success: false, error: 'Too many password change attempts, please try again after 15 minutes' },
+});
+
 export default loginRateLimiter;

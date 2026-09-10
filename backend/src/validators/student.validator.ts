@@ -1,18 +1,32 @@
 import { z } from 'zod';
 
-/** Student-side self-service profile update — academic fields are admin-only. */
+/** Digits with an optional leading `+`, spaces and dashes. Mirrored by the
+ *  student-app `profileSchema` so client and server agree on what is valid. */
+const PHONE_REGEX = /^\+?[0-9][0-9\s-]{5,18}$/;
+
+/**
+ * Student-side self-service profile update.
+ *
+ * `.strict()` is deliberate and load-bearing: Roll Number, Program, Semester,
+ * LSC, email and account status are institution-controlled. A request that
+ * carries any of them (or any other unrecognised key) is rejected outright with
+ * 400 — we never silently drop a field and report success, because that would
+ * leave the client believing a protected value had been changed.
+ */
 export const updateStudentProfileSchema = z
   .object({
-    full_name: z.string().min(2).max(100).optional(),
-    phone_number: z
+    fullName: z
       .string()
-      .min(7)
-      .max(20)
       .trim()
-      .regex(/^[0-9+\-\s]+$/, 'Phone number contains invalid characters')
-      .optional(),
+      .min(2, 'Full name must be at least 2 characters')
+      .max(100, 'Full name must be at most 100 characters'),
+    phoneNumber: z.string().trim().regex(PHONE_REGEX, 'Enter a valid phone number'),
   })
-  .refine((data) => Object.keys(data).length > 0, { message: 'At least one field is required' });
+  .partial()
+  .strict()
+  .refine((data) => Object.keys(data).length > 0, {
+    message: 'At least one field is required',
+  });
 
 export type UpdateStudentProfileInput = z.infer<typeof updateStudentProfileSchema>;
 

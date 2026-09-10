@@ -7,6 +7,8 @@ declare global {
         id: string;
         email: string;
         role: Role;
+        /** Session this access token belongs to; absent on legacy tokens. */
+        sessionId?: string;
       };
     }
   }

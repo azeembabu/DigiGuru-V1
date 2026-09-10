@@ -2,7 +2,8 @@ import type { Request, Response, NextFunction } from 'express';
 import { prisma } from '../../utils/prisma';
 import { createAuditLog, AUDIT_ACTIONS } from '../../utils/audit';
 import { AppError } from '../../middleware/errorHandler';
-import type { UpdateStudentAcademicInput, StudentStatusInput } from '../../validators/student.validator';
+import type { UserStatus } from '@prisma/client';
+import type { UpdateStudentProfileInput, StudentStatusInput } from '../../validators/student.validator';
 
 
 // ── Current student identity (GET /api/student/me) ───────────────────────
@@ -47,24 +48,90 @@ export async function getMe(req: Request, res: Response, next: NextFunction): Pr
 
 // ── Profile (GET / PATCH /api/student/profile) ───────────────────────────
 
+/**
+ * The only student profile fields a student may change about themselves.
+ * Roll Number, Program, Semester, LSC and email are institution-controlled.
+ * Exposed to the client wholesale so the UI can decide what to render as an
+ * input instead of hard-coding its own idea of what is editable.
+ */
+const EDITABLE_PROFILE_FIELDS = ['fullName', 'phoneNumber'] as const;
+
+/**
+ * Columns needed by the profile screen — nothing more. Password hash, tokens
+ * and internal ids (student id, program/semester/lsc ids) are deliberately not
+ * selected, so the profile response contains no handle a student could use to
+ * address another student's record.
+ */
+const PROFILE_SELECT = {
+  full_name: true,
+  roll_number: true,
+  phone_number: true,
+  program: { select: { name: true, code: true } },
+  semester: { select: { name: true, semester_number: true } },
+  lsc: { select: { name: true, code: true } },
+  user: {
+    select: { email: true, status: true, created_at: true, last_login_at: true },
+  },
+} as const;
+
+interface ProfileSource {
+  full_name: string;
+  roll_number: string;
+  phone_number: string;
+  program: { name: string; code: string } | null;
+  semester: { name: string; semester_number: number } | null;
+  lsc: { name: string; code: string } | null;
+  user: {
+    email: string;
+    status: UserStatus;
+    created_at: Date;
+    last_login_at: Date | null;
+  };
+}
+
+/**
+ * Single response shape shared by GET and PATCH so the client always receives
+ * the same object and can replace its state wholesale.
+ */
+function toProfileResponse(student: ProfileSource) {
+  return {
+    // Personal information
+    fullName: student.full_name,
+    rollNumber: student.roll_number,
+    email: student.user.email,
+    phoneNumber: student.phone_number,
+
+    // Academic information — institution-controlled, read-only for the student
+    program: student.program ? { name: student.program.name, code: student.program.code } : null,
+    semester: student.semester
+      ? { name: student.semester.name, semesterNumber: student.semester.semester_number }
+      : null,
+    lsc: student.lsc ? { name: student.lsc.name, code: student.lsc.code } : null,
+
+    // Account information
+    accountStatus: student.user.status,
+    accountCreatedAt: student.user.created_at,
+    lastLoginAt: student.user.last_login_at,
+
+    // Authoritative editability contract for this endpoint.
+    editableFields: [...EDITABLE_PROFILE_FIELDS],
+  };
+}
+
 export async function getProfile(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     if (!req.user) throw new AppError('Authentication required', 401);
 
+    // The student is always resolved from the authenticated session — a
+    // student id supplied by the browser is never read or trusted.
     const student = await prisma.students.findUnique({
       where: { user_id: req.user.id },
-      include: {
-        program: { select: { id: true, name: true, code: true } },
-        semester: { select: { id: true, name: true, semester_number: true } },
-        lsc: { select: { id: true, name: true, code: true } },
-        user: { select: { id: true, email: true, role: true, status: true, created_at: true, last_login_at: true } },
-      },
+      select: PROFILE_SELECT,
     });
 
     if (!student) throw new AppError('Student profile not found', 404);
 
-    // Never expose password_hash (user relation select already excludes it)
-    res.json({ success: true, data: student });
+    res.json({ success: true, data: toProfileResponse(student) });
   } catch (err) {
     next(err);
   }
@@ -74,33 +141,38 @@ export async function updateProfile(req: Request, res: Response, next: NextFunct
   try {
     if (!req.user) throw new AppError('Authentication required', 401);
 
-    const { full_name, phone_number } = req.body as { full_name?: string; phone_number?: string };
+    // The body has already been through updateStudentProfileSchema, which is
+    // strict: any field outside the whitelist (roll_number, program_id,
+    // semester_id, lsc_id, email, status, role, another student's id, …) has
+    // been rejected with a 400 before reaching this point. Nothing is silently
+    // ignored, so a client can never believe it changed a protected value.
+    const { fullName, phoneNumber } = req.body as UpdateStudentProfileInput;
 
-    const existing = await prisma.students.findUnique({ where: { user_id: req.user.id } });
+    const existing = await prisma.students.findUnique({
+      where: { user_id: req.user.id },
+      select: { id: true },
+    });
     if (!existing) throw new AppError('Student profile not found', 404);
 
     const updated = await prisma.students.update({
       where: { user_id: req.user.id },
       data: {
-        ...(full_name !== undefined ? { full_name } : {}),
-        ...(phone_number !== undefined ? { phone_number } : {}),
+        ...(fullName !== undefined ? { full_name: fullName } : {}),
+        ...(phoneNumber !== undefined ? { phone_number: phoneNumber } : {}),
       },
-      include: {
-        program: { select: { id: true, name: true, code: true } },
-        semester: { select: { id: true, name: true, semester_number: true } },
-        lsc: { select: { id: true, name: true, code: true } },
-        user: { select: { id: true, email: true, role: true } },
-      },
+      select: PROFILE_SELECT,
     });
 
     await createAuditLog({
       userId: req.user.id,
       action: AUDIT_ACTIONS.STUDENT_UPDATED,
       ipAddress: req.ip,
-      metadata: { fields: Object.keys(req.body) },
+      deviceInfo: (req.headers['user-agent'] as string | undefined) ?? null,
+      // Field names only — submitted values are never written to the audit log.
+      metadata: { scope: 'self_profile', fields: Object.keys(req.body) },
     });
 
-    res.json({ success: true, data: updated });
+    res.json({ success: true, data: toProfileResponse(updated) });
   } catch (err) {
     next(err);
   }

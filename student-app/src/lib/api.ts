@@ -62,6 +62,24 @@ export const api = axios.create({
   timeout: 15000,
 });
 
+/**
+ * Extract a user-facing message from an unknown thrown value.
+ *
+ * The backend replies with `{ success: false, error, details? }`; for
+ * validation failures the first `details[].message` is the most specific thing
+ * to show. Falls back to the axios message, then a caller-supplied default.
+ */
+export function getApiErrorMessage(error: unknown, fallback = 'Something went wrong. Please try again.'): string {
+  const data = (error as { response?: { data?: unknown } })?.response?.data as
+    | { error?: string; message?: string; details?: Array<{ message?: string }> }
+    | undefined;
+
+  const detail = data?.details?.find((d) => d?.message)?.message;
+  if (detail) return detail;
+
+  return data?.error ?? data?.message ?? (error as Error)?.message ?? fallback;
+}
+
 api.interceptors.request.use((config) => {
   const token = getToken();
   if (token) config.headers.Authorization = `Bearer ${token}`;

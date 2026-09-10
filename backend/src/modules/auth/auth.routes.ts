@@ -2,13 +2,20 @@ import { Router } from 'express';
 import * as authController from './auth.controller';
 import { authenticate } from '../../middleware/authenticate';
 import { validate } from '../../middleware/validate';
-import { loginRateLimiter, signupRateLimiter, refreshRateLimiter, forgotPasswordRateLimiter } from '../../middleware/rateLimiter';
+import {
+  loginRateLimiter,
+  signupRateLimiter,
+  refreshRateLimiter,
+  forgotPasswordRateLimiter,
+  passwordChangeRateLimiter,
+} from '../../middleware/rateLimiter';
 import {
   studentSignupSchema,
   studentLoginSchema,
   adminLoginSchema,
   forgotPasswordSchema,
   resetPasswordSchema,
+  changePasswordSchema,
 } from '../../validators/auth.validator';
 
 const router = Router();
@@ -30,6 +37,21 @@ router.post('/reset-password', forgotPasswordRateLimiter, validate(resetPassword
 // ── Authenticated routes ───────────────────────────────────────────────────
 
 router.get('/me', authenticate, authController.getMe);
+
+// Password: requires the current password, re-verified server-side.
+router.post(
+  '/change-password',
+  authenticate,
+  passwordChangeRateLimiter,
+  validate(changePasswordSchema),
+  authController.changePassword,
+);
+
+// Active sessions: list the caller's own sessions and revoke one of them.
+// Both endpoints scope every query to req.user.id — a client-supplied session
+// id from another account is simply not found.
+router.get('/sessions', authenticate, authController.getSessions);
+router.delete('/sessions/:id', authenticate, authController.revokeSession);
 
 // Single logout endpoint — role-agnostic; students use it too.
 router.post('/logout', authenticate, authController.logout);

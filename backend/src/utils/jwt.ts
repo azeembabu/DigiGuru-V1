@@ -5,6 +5,15 @@ export interface AccessTokenPayload {
   userId: string;
   email: string;
   role: string;
+  /**
+   * Session id (`sessions.id`) this access token was minted for.
+   *
+   * Carrying it lets authenticated requests check that the session is still
+   * live — which is what makes "revoke this session" take effect immediately
+   * instead of after the access token expires. Optional so tokens issued before
+   * this field existed still verify.
+   */
+  sid?: string;
 }
 
 // Refresh tokens are opaque random strings looked up by SHA-256 in the

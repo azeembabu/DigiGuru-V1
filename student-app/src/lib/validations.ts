@@ -86,6 +86,58 @@ export const signupSchema = z
 
 export type SignupInput = z.infer<typeof signupSchema>;
 
+/* ── Profile (self-service, editable fields only) ──
+   Mirrors the backend `updateStudentProfileSchema`: only Full Name and Phone
+   Number are editable. Roll Number, Program, Semester and LSC are
+   institution-controlled and are never part of this form.
+   The phone pattern is intentionally the backend's broader one
+   (`PHONE_REGEX` in validators/student.validator.ts) so client and server
+   agree on what is valid.
+*/
+const profilePhoneRegex = /^\+?[0-9][0-9\s-]{5,18}$/;
+
+export const profileSchema = z.object({
+  fullName: z
+    .string()
+    .min(1, 'Full name is required')
+    .trim()
+    .min(2, 'Full name must be at least 2 characters')
+    .max(100, 'Full name must be at most 100 characters'),
+  phoneNumber: z
+    .string()
+    .min(1, 'Phone number is required')
+    .trim()
+    .regex(profilePhoneRegex, 'Enter a valid phone number'),
+});
+
+export type ProfileInput = z.infer<typeof profileSchema>;
+
+/* ── Change password ──
+   Mirrors the backend `changePasswordSchema`: current password is required,
+   the new password must meet the strength rules, and both must match. */
+export const changePasswordSchema = z
+  .object({
+    currentPassword: z.string().min(1, 'Current password is required').max(128),
+    newPassword: z
+      .string()
+      .min(1, 'New password is required')
+      .min(8, 'At least 8 characters')
+      .max(128)
+      .regex(/[A-Za-z]/, 'Include a letter')
+      .regex(/\d/, 'Include a number'),
+    confirmPassword: z.string().min(1, 'Please confirm your new password').max(128),
+  })
+  .refine((d) => d.newPassword === d.confirmPassword, {
+    path: ['confirmPassword'],
+    message: 'Passwords do not match',
+  })
+  .refine((d) => d.newPassword !== d.currentPassword, {
+    path: ['newPassword'],
+    message: 'New password must be different from your current password',
+  });
+
+export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
+
 /* ── Forgot / Reset ── */
 export const forgotPasswordSchema = z.object({
   email: z.string().min(1, 'Email is required').email('Enter a valid email address'),
