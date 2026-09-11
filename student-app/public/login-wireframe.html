@@ -1,0 +1,1794 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Student Login — Digi Guru Wireframe (Detailed)</title>
+  <style>
+    /* ── Reset ── */
+    *, *::before, *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    /* ── Base ── */
+    body {
+      min-height: 100vh;
+      font-family: ui-sans-serif, system-ui, -apple-system, sans-serif;
+      color: #0f172a;
+      background: #fff;
+    }
+
+    /* ===========================================
+       GLOBAL LAYOUT
+       =========================================== */
+    .wf-page {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Top annotation bar */
+    .wf-annotations-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 6px 12px;
+      border-bottom: 2px solid #0f172a;
+      background: #fff;
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .wf-annotations-bar .wf-annotation-group {
+      display: flex;
+      gap: 16px;
+      align-items: center;
+    }
+
+    .wf-annotation-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 2px 8px;
+      border: 1.5px solid #0f172a;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+    }
+
+    .wf-annotation-chip::before {
+      content: '';
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #0f172a;
+    }
+
+    .wf-breakpoint-indicator {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      padding: 2px 8px;
+      border: 1.5px solid #0f172a;
+      border-radius: 4px;
+    }
+
+    .wf-layout {
+      display: flex;
+      width: 100%;
+      min-height: calc(100vh - 33px);
+    }
+
+    /* ===========================================
+       LEFT — Brand panel wireframe
+       =========================================== */
+    .wf-brand-panel {
+      flex: 1 1 52%;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 48px 32px;
+      border: 2px solid #0f172a;
+      border-right: 1px dashed #0f172a;
+      position: relative;
+      min-width: 440px;
+    }
+
+    /* Panel label */
+    .wf-panel-label {
+      position: absolute;
+      top: 8px;
+      left: 10px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: #0f172a;
+      background: #fff;
+      padding: 2px 6px;
+      border: 1px solid #0f172a;
+      border-radius: 3px;
+    }
+
+    .wf-panel-dimensions {
+      position: absolute;
+      top: 8px;
+      right: 10px;
+      font-size: 9px;
+      font-weight: 600;
+      color: #0f172a;
+      background: #fff;
+      padding: 2px 6px;
+      border: 1px solid #0f172a;
+      border-radius: 3px;
+    }
+
+    /* Vertical grid lines */
+    .wf-brand-panel::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(to right, rgba(11,77,59,0.04) 1px, transparent 1px);
+      background-size: 80px 100%;
+      pointer-events: none;
+    }
+
+    .wf-brand-content {
+      max-width: 500px;
+      position: relative;
+    }
+
+    /* ── Logo block ── */
+    .wf-brand-logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 32px;
+      position: relative;
+      padding-bottom: 20px;
+    }
+
+    .wf-brand-logo::after {
+      content: '← margin-bottom: 32px';
+      position: absolute;
+      bottom: 4px;
+      right: 0;
+      font-size: 9px;
+      color: #0f172a;
+      font-weight: 600;
+    }
+
+    .wf-logo-box {
+      width: 40px;
+      height: 40px;
+      border: 2px solid #0f172a;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      flex-shrink: 0;
+    }
+
+    .wf-logo-box::after {
+      content: '40×40';
+      position: absolute;
+      bottom: -16px;
+      left: 0;
+      font-size: 9px;
+      color: #0f172a;
+      font-weight: 600;
+    }
+
+    .wf-logo-box::before {
+      content: '';
+      position: absolute;
+      bottom: -28px;
+      left: 0;
+      width: 100%;
+      height: 1px;
+      border-bottom: 1px dashed #94a3b8;
+    }
+
+    .wf-logo-icon-placeholder {
+      font-size: 10px;
+      font-weight: 700;
+      color: #0f172a;
+    }
+
+    .wf-logo-text-wrapper {
+      position: relative;
+    }
+
+    .wf-logo-text {
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.4px;
+      display: block;
+    }
+
+    .wf-logo-text::after {
+      content: '22px / 700 / -0.4px';
+      position: absolute;
+      bottom: -14px;
+      left: 0;
+      font-size: 9px;
+      color: #0f172a;
+      font-weight: 600;
+    }
+
+    .wf-logo-text::before {
+      content: '';
+      position: absolute;
+      bottom: -26px;
+      left: 0;
+      width: 100%;
+      height: 1px;
+      border-bottom: 1px dashed #94a3b8;
+    }
+
+    /* ── Headline block ── */
+    .wf-headline-wrapper {
+      position: relative;
+      margin-bottom: 28px;
+      padding-bottom: 16px;
+    }
+
+    .wf-headline-wrapper::after {
+      content: '← margin-bottom: 20px';
+      position: absolute;
+      bottom: 4px;
+      right: 0;
+      font-size: 9px;
+      color: #0f172a;
+      font-weight: 600;
+    }
+
+    .wf-headline-wrapper::before {
+      content: '';
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      height: 1px;
+      border-bottom: 1px dashed #94a3b8;
+    }
+
+    .wf-headline {
+      font-size: 48px;
+      font-weight: 700;
+      line-height: 1.12;
+      letter-spacing: -1.5px;
+      max-width: 460px;
+    }
+
+    .wf-headline::after {
+      content: '48px / 700 / 1.12 / -1.5px / max 460px';
+      position: absolute;
+      bottom: -14px;
+      left: 0;
+      font-size: 9px;
+      color: #0f172a;
+      font-weight: 600;
+    }
+
+    /* ── Description block ── */
+    .wf-description-wrapper {
+      position: relative;
+      margin-bottom: 48px;
+      padding-bottom: 16px;
+    }
+
+    .wf-description-wrapper::after {
+      content: '← margin-bottom: 48px';
+      position: absolute;
+      bottom: 4px;
+      right: 0;
+      font-size: 9px;
+      color: #0f172a;
+      font-weight: 600;
+    }
+
+    .wf-description-wrapper::before {
+      content: '';
+      position: absolute;
+      bottom: 0;
+      left: 0;
+      width: 100%;
+      height: 1px;
+      border-bottom: 1px dashed #94a3b8;
+    }
+
+    .wf-description {
+      font-size: 18px;
+      line-height: 1.65;
+      max-width: 400px;
+    }
+
+    .wf-description::after {
+      content: '18px / 400 / 1.65 / max 400px';
+      position: absolute;
+      bottom: -14px;
+      left: 0;
+      font-size: 9px;
+      color: #0f172a;
+      font-weight: 600;
+    }
+
+    /* ── Learning visual block ── */
+    .wf-learning-visual-wrapper {
+      position: relative;
+    }
+
+    .wf-learning-visual {
+      position: relative;
+      display: flex;
+      align-items: flex-end;
+      gap: 16px;
+      height: 220px;
+      border: 2px solid #0f172a;
+      border-radius: 12px;
+      padding: 12px;
+      background: rgba(11,77,59,0.02);
+    }
+
+    .wf-learning-visual::before {
+      content: 'learning-visual / h:220px / pad:12px / gap:16px';
+      position: absolute;
+      top: -18px;
+      left: 0;
+      font-size: 9px;
+      color: #0f172a;
+      font-weight: 700;
+      background: #fff;
+      padding: 2px 6px;
+      border: 1px solid #0f172a;
+      border-radius: 3px;
+    }
+
+    /* Book card */
+    .wf-card-placeholder {
+      border: 2px solid #0f172a;
+      border-radius: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 11px;
+      font-weight: 700;
+      color: #0f172a;
+      position: relative;
+      flex-shrink: 0;
+    }
+
+    .wf-card--book {
+      width: 88px;
+      height: 88px;
+    }
+
+    .wf-card--book::after {
+      content: 'book card / 88×88 / r:16';
+      position: absolute;
+      bottom: -16px;
+      left: 0;
+      font-size: 9px;
+      color: #0f172a;
+      font-weight: 600;
+    }
+
+    .wf-card--book::before {
+      content: '';
+      position: absolute;
+      bottom: -28px;
+      left: 0;
+      width: 100%;
+      height: 1px;
+      border-bottom: 1px dashed #94a3b8;
+    }
+
+    /* Cap card */
+    .wf-card--cap {
+      width: 64px;
+      height: 64px;
+    }
+
+    .wf-card--cap::after {
+      content: 'cap card / 64×64 / r:16';
+      position: absolute;
+      bottom: -16px;
+      left: 0;
+      font-size: 9px;
+      color: #0f172a;
+      font-weight: 600;
+    }
+
+    .wf-card--cap::before {
+      content: '';
+      position: absolute;
+      bottom: -28px;
+      left: 0;
+      width: 100%;
+      height: 1px;
+      border-bottom: 1px dashed #94a3b8;
+    }
+
+    /* Particles */
+    .wf-particles-placeholder {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding-bottom: 10px;
+    }
+
+    .wf-particles-placeholder::after {
+      content: 'particles / col / gap:6px';
+      position: absolute;
+      bottom: -16px;
+      left: 0;
+      font-size: 9px;
+      color: #0f172a;
+      font-weight: 600;
+    }
+
+    .wf-dot {
+      width: 7px;
+      height: 7px;
+      border: 1.5px solid #0f172a;
+      border-radius: 50%;
+      position: relative;
+    }
+
+    .wf-dot:nth-child(1)::after { content: '7×7'; position: absolute; bottom: -12px; left: 0; font-size: 8px; color: #0f172a; }
+    .wf-dot:nth-child(2)::after { content: '6×6'; position: absolute; bottom: -12px; left: 0; font-size: 8px; color: #0f172a; }
+    .wf-dot:nth-child(3)::after { content: '5×5'; position: absolute; bottom: -12px; left: 0; font-size: 8px; color: #0f172a; }
+
+    /* Bars */
+    .wf-bars-placeholder {
+      display: flex;
+      gap: 8px;
+      align-items: flex-end;
+      margin-left: auto;
+    }
+
+    .wf-bars-placeholder::after {
+      content: 'bars / row / gap:8px / ml:auto';
+      position: absolute;
+      bottom: -16px;
+      right: 0;
+      font-size: 9px;
+      color: #0f172a;
+      font-weight: 600;
+    }
+
+    .wf-bar {
+      border: 2px solid #0f172a;
+      border-radius: 4px;
+      position: relative;
+    }
+
+    .wf-bar:nth-child(1) { width: 22px; height: 36px; }
+    .wf-bar:nth-child(2) { width: 18px; height: 52px; }
+    .wf-bar:nth-child(3) { width: 14px; height: 28px; }
+
+    .wf-bar:nth-child(1)::after { content: '22×36'; position: absolute; bottom: -12px; left: 0; font-size: 8px; color: #0f172a; }
+    .wf-bar:nth-child(2)::after { content: '18×52'; position: absolute; bottom: -12px; left: 0; font-size: 8px; color: #0f172a; }
+    .wf-bar:nth-child(3)::after { content: '14×28'; position: absolute; bottom: -12px; left: 0; font-size: 8px; color: #0f172a; }
+
+    /* ===========================================
+       RIGHT — Login panel wireframe
+       =========================================== */
+    .wf-login-panel {
+      flex: 1 1 48%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 32px;
+      overflow-y: auto;
+    }
+
+    .wf-login-panel::before {
+      content: 'Login panel / flex:1 1 48% / pad:32px';
+      position: absolute;
+      top: 8px;
+      left: 10px;
+      font-size: 10px;
+      font-weight: 700;
+      color: #0f172a;
+      background: #fff;
+      padding: 2px 6px;
+      border: 1px solid #0f172a;
+      border-radius: 3px;
+      z-index: 10;
+    }
+
+    .wf-login-panel {
+      position: relative;
+    }
+
+    .wf-login-card {
+      width: 100%;
+      max-width: 440px;
+      border: 2px solid #0f172a;
+      border-radius: 24px;
+      padding: 48px 32px;
+      position: relative;
+      background: #fff;
+    }
+
+    .wf-login-card::before {
+      content: 'login-card / max 440px / pad 48px 32px / r:24';
+      position: absolute;
+      top: -18px;
+      left: 0;
+      font-size: 9px;
+      color: #0f172a;
+      font-weight: 700;
+      background: #fff;
+      padding: 2px 6px;
+      border: 1px solid #0f172a;
+      border-radius: 3px;
+    }
+
+    /* Card header */
+    .wf-card-header {
+      text-align: center;
+      margin-bottom: 32px;
+      padding-bottom: 24px;
+      border-bottom: 1px dashed #94a3b8;
+      position: relative;
+    }
+
+    .wf-card-header::after {
+      content: 'card-header / mb:32px / pb:24px';
+      position: absolute;
+      bottom: -14px;
+      left: 0;
+      font-size: 9px;
+      color: #0f172a;
+      font-weight: 700;
+    }
+
+    .wf-card-header::before {
+      content: '';
+      position: absolute;
+      bottom: -28px;
+      left: 0;
+      width: 100%;
+      height: 1px;
+      border-bottom: 1px dashed #94a3b8;
+    }
+
+    .wf-eyebrow {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      margin-bottom: 8px;
+      position: relative;
+    }
+
+    .wf-eyebrow::after {
+      content: '12px / 600 / 0.18em / uppercase / mb:8px';
+      position: absolute;
+      bottom: -14px;
+      left: 0;
+      font-size: 9px;
+      color: #0f172a;
+      font-weight: 600;
+    }
+
+    .wf-card-title {
+      font-size: 28px;
+      font-weight: 700;
+      letter-spacing: -0.4px;
+      margin-bottom: 4px;
+      position: relative;
+    }
+
+    .wf-card-title::after {
+      content: '28px / 700 / -0.4px / mb:4px';
+      position: absolute;
+      bottom: -14px;
+      left: 0;
+      font-size: 9px;
+      color: #0f172a;
+      font-weight: 600;
+    }
+
+    .wf-card-subtitle {
+      font-size: 14px;
+      margin-top: 4px;
+      color: #64748b;
+      position: relative;
+    }
+
+    .wf-card-subtitle::after {
+      content: '14px / 400 / mt:4px / ink-500';
+      position: absolute;
+      bottom: -14px;
+      left: 0;
+      font-size: 9px;
+      color: #0f172a;
+      font-weight: 600;
+    }
+
+    /* Form */
+    .wf-form {
+      display: flex;
+      flex-direction: column;
+      gap: 20px;
+      position: relative;
+      margin-top: 28px;
+    }
+
+    .wf-form::before {
+      content: 'form / flex col / gap:20px / mt:28px';
+      position: absolute;
+      top: -18px;
+      left: 0;
+      font-size: 9px;
+      color: #0f172a;
+      font-weight: 700;
+      background: #fff;
+      padding: 2px 6px;
+      border: 1px solid #0f172a;
+      border-radius: 3px;
+    }
+
+    /* Form field */
+    .wf-field {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      position: relative;
+      padding-top: 18px;
+    }
+
+    .wf-field::before {
+      content: 'form-field / flex col / gap:5px';
+      position: absolute;
+      top: -14px;
+      left: 0;
+      font-size: 9px;
+      color: #0f172a;
+      font-weight: 700;
+    }
+
+    .wf-field::after {
+      content: '';
+      position: absolute;
+      top: -4px;
+      left: 0;
+      width: 100%;
+      height: 1px;
+      border-bottom: 1px dashed #94a3b8;
+    }
+
+    /* Label */
+    .wf-label {
+      font-size: 14px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      position: relative;
+    }
+
+    .wf-label::after {
+      content: '14px / 600 / required';
+      position: absolute;
+      bottom: -12px;
+      left: 0;
+      font-size: 9px;
+      color: #0f172a;
+      font-weight: 600;
+    }
+
+    .wf-required {
+      color: #DC2626;
+      font-weight: 400;
+    }
+
+    /* Input wrapper */
+    .wf-input-wrap {
+      position: relative;
+      display: flex;
+      align-items: center;
+      margin-top: 4px;
+    }
+
+    .wf-input-wrap::before {
+      content: 'input-wrap / relative';
+      position: absolute;
+      top: -14px;
+      left: 0;
+      font-size: 9px;
+      color: #0f172a;
+      font-weight: 700;
+    }
+
+    /* Input */
+    .wf-input {
+      width: 100%;
+      height: 52px;
+      padding: 0 14px;
+      font-size: 16px;
+      font-family: inherit;
+      border: 2px solid #0f172a;
+      border-radius: 12px;
+      background: transparent;
+      color: #0f172a;
+      position: relative;
+    }
+
+    .wf-input::placeholder {
+      color: #94a3b8;
+    }
+
+    .wf-input::after {
+      content: 'h:52 / px:14 / r:12 / placeholder:ink-400';
+      position: absolute;
+      bottom: -14px;
+      right: 0;
+      font-size: 9px;
+      color: #0f172a;
+      font-weight: 600;
+    }
+
+    .wf-input:focus {
+      outline: none;
+      border-color: #0f172a;
+      box-shadow: 0 0 0 3px rgba(11, 77, 59, 0.15);
+    }
+
+    .wf-input.input-error {
+      border-color: #DC2626;
+      background: #FEF2F2;
+    }
+
+    /* Password toggle */
+    .wf-toggle-placeholder {
+      position: absolute;
+      right: 10px;
+      height: 100%;
+      padding: 0 10px;
+      font-size: 11px;
+      font-weight: 600;
+      color: #0f172a;
+      display: flex;
+      align-items: center;
+      border-left: 1px dashed #94a3b8;
+    }
+
+    .wf-toggle-placeholder::after {
+      content: '[toggle btn] / right:10px / px:10';
+      position: absolute;
+      bottom: -14px;
+      left: 0;
+      font-size: 9px;
+      color: #0f172a;
+      font-weight: 600;
+    }
+
+    /* Error placeholder */
+    .wf-error-placeholder {
+      min-height: 18px;
+      border: 1px dashed #94a3b8;
+      border-radius: 4px;
+      margin-top: 4px;
+      display: flex;
+      align-items: center;
+      padding: 0 8px;
+      font-size: 10px;
+      color: #94a3b8;
+      position: relative;
+    }
+
+    .wf-error-placeholder::before {
+      content: '[error text / icon]';
+      font-weight: 600;
+    }
+
+    .wf-error-placeholder::after {
+      content: 'h:18 / r:4 / mt:4';
+      position: absolute;
+      bottom: -12px;
+      right: 0;
+      font-size: 9px;
+      color: #0f172a;
+      font-weight: 600;
+    }
+
+    /* Options row */
+    .wf-options {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 16px;
+      position: relative;
+      padding-top: 18px;
+      margin-top: 8px;
+    }
+
+    .wf-options::before {
+      content: 'options row / justify-between / flex-wrap / gap:16';
+      position: absolute;
+      top: -14px;
+      left: 0;
+      font-size: 9px;
+      color: #0f172a;
+      font-weight: 700;
+    }
+
+    .wf-options::after {
+      content: '';
+      position: absolute;
+      top: -4px;
+      left: 0;
+      width: 100%;
+      height: 1px;
+      border-bottom: 1px dashed #94a3b8;
+    }
+
+    /* Checkbox */
+    .wf-checkbox-placeholder {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      position: relative;
+    }
+
+    .wf-checkbox-box {
+      width: 18px;
+      height: 18px;
+      border: 2px solid #0f172a;
+      border-radius: 5px;
+      flex-shrink: 0;
+      position: relative;
+    }
+
+    .wf-checkbox-box::after {
+      content: '18×18 / r:5';
+      position: absolute;
+      bottom: -14px;
+      left: 0;
+      font-size: 9px;
+      color: #0f172a;
+      font-weight: 600;
+    }
+
+    .wf-checkbox-text {
+      font-size: 14px;
+    }
+
+    .wf-checkbox-text::after {
+      content: '14px / 500';
+      position: absolute;
+      bottom: -12px;
+      left: 0;
+      font-size: 9px;
+      color: #0f172a;
+      font-weight: 600;
+    }
+
+    /* Link placeholders */
+    .wf-link-placeholder {
+      font-size: 14px;
+      font-weight: 500;
+      text-decoration: underline;
+      color: #0f172a;
+      position: relative;
+    }
+
+    .wf-link-placeholder::after {
+      content: '14px / 500 / underline / → route';
+      position: absolute;
+      bottom: -12px;
+      left: 0;
+      font-size: 9px;
+      color: #0f172a;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    /* Server error banner */
+    .wf-server-error {
+      display: none;
+      align-items: flex-start;
+      gap: 8px;
+      padding: 12px 16px;
+      border: 2px solid #0f172a;
+      border-radius: 12px;
+      margin-bottom: 8px;
+      position: relative;
+      background: transparent;
+    }
+
+    .wf-server-error.is-visible {
+      display: flex;
+    }
+
+    .wf-server-error::before {
+      content: 'server-error / role=alert / aria-live=polite';
+      position: absolute;
+      top: -14px;
+      left: 0;
+      font-size: 9px;
+      color: #0f172a;
+      font-weight: 700;
+      background: #fff;
+      padding: 2px 6px;
+      border: 1px solid #0f172a;
+      border-radius: 3px;
+    }
+
+    .wf-error-icon {
+      width: 18px;
+      height: 18px;
+      border: 2px solid #0f172a;
+      border-radius: 50%;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .wf-error-text {
+      font-size: 14px;
+      font-weight: 500;
+      line-height: 1.4;
+    }
+
+    /* Login button */
+    .wf-button {
+      width: 100%;
+      height: 56px;
+      padding: 0 24px;
+      font-size: 16px;
+      font-weight: 600;
+      font-family: inherit;
+      border: 2px solid #0f172a;
+      border-radius: 12px;
+      background: transparent;
+      color: #0f172a;
+      cursor: not-allowed;
+      margin-top: 4px;
+      position: relative;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .wf-button::after {
+      content: 'w:100% / h:56 / pad:0 24 / r:12 / disabled';
+      position: absolute;
+      bottom: -14px;
+      left: 0;
+      font-size: 9px;
+      color: #0f172a;
+      font-weight: 600;
+    }
+
+    /* Signup divider */
+    .wf-divider {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      margin-top: 24px;
+      padding-top: 16px;
+      border-top: 2px solid #0f172a;
+      position: relative;
+    }
+
+    .wf-divider::before {
+      content: 'divider / border-top / mt:24 / pt:16';
+      position: absolute;
+      top: -14px;
+      left: 0;
+      font-size: 9px;
+      color: #0f172a;
+      font-weight: 700;
+    }
+
+    .wf-divider-text {
+      font-size: 14px;
+      white-space: nowrap;
+      position: relative;
+    }
+
+    .wf-divider-text::after {
+      content: '14px / nowrap';
+      position: absolute;
+      bottom: -12px;
+      left: 0;
+      font-size: 9px;
+      color: #0f172a;
+      font-weight: 600;
+    }
+
+    /* Trust badge */
+    .wf-trust-badge {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      margin-top: 24px;
+      font-size: 12px;
+      text-align: center;
+      position: relative;
+      padding-top: 16px;
+    }
+
+    .wf-trust-badge::before {
+      content: 'trust-badge / mt:24 / pt:16 / center';
+      position: absolute;
+      top: -14px;
+      left: 0;
+      font-size: 9px;
+      color: #0f172a;
+      font-weight: 700;
+    }
+
+    .wf-trust-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 22px;
+      height: 22px;
+      border: 2px solid #0f172a;
+      border-radius: 50%;
+      font-size: 10px;
+      font-weight: 700;
+      flex-shrink: 0;
+      position: relative;
+    }
+
+    .wf-trust-icon::after {
+      content: '22×22 / r:50%';
+      position: absolute;
+      bottom: -12px;
+      left: 0;
+      font-size: 9px;
+      color: #0f172a;
+      font-weight: 600;
+    }
+
+    /* ===========================================
+       INTERACTION ANNOTATIONS
+       =========================================== */
+    .wf-interaction-notes {
+      margin-top: 32px;
+      padding: 16px;
+      border: 2px solid #0f172a;
+      border-radius: 12px;
+      position: relative;
+    }
+
+    .wf-interaction-notes::before {
+      content: 'INTERACTION NOTES';
+      position: absolute;
+      top: -10px;
+      left: 10px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      background: #fff;
+      padding: 2px 6px;
+      border: 1px solid #0f172a;
+      border-radius: 3px;
+    }
+
+    .wf-note-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      margin-bottom: 8px;
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .wf-note-item:last-child {
+      margin-bottom: 0;
+    }
+
+    .wf-note-marker {
+      font-size: 10px;
+      font-weight: 700;
+      border: 1px solid #0f172a;
+      border-radius: 3px;
+      padding: 1px 4px;
+      flex-shrink: 0;
+    }
+
+    /* ===========================================
+       STATE LEGEND
+       =========================================== */
+    .wf-state-legend {
+      margin-top: 24px;
+      padding: 16px;
+      border: 2px solid #0f172a;
+      border-radius: 12px;
+      position: relative;
+    }
+
+    .wf-state-legend::before {
+      content: 'STATE LEGEND';
+      position: absolute;
+      top: -10px;
+      left: 10px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      background: #fff;
+      padding: 2px 6px;
+      border: 1px solid #0f172a;
+      border-radius: 3px;
+    }
+
+    .wf-state-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 12px;
+      margin-top: 12px;
+    }
+
+    .wf-state-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      font-size: 12px;
+    }
+
+    .wf-state-box {
+      width: 60px;
+      height: 32px;
+      border: 2px solid #0f172a;
+      border-radius: 6px;
+      flex-shrink: 0;
+      position: relative;
+    }
+
+    .wf-state-box.default { background: transparent; }
+    .wf-state-box.error { background: #FEF2F2; border-color: #DC2626; }
+    .wf-state-box.focus { box-shadow: 0 0 0 3px rgba(11,77,59,0.15); }
+    .wf-state-box.disabled { background: #F8FAFC; opacity: 0.5; }
+    .wf-state-box.loading { background: repeating-linear-gradient(45deg, transparent, transparent 4px, rgba(11,77,59,0.1) 4px, rgba(11,77,59,0.1) 8px); }
+
+    .wf-state-label {
+      font-size: 11px;
+      font-weight: 600;
+      line-height: 1.3;
+    }
+
+    /* ===========================================
+       ACCESSIBILITY CHECKLIST
+       =========================================== */
+    .wf-a11y-checklist {
+      margin-top: 24px;
+      padding: 16px;
+      border: 2px solid #0f172a;
+      border-radius: 12px;
+      position: relative;
+    }
+
+    .wf-a11y-checklist::before {
+      content: 'ACCESSIBILITY CHECKLIST';
+      position: absolute;
+      top: -10px;
+      left: 10px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      background: #fff;
+      padding: 2px 6px;
+      border: 1px solid #0f172a;
+      border-radius: 3px;
+    }
+
+    .wf-a11y-item {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      margin-bottom: 6px;
+      font-size: 12px;
+    }
+
+    .wf-a11y-checkbox {
+      width: 14px;
+      height: 14px;
+      border: 1.5px solid #0f172a;
+      border-radius: 3px;
+      flex-shrink: 0;
+      margin-top: 2px;
+    }
+
+    /* ===========================================
+       RESPONSIVE BREAKPOINTS TABLE
+       =========================================== */
+    .wf-breakpoints-table {
+      margin-top: 24px;
+      padding: 16px;
+      border: 2px solid #0f172a;
+      border-radius: 12px;
+      position: relative;
+    }
+
+    .wf-breakpoints-table::before {
+      content: 'RESPONSIVE BREAKPOINTS';
+      position: absolute;
+      top: -10px;
+      left: 10px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      background: #fff;
+      padding: 2px 6px;
+      border: 1px solid #0f172a;
+      border-radius: 3px;
+    }
+
+    .wf-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 12px;
+      font-size: 12px;
+    }
+
+    .wf-table th,
+    .wf-table td {
+      border: 1px solid #0f172a;
+      padding: 6px 10px;
+      text-align: left;
+    }
+
+    .wf-table th {
+      font-weight: 700;
+      background: #fff;
+    }
+
+    .wf-table td {
+      background: #fff;
+    }
+
+    /* ===========================================
+       RESPONSIVE — tablet
+       =========================================== */
+    @media (max-width: 1024px) {
+      .wf-brand-panel {
+        flex: 1 1 48%;
+        min-width: 0;
+        padding: 32px 24px;
+      }
+
+      .wf-headline {
+        font-size: 36px;
+      }
+
+      .wf-learning-visual {
+        height: 180px;
+      }
+    }
+
+    /* ===========================================
+       RESPONSIVE — mobile (stack)
+       =========================================== */
+    @media (max-width: 768px) {
+      .wf-layout {
+        flex-direction: column;
+      }
+
+      .wf-brand-panel {
+        flex: none;
+        min-width: 100%;
+        min-height: auto;
+        padding: 32px 24px 24px;
+        text-align: center;
+        align-items: center;
+        border-right: 2px solid #0f172a;
+      }
+
+      .wf-brand-content {
+        max-width: 100%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+      }
+
+      .wf-brand-logo {
+        justify-content: center;
+      }
+
+      .wf-headline {
+        font-size: 28px;
+        max-width: 100%;
+        text-align: center;
+      }
+
+      .wf-description {
+        font-size: 16px;
+        max-width: 100%;
+        text-align: center;
+      }
+
+      .wf-learning-visual {
+        height: 140px;
+        flex-direction: row;
+        align-items: center;
+        justify-content: center;
+        gap: 24px;
+      }
+
+      .wf-card--book {
+        width: 72px;
+        height: 72px;
+      }
+
+      .wf-card--cap {
+        width: 52px;
+        height: 52px;
+      }
+
+      .wf-bars-placeholder {
+        display: none;
+      }
+
+      .wf-login-panel {
+        flex: none;
+        min-width: 100%;
+        min-height: auto;
+        padding: 24px 16px;
+        align-items: flex-start;
+      }
+
+      .wf-login-card {
+        padding: 24px;
+        border-radius: 24px 24px 0 0;
+        max-width: 100%;
+      }
+    }
+
+    @media (max-width: 480px) {
+      .wf-brand-panel {
+        padding: 24px 16px 16px;
+      }
+
+      .wf-headline {
+        font-size: 20px;
+      }
+
+      .wf-learning-visual {
+        height: 110px;
+      }
+
+      .wf-card--book {
+        width: 60px;
+        height: 60px;
+      }
+
+      .wf-card--cap {
+        width: 44px;
+        height: 44px;
+      }
+
+      .wf-login-panel {
+        padding: 16px 12px;
+      }
+
+      .wf-login-card {
+        padding: 20px 16px;
+      }
+
+      .wf-card-title {
+        font-size: 20px;
+      }
+
+      .wf-input {
+        height: 48px;
+        font-size: 14px;
+      }
+
+      .wf-button {
+        height: 52px;
+        font-size: 14px;
+      }
+
+      .wf-options {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="wf-page">
+    <!-- Top annotation bar -->
+    <div class="wf-annotations-bar">
+      <div class="wf-annotation-group">
+        <span class="wf-annotation-chip">Desktop</span>
+        <span class="wf-annotation-chip">Tablet</span>
+        <span class="wf-annotation-chip">Mobile</span>
+      </div>
+      <div class="wf-annotation-group">
+        <span class="wf-breakpoint-indicator">≥1024px</span>
+        <span class="wf-breakpoint-indicator">768–1023px</span>
+        <span class="wf-breakpoint-indicator">&lt;768px</span>
+      </div>
+    </div>
+
+    <div class="wf-layout">
+
+      <!-- LEFT: Brand / Learning visual -->
+      <aside class="wf-brand-panel" aria-label="Digi Guru introduction">
+        <span class="wf-panel-label">Brand panel</span>
+        <span class="wf-panel-dimensions">flex: 1 1 52%</span>
+        <div class="wf-brand-content">
+
+          <!-- Logo -->
+          <div class="wf-brand-logo">
+            <div class="wf-logo-box" aria-hidden="true">
+              <span class="wf-logo-icon-placeholder">[icon]</span>
+            </div>
+            <span class="wf-logo-text-wrapper">
+              <span class="wf-logo-text">Digi Guru</span>
+            </span>
+          </div>
+
+          <!-- Headline -->
+          <div class="wf-headline-wrapper">
+            <h1 class="wf-headline">
+              Your learning journey starts here
+            </h1>
+          </div>
+
+          <!-- Description -->
+          <div class="wf-description-wrapper">
+            <p class="wf-description">
+              Continue your personalized learning experience with Digi Guru.
+            </p>
+          </div>
+
+          <!-- Learning visual -->
+          <div class="wf-learning-visual-wrapper">
+            <div class="wf-learning-visual" aria-hidden="true">
+              <div class="wf-card-placeholder wf-card--book">
+                <span>[book]</span>
+              </div>
+
+              <div class="wf-particles-placeholder">
+                <div class="wf-dot" />
+                <div class="wf-dot" />
+                <div class="wf-dot" />
+              </div>
+
+              <div class="wf-card-placeholder wf-card--cap">
+                <span>[cap]</span>
+              </div>
+
+              <div class="wf-bars-placeholder" aria-hidden="true">
+                <div class="wf-bar" />
+                <div class="wf-bar" />
+                <div class="wf-bar" />
+              </div>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- RIGHT: Login card wireframe -->
+      <section class="wf-login-panel">
+        <div class="wf-login-card">
+
+          <!-- Card header -->
+          <header class="wf-card-header">
+            <span class="wf-eyebrow">Student Portal</span>
+            <h2 class="wf-card-title">Student Login</h2>
+            <p class="wf-card-subtitle">Sign in to continue your learning journey.</p>
+          </header>
+
+          <!-- Server error banner (hidden by default) -->
+          <div id="serverError" class="wf-server-error" role="alert" aria-live="polite">
+            <span class="wf-error-icon">!</span>
+            <span id="serverErrorText" class="wf-error-text"></span>
+          </div>
+
+          <!-- Login form -->
+          <form id="loginForm" class="wf-form" novalidate>
+
+            <!-- Roll Number -->
+            <div class="wf-field">
+              <label htmlFor="wf-roll-number" class="wf-label">
+                Roll Number <span class="wf-required">*</span>
+              </label>
+              <div class="wf-input-wrap">
+                <input
+                  id="wf-roll-number"
+                  type="text"
+                  inputmode="text"
+                  autocomplete="username"
+                  placeholder="Enter your roll number"
+                  class="wf-input"
+                  aria-invalid="false"
+                  aria-describedby="wf-roll-error"
+                />
+              </div>
+              <div id="wf-roll-error" class="wf-error-placeholder" style="display:none" role="alert"></div>
+            </div>
+
+            <!-- Password -->
+            <div class="wf-field">
+              <label htmlFor="wf-password" class="wf-label">
+                Password <span class="wf-required">*</span>
+              </label>
+              <div class="wf-input-wrap">
+                <input
+                  id="wf-password"
+                  type="password"
+                  autocomplete="current-password"
+                  placeholder="Enter your password"
+                  class="wf-input"
+                  aria-invalid="false"
+                  aria-describedby="wf-pw-error"
+                />
+                <span class="wf-toggle-placeholder" id="wf-toggle" aria-hidden="true">[show/hide]</span>
+              </div>
+              <div id="wf-pw-error" class="wf-error-placeholder" style="display:none" role="alert"></div>
+            </div>
+
+            <!-- Options row -->
+            <div class="wf-options">
+              <label class="wf-checkbox-placeholder">
+                <span class="wf-checkbox-box" aria-hidden="true"></span>
+                <input type="checkbox" id="wf-remember" class="wf-checkbox-input" style="position:absolute;opacity:0;width:0;height:0;" />
+                <span class="wf-checkbox-text">Keep me signed in on this device</span>
+              </label>
+              <span class="wf-link-placeholder">Forgot Password?</span>
+            </div>
+
+            <!-- Login button -->
+            <button type="submit" id="wf-login-btn" class="wf-button" disabled>
+              Login
+            </button>
+          </form>
+
+          <!-- Signup divider -->
+          <div class="wf-divider">
+            <span class="wf-divider-text">New student?</span>
+            <span class="wf-link-placeholder">Create Student Account</span>
+          </div>
+
+          <!-- Trust badge -->
+          <p class="wf-trust-badge">
+            <span class="wf-trust-icon" aria-hidden="true">[lock]</span>
+            Trusted by learners across Kerala — your data stays private and secure.
+          </p>
+
+          <!-- Interaction Notes -->
+          <div class="wf-interaction-notes">
+            <div class="wf-note-item">
+              <span class="wf-note-marker">01</span>
+              <span><strong>On blur:</strong> validate field → show error state / clear error state</span>
+            </div>
+            <div class="wf-note-item">
+              <span class="wf-note-marker">02</span>
+              <span><strong>On input:</strong> clear field error + hide server error</span>
+            </div>
+            <div class="wf-note-item">
+              <span class="wf-note-marker">03</span>
+              <span><strong>On submit:</strong> validate all → show server error OR loading → success redirect</span>
+            </div>
+            <div class="wf-note-item">
+              <span class="wf-note-marker">04</span>
+              <span><strong>Password toggle:</strong> switch type="password" ↔ "text"</span>
+            </div>
+            <div class="wf-note-item">
+              <span class="wf-note-marker">05</span>
+              <span><strong>Remember me:</strong> persist session token in httpOnly cookie</span>
+            </div>
+          </div>
+
+          <!-- State Legend -->
+          <div class="wf-state-legend">
+            <div class="wf-state-grid">
+              <div class="wf-state-item">
+                <div class="wf-state-box default"></div>
+                <span class="wf-state-label">Default<br/>border:2px solid</span>
+              </div>
+              <div class="wf-state-item">
+                <div class="wf-state-box focus"></div>
+                <span class="wf-state-label">Focus<br/>box-shadow: 0 0 0 3px</span>
+              </div>
+              <div class="wf-state-item">
+                <div class="wf-state-box error"></div>
+                <span class="wf-state-label">Error<br/>border:error + bg:error-bg</span>
+              </div>
+              <div class="wf-state-item">
+                <div class="wf-state-box disabled"></div>
+                <span class="wf-state-label">Disabled<br/>opacity:0.5 / cursor:not-allowed</span>
+              </div>
+              <div class="wf-state-item">
+                <div class="wf-state-box loading"></div>
+                <span class="wf-state-label">Loading<br/>spinner + "Signing in…"</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Accessibility Checklist -->
+          <div class="wf-a11y-checklist">
+            <div class="wf-a11y-item">
+              <span class="wf-a11y-checkbox"></span>
+              <span><strong>Labels:</strong> every input has a visible label linked via <code>htmlFor</code></span>
+            </div>
+            <div class="wf-a11y-item">
+              <span class="wf-a11y-checkbox"></span>
+              <span><strong>aria-invalid:</strong> set on fields with errors</span>
+            </div>
+            <div class="wf-a11y-item">
+              <span class="wf-a11y-checkbox"></span>
+              <span><strong>aria-describedby:</strong> links inputs to error messages</span>
+            </div>
+            <div class="wf-a11y-item">
+              <span class="wf-a11y-checkbox"></span>
+              <span><strong>role=alert:</strong> on server error banner + field errors</span>
+            </div>
+            <div class="wf-a11y-item">
+              <span class="wf-a11y-checkbox"></span>
+              <span><strong>aria-live=polite:</strong> on server error region</span>
+            </div>
+            <div class="wf-a11y-item">
+              <span class="wf-a11y-checkbox"></span>
+              <span><strong>autocomplete:</strong> username / current-password</span>
+            </div>
+            <div class="wf-a11y-item">
+              <span class="wf-a11y-checkbox"></span>
+              <span><strong>inputmode:</strong> text for roll number</span>
+            </div>
+            <div class="wf-a11y-item">
+              <span class="wf-a11y-checkbox"></span>
+              <span><strong>keyboard:</strong> toggle button focus-visible outline</span>
+            </div>
+          </div>
+
+          <!-- Responsive Breakpoints Table -->
+          <div class="wf-breakpoints-table">
+            <table class="wf-table">
+              <thead>
+                <tr>
+                  <th>Breakpoint</th>
+                  <th>Layout</th>
+                  <th>Brand panel</th>
+                  <th>Login card</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>Desktop ≥1024</strong></td>
+                  <td>Split 52/48</td>
+                  <td>pad:48px 32px / min-width:440px</td>
+                  <td>pad:48px 32px / max:440px</td>
+                </tr>
+                <tr>
+                  <td><strong>Tablet 768–1023</strong></td>
+                  <td>Split 48/52</td>
+                  <td>pad:32px 24px</td>
+                  <td>pad:32px / max:100%</td>
+                </tr>
+                <tr>
+                  <td><strong>Mobile &lt;768</strong></td>
+                  <td>Column stack</td>
+                  <td>pad:32px 24px / center</td>
+                  <td>r:24px 24px 0 0 / no shadow</td>
+                </tr>
+                <tr>
+                  <td><strong>Small &lt;480</strong></td>
+                  <td>Column stack</td>
+                  <td>pad:24px 16px</td>
+                  <td>pad:20px 16px</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <script>
+    (function() {
+      'use strict';
+
+      var form = document.getElementById('loginForm');
+      var rollInput = document.getElementById('wf-roll-number');
+      var pwInput = document.getElementById('wf-password');
+      var loginBtn = document.getElementById('wf-login-btn');
+      var serverErrorBox = document.getElementById('serverError');
+      var serverErrorText = document.getElementById('serverErrorText');
+      var rollErrorBox = document.getElementById('wf-roll-error');
+      var pwErrorBox = document.getElementById('wf-pw-error');
+
+      function showFieldError(input, box, message) {
+        input.classList.add('input-error');
+        input.setAttribute('aria-invalid', 'true');
+        box.textContent = message;
+        box.style.display = 'flex';
+      }
+
+      function clearFieldError(input, box) {
+        input.classList.remove('input-error');
+        input.setAttribute('aria-invalid', 'false');
+        box.style.display = 'none';
+      }
+
+      function showServerError(message) {
+        serverErrorText.textContent = message;
+        serverErrorBox.classList.add('is-visible');
+      }
+
+      function hideServerError() {
+        serverErrorBox.classList.remove('is-visible');
+      }
+
+      function validateRollNumber(value) {
+        if (!value.trim()) return 'Roll number is required.';
+        if (!/^[A-Za-z0-9\-]+$/.test(value.trim())) return 'Please enter a valid roll number.';
+        return null;
+      }
+
+      function validatePassword(value) {
+        if (!value) return 'Password is required.';
+        return null;
+      }
+
+      /* Clear errors on input */
+      rollInput.addEventListener('input', function() {
+        clearFieldError(rollInput, rollErrorBox);
+        hideServerError();
+      });
+
+      pwInput.addEventListener('input', function() {
+        clearFieldError(pwInput, pwErrorBox);
+        hideServerError();
+      });
+
+      /* Blur validation */
+      rollInput.addEventListener('blur', function() {
+        var err = validateRollNumber(rollInput.value);
+        if (err) showFieldError(rollInput, rollErrorBox, err);
+        else clearFieldError(rollInput, rollErrorBox);
+      });
+
+      pwInput.addEventListener('blur', function() {
+        var err = validatePassword(pwInput.value);
+        if (err) showFieldError(pwInput, pwErrorBox, err);
+        else clearFieldError(pwInput, pwErrorBox);
+      });
+
+      /* Submit */
+      form.addEventListener('submit', function(e) {
+        e.preventDefault();
+        hideServerError();
+
+        var rollErr = validateRollNumber(rollInput.value);
+        var pwErr = validatePassword(pwInput.value);
+
+        if (rollErr) showFieldError(rollInput, rollErrorBox, rollErr);
+        if (pwErr) showFieldError(pwInput, pwErrorBox, pwErr);
+        if (rollErr || pwErr) return;
+
+        /* Wireframe demo: no real submit */
+        loginBtn.disabled = true;
+        loginBtn.textContent = 'Login (wireframe)';
+      });
+    })();
+  </script>
+</body>
+</html>

@@ -96,133 +96,261 @@ export default function StudentLogin() {
         src="/nature-bg.jpg"
         alt=""
         className="absolute inset-0 h-full w-full object-cover"
+        aria-hidden="true"
       />
 
-      {/* Right side overlay with translucency */}
-      <div className="absolute inset-0 lg:inset-0 lg:left-1/2 lg:bg-white/20 lg:backdrop-blur-sm" />
+      {/* Mobile-only header */}
+      <div className="relative z-10 flex items-center gap-2 px-5 py-4 md:hidden">
+        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-white/90 shadow-sm">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path
+              d="M12 3L20 9V21H4V9L12 3Z"
+              stroke="#0B4D3B"
+              strokeWidth="2.2"
+              strokeLinejoin="round"
+            />
+            <path d="M9 21V15H15V21" stroke="#0B4D3B" strokeWidth="2.2" strokeLinejoin="round" />
+          </svg>
+        </div>
+        <span className="text-base font-semibold text-white drop-shadow">Digi Guru</span>
+      </div>
 
-      {/* Content container */}
-      <div className="relative z-10 flex w-full flex-col lg:w-1/2 lg:ml-auto">
-        {/* Header */}
-        <header className="flex items-center justify-between px-6 py-5 sm:px-10">
-          <Link to="/login" className="flex items-center gap-2.5 focus-ring rounded-xl">
-            <span className="flex h-8 w-8 items-center justify-center rounded-xl bg-dg-900 text-white text-[15px] font-bold shadow-sm" aria-hidden>
-              ◆
-            </span>
-            <span className="text-[17px] font-semibold tracking-tight text-ink-900">Digi Guru</span>
-          </Link>
-          <Link
-            to="/signup"
-            className="inline-flex items-center justify-center rounded-full bg-dg-900 px-5 py-2.5 text-sm font-medium text-white shadow-[0_4px_16px_rgba(14,75,58,0.22)] transition hover:bg-dg-950 focus-ring"
-          >
-            Get Started
-          </Link>
-        </header>
-
-        {/* Login form container */}
-        <div className="flex flex-1 flex-col justify-center px-6 py-8 sm:px-10">
-          <div className="mx-auto w-full max-w-[420px]">
-            {/* Heading */}
-            <div className="mb-8">
-              <p className="font-display text-[11px] font-medium uppercase tracking-[0.18em] text-dg-700/80">Welcome back</p>
-              <h1 className="mt-2 font-display text-[28px] font-normal leading-tight text-ink-900 sm:text-[34px]">
-                Learn with your <span className="font-medium text-dg-900">personal AI teacher</span>
-              </h1>
-              <p className="mt-2 text-sm leading-relaxed text-ink-500 sm:text-[15px]">
-                Your textbook, your pace — calm, focused, and built for you.
-              </p>
-            </div>
-
-            {/* Form card */}
-            <div className="rounded-2xl border border-slate-200/50 bg-white/90 backdrop-blur-sm p-6 shadow-lg sm:p-8">
-              <div className="mb-6">
-                <h2 className="text-xl font-semibold tracking-tight text-ink-900">Log in to your account</h2>
-                <p className="mt-1 text-sm text-ink-500">Use your Roll Number or Email to continue.</p>
-              </div>
-
-              {serverError && (
-                <div className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800" role="alert">
-                  {serverError}
-                </div>
-              )}
-
-              <form onSubmit={handleSubmit(onSubmit)} noValidate className="space-y-4">
-                <Input
-                  label="Roll Number / Email"
-                  placeholder="012345 or you@example.com"
-                  autoComplete="username"
-                  required
-                  error={errors.identifier?.message}
-                  {...register('identifier')}
+      {/* Left brand panel */}
+      <div className="relative hidden w-full md:flex md:w-1/2 md:flex-col md:justify-center md:px-16 lg:px-20">
+        <div className="max-w-md">
+          <div className="mb-8 flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/15 backdrop-blur">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path
+                  d="M12 3L20 9V21H4V9L12 3Z"
+                  stroke="white"
+                  strokeWidth="2"
+                  strokeLinejoin="round"
                 />
+                <path d="M9 21V15H15V21" stroke="white" strokeWidth="2" strokeLinejoin="round" />
+              </svg>
+            </div>
+            <span className="text-xl font-bold text-white">Digi Guru</span>
+          </div>
 
-                <div className="space-y-1.5">
-                  <label htmlFor="password" className="block text-sm font-medium text-ink-900">
-                    Password <span className="ml-1 text-red-500" aria-hidden>*</span>
-                  </label>
-                  <div className="relative">
-                    <input
-                      id="password"
-                      type={showPassword ? 'text' : 'password'}
-                      placeholder="••••••••"
-                      autoComplete="current-password"
-                      aria-invalid={!!errors.password}
-                      aria-describedby={errors.password ? 'password-error' : undefined}
-                      className={[
-                        'block w-full rounded-xl border bg-white px-3.5 py-2.5 pr-10 text-[15px] text-ink-900 placeholder:text-ink-400',
-                        'shadow-sm transition-colors focus:outline-none focus:ring-2 focus:ring-dg-500/20 focus:border-dg-500',
-                        errors.password ? 'border-red-300 focus:border-red-400 focus:ring-red-500/20' : 'border-slate-200 hover:border-slate-300',
-                      ].join(' ')}
-                      {...register('password')}
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword((v) => !v)}
-                      className="absolute inset-y-0 right-2 flex items-center rounded-lg px-2 text-ink-400 hover:text-ink-700 focus-ring"
-                      aria-label={showPassword ? 'Hide password' : 'Show password'}
-                    >
-                      <span className="text-xs font-medium">{showPassword ? 'Hide' : 'Show'}</span>
-                    </button>
-                  </div>
-                  {errors.password?.message && (
-                    <p id="password-error" className="text-sm text-red-600" role="alert">
-                      {errors.password.message}
-                    </p>
-                  )}
-                </div>
+          <h1 className="mb-4 text-4xl font-bold leading-[1.1] tracking-tight text-white">
+            Your learning journey starts here
+          </h1>
 
-                <div className="flex items-center justify-between gap-4">
-                  <label className="flex cursor-pointer items-center gap-2 text-sm text-ink-700">
-                    <input
-                      type="checkbox"
-                      className="h-4 w-4 rounded border-slate-300 text-dg-600 focus:ring-dg-500"
-                      {...register('rememberMe')}
-                    />
-                    Remember me
-                  </label>
-                  <Link to="/forgot-password" className="text-sm font-medium text-dg-700 hover:text-dg-900 hover:underline focus-ring rounded">
-                    Forgot password?
-                  </Link>
-                </div>
+          <p className="mb-10 max-w-sm text-lg leading-relaxed text-white/85">
+            Continue your personalized learning experience with Digi Guru.
+          </p>
 
-                <Button type="submit" loading={isSubmitting} className="w-full" size="lg">
-                  Log in
-                </Button>
-
-                <p className="text-center text-sm text-ink-500">
-                  Don&apos;t have an account?{' '}
-                  <Link to="/signup" className="font-medium text-dg-700 hover:text-dg-900 hover:underline focus-ring rounded">
-                    Sign up
-                  </Link>
-                </p>
-              </form>
+          <div className="flex items-end gap-4" aria-hidden="true">
+            <div className="flex h-[88px] w-[88px] items-center justify-center rounded-[16px] bg-white/10 backdrop-blur">
+              <svg width="36" height="36" viewBox="0 0 24 24" fill="none">
+                <path
+                  d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"
+                  stroke="white"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                />
+                <path
+                  d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"
+                  stroke="white"
+                  strokeWidth="2"
+                  strokeLinejoin="round"
+                />
+              </svg>
             </div>
 
-            <p className="mt-6 flex items-center justify-center gap-2 text-center text-xs text-ink-400 sm:text-sm">
-              <span className="inline-flex h-5 w-5 items-center justify-center rounded-full bg-white/80 text-[11px] shadow-sm">♥</span>
-              Trusted by learners across Kerala — your data stays private and secure.
-            </p>
+            <div className="flex flex-col gap-[6px] pb-[10px]">
+              {[7, 6, 5].map((size) => (
+                <div
+                  key={size}
+                  className="rounded-full bg-white/75"
+                  style={{ width: size, height: size }}
+                />
+              ))}
+            </div>
+
+            <div className="flex h-[64px] w-[64px] items-center justify-center rounded-[16px] bg-white/10 backdrop-blur">
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+                <path
+                  d="M12 14l9-5-9-5-9 5 9 5z"
+                  stroke="white"
+                  strokeWidth="2"
+                  strokeLinejoin="round"
+                />
+                <path
+                  d="M12 14l6.16-3.402a12.083 12.083 0 0 1 .665 6.479A11.952 11.952 0 0 1 12 20.055a11.952 11.952 0 0 1-6.824-2.096A12.083 12.083 0 0 1 5.84 10.598L12 14z"
+                  stroke="white"
+                  strokeWidth="2"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </div>
+
+            <div className="ml-auto flex items-end gap-[8px]" aria-hidden="true">
+              {[
+                { w: 22, h: 36 },
+                { w: 18, h: 52 },
+                { w: 14, h: 28 },
+              ].map(({ w, h }, idx) => (
+                <div
+                  key={idx}
+                  className="rounded-[4px] bg-white/10"
+                  style={{ width: w, height: h }}
+                />
+              ))}
+            </div>
           </div>
+        </div>
+      </div>
+
+      {/* Right login card */}
+      <div className="relative flex w-full items-center justify-center px-4 py-8 md:w-1/2 md:px-10">
+        <div className="w-full max-w-[440px] rounded-[24px] bg-white p-[48px] shadow-sm">
+          <div className="mb-8 text-center">
+            <span className="mb-2 block text-xs font-semibold uppercase tracking-widest text-[#1A8A68]">
+              Student Portal
+            </span>
+            <h2 className="mb-1 text-[28px] font-bold tracking-tight text-[#0f172a]">
+              Student Login
+            </h2>
+            <p className="text-sm text-[#64748b]">Sign in to continue your learning journey.</p>
+          </div>
+
+          {serverError && (
+            <div
+              className="mb-4 flex items-start gap-2 rounded-[12px] border border-red-200 bg-red-50 p-3"
+              role="alert"
+              aria-live="polite"
+            >
+              <svg
+                className="mt-[2px] h-[18px] w-[18px] shrink-0 text-red-600"
+                viewBox="0 0 24 24"
+                fill="none"
+                aria-hidden="true"
+              >
+                <path
+                  d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <line x1="12" y1="9" x2="12" y2="13" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                <line x1="12" y1="17" x2="12.01" y2="17" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+              </svg>
+              <span className="text-sm font-medium leading-relaxed text-red-600">{serverError}</span>
+            </div>
+          )}
+
+          <form onSubmit={handleSubmit(onSubmit)} noValidate className="flex flex-col gap-[20px]">
+            <div>
+              <label htmlFor="identifier" className="mb-1 block text-sm font-semibold text-[#334155]">
+                Roll Number <span className="text-red-600">*</span>
+              </label>
+              <Input
+                id="identifier"
+                type="text"
+                inputMode="text"
+                autoComplete="username"
+                placeholder="Enter your roll number"
+                error={errors.identifier?.message}
+                {...register('identifier')}
+              />
+            </div>
+
+            <div>
+              <label htmlFor="password" className="mb-1 block text-sm font-semibold text-[#334155]">
+                Password <span className="text-red-600">*</span>
+              </label>
+              <div className="relative">
+                <Input
+                  id="password"
+                  type={showPassword ? 'text' : 'password'}
+                  autoComplete="current-password"
+                  placeholder="Enter your password"
+                  error={errors.password?.message}
+                  {...register('password')}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((v) => !v)}
+                  className="absolute right-[10px] top-1/2 -translate-y-1/2 rounded-md px-[10px] py-1 text-xs font-medium text-[#94a3b8] transition-colors hover:bg-[#F8FAFC] hover:text-[#334155] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0F6B52] disabled:opacity-45 disabled:cursor-not-allowed"
+                  disabled={isSubmitting}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                >
+                  {showPassword ? (
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                      <path
+                        d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7.36 0-13.91-5.55-18-13a9.956 9.956 0 0 1 6.06-6.06M9.9 4.24A9.884 9.884 0 0 1 12 4c7.36 0 13.91 5.55 18 13-1.27 4.06-5.06 7-9.54 7-1.93 0-3.68-.56-5.2-1.52"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                      <line x1="1" y1="1" x2="23" y2="23" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+                    </svg>
+                  ) : (
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                      <path
+                        d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"
+                        stroke="currentColor"
+                        strokeWidth="1.8"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                      <circle cx="12" cy="12" r="3" stroke="currentColor" strokeWidth="1.8" />
+                    </svg>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between gap-4">
+              <label className="flex cursor-pointer items-center gap-2">
+                <input
+                  type="checkbox"
+                  className="h-[18px] w-[18px] rounded-[5px] border-[1.5px] border-[#e2e8f0] accent-[#0F6B52]"
+                  {...register('rememberMe')}
+                />
+                <span className="text-sm text-[#334155] select-none">Keep me signed in on this device</span>
+              </label>
+              <Link
+                to="/forgot-password"
+                className="whitespace-nowrap text-sm font-medium text-[#0F6B52] no-underline transition-colors hover:text-[#0B4D3B] hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0F6B52]"
+              >
+                Forgot Password?
+              </Link>
+            </div>
+
+            <Button type="submit" className="mt-1 h-[56px] w-full" disabled={isSubmitting}>
+              {isSubmitting ? 'Signing in…' : 'Login'}
+            </Button>
+          </form>
+
+          <div className="mx-auto mt-[24px] flex w-fit items-center gap-3 border-t border-t-[#e2e8f0] pt-4">
+            <span className="text-sm text-[#64748b]">New student?</span>
+            <Link
+              to="/signup"
+              className="whitespace-nowrap text-sm font-semibold text-[#0F6B52] no-underline transition-colors hover:text-[#0B4D3B] hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#0F6B52]"
+            >
+              Create Student Account
+            </Link>
+          </div>
+
+          <p className="mx-auto mt-[24px] flex items-center justify-center gap-2 text-center text-xs text-[#94a3b8]">
+            <span
+              className="flex h-[22px] w-[22px] items-center justify-center rounded-full bg-white shadow-sm"
+              aria-hidden="true"
+            >
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none">
+                <path
+                  d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"
+                  fill="#0B4D3B"
+                />
+              </svg>
+            </span>
+            Trusted by learners across Kerala — your data stays private and secure.
+          </p>
         </div>
       </div>
     </div>
