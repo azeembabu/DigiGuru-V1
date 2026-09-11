@@ -1,0 +1,42 @@
+# Personal agent overrides
+CLAUDE.local.md
+.claude/settings.local.json
+
+# Rust
+/target
+**/*.rs.bk
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+dist/
+.pnpm-store/
+*.tsbuildinfo
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# Data & artifacts
+/uploads
+/storage
+*.pdf
+*.sqlite
+*.db
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json

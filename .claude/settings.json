@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(cargo build:*)",
+      "Bash(cargo check:*)",
+      "Bash(cargo test:*)",
+      "Bash(cargo clippy:*)",
+      "Bash(cargo fmt:*)",
+      "Bash(cargo nextest:*)",
+      "Bash(pnpm install)",
+      "Bash(pnpm run:*)",
+      "Bash(pnpm --filter:*)",
+      "Bash(npx tsc:*)",
+      "Bash(sqlx migrate:*)",
+      "Bash(docker compose:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(rg:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)"
+    ],
+    "ask": [
+      "Bash(git push:*)",
+      "Bash(docker compose down:*)",
+      "Bash(sqlx database drop:*)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./secrets/**)",
+      "Read(./**/*.pem)",
+      "Read(./**/*.key)",
+      "Bash(rm -rf:*)",
+      "Bash(git push --force:*)"
+    ]
+  },
+  "env": {
+    "RUST_LOG": "info,digi_guru=debug",
+    "RUST_BACKTRACE": "1"
+  }
+}
