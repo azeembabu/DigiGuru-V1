@@ -1,0 +1,846 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Student Dashboard — Digi Guru Wireframe</title>
+  <style>
+    /* ── Reset ── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    /* ── Tokens ── */
+    :root {
+      --dg-900: #0B4D3B;
+      --dg-800: #0F6B52;
+      --dg-700: #1A8A68;
+      --dg-500: #34D399;
+      --dg-100: #D1FAE5;
+      --ink-900: #0f172a;
+      --ink-700: #334155;
+      --ink-500: #64748b;
+      --ink-400: #94a3b8;
+      --ink-200: #e2e8f0;
+      --white: #ffffff;
+      --error: #DC2626;
+      --error-bg: #FEF2F2;
+      --bg-page: #F8FAFC;
+      --shadow-card: 0 10px 40px rgba(11,77,59,0.10), 0 2px 8px rgba(11,77,59,0.06);
+      --radius-sm: 8px;
+      --radius-md: 12px;
+      --radius-lg: 16px;
+      --radius-xl: 24px;
+      --space-sm: 16px;
+      --space-md: 20px;
+      --space-lg: 24px;
+      --space-xl: 32px;
+      --space-2xl: 48px;
+    }
+
+    body {
+      min-height: 100vh;
+      font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+      color: var(--ink-900);
+      background: var(--bg-page);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a { color: inherit; text-decoration: none; }
+    button { font-family: inherit; }
+    img { max-width: 100%; display: block; }
+
+    /* ===========================================
+       LAYOUT SHELL
+       =========================================== */
+    .page { min-height: 100vh; display: flex; flex-direction: column; }
+    .container { width: 100%; max-width: 1200px; margin: 0 auto; padding: 0 var(--space-lg); }
+
+    /* ===========================================
+       ANNOTATION BAR
+       =========================================== */
+    .annotations-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 6px 12px;
+      border-bottom: 2px solid var(--ink-900);
+      background: var(--white);
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .annotations-bar .group { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    .chip {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 2px 10px; border: 1.5px solid var(--ink-900); border-radius: 4px;
+      font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase;
+    }
+    .chip::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--ink-900); }
+
+    /* ===========================================
+       SKIP LINK
+       =========================================== */
+    .skip-link {
+      position: absolute; left: -9999px; top: auto; width: 1px; height: 1px; overflow: hidden;
+    }
+    .skip-link:focus { left: 10px; top: 10px; width: auto; height: auto; padding: 8px 12px; background: var(--white); border: 2px solid var(--ink-900); z-index: 1000; }
+
+    /* ===========================================
+       TOP NAVIGATION
+       =========================================== */
+    .topnav {
+      position: sticky; top: 0; z-index: 50;
+      background: rgba(255,255,255,0.92);
+      backdrop-filter: saturate(140%) blur(12px);
+      border-bottom: 1px solid var(--ink-200);
+    }
+    .topnav-inner {
+      display: flex; align-items: center; justify-content: space-between; gap: 16px;
+      height: 64px;
+    }
+    .topnav-logo { display: flex; align-items: center; gap: 10px; }
+    .topnav-logo-box {
+      width: 36px; height: 36px; border: 2px solid var(--ink-900); border-radius: var(--radius-md);
+      display: flex; align-items: center; justify-content: center; color: var(--ink-900); font-size: 10px; font-weight: 800;
+    }
+    .topnav-logo-text { font-size: 18px; font-weight: 700; letter-spacing: -0.3px; color: var(--ink-900); }
+    .topnav-links { display: flex; align-items: center; gap: 6px; }
+    .topnav-link {
+      padding: 8px 12px; border-radius: var(--radius-md); font-size: 14px; font-weight: 500; color: var(--ink-500);
+      border: 1.5px solid transparent; transition: border-color 0.2s ease, color 0.2s ease, background 0.2s ease;
+    }
+    .topnav-link:hover, .topnav-link:focus-visible { color: var(--ink-900); background: var(--bg-page); }
+    .topnav-link.is-active { color: var(--dg-800); border-color: var(--dg-100); background: var(--dg-100); font-weight: 600; }
+    .topnav-actions { display: flex; align-items: center; gap: 10px; }
+    .icon-btn {
+      width: 40px; height: 40px; border-radius: 50%; border: 1.5px solid var(--ink-200); background: var(--white);
+      display: inline-flex; align-items: center; justify-content: center; color: var(--ink-500);
+      transition: border-color 0.2s ease, color 0.2s ease, background 0.2s ease;
+    }
+    .icon-btn:hover, .icon-btn:focus-visible { color: var(--ink-900); background: var(--bg-page); }
+    .profile-btn {
+      display: inline-flex; align-items: center; gap: 10px;
+      padding: 6px 10px 6px 6px; border-radius: 999px; border: 1.5px solid var(--ink-200); background: var(--white);
+      color: var(--ink-900); cursor: pointer; transition: border-color 0.2s ease, box-shadow 0.2s ease;
+    }
+    .profile-btn:hover, .profile-btn:focus-visible { border-color: var(--ink-400); }
+    .avatar {
+      width: 34px; height: 34px; border-radius: 50%; background: var(--dg-800); color: var(--white);
+      display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: 14px;
+    }
+    .profile-name { font-size: 14px; font-weight: 600; }
+    .profile-meta { font-size: 12px; color: var(--ink-500); font-weight: 500; }
+
+    /* Profile dropdown */
+    .profile-wrap { position: relative; }
+    .profile-dropdown {
+      position: absolute; right: 0; top: calc(100% + 8px); width: 220px;
+      background: var(--white); border: 1px solid var(--ink-200); border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-card); padding: 6px; display: none;
+    }
+    .profile-wrap.is-open .profile-dropdown { display: block; }
+    .profile-dropdown-item {
+      display: flex; align-items: center; gap: 10px; width: 100%; padding: 10px 12px; border-radius: var(--radius-md);
+      border: 1.5px solid transparent; background: transparent; color: var(--ink-700); font-size: 14px; font-weight: 500;
+      cursor: pointer; text-align: left;
+    }
+    .profile-dropdown-item:hover, .profile-dropdown-item:focus-visible { background: var(--bg-page); color: var(--ink-900); }
+    .profile-dropdown-divider { height: 1px; background: var(--ink-200); margin: 6px 10px; }
+    .profile-dropdown-item.danger { color: var(--error); }
+
+    /* Mobile header */
+    .mobile-header {
+      display: none; align-items: center; justify-content: space-between; gap: 10px;
+      padding: 12px var(--space-lg); border-bottom: 1px solid var(--ink-200); background: rgba(255,255,255,0.96);
+    }
+    .mobile-header-left { display: flex; align-items: center; gap: 10px; }
+    .mobile-header-title { font-size: 16px; font-weight: 700; color: var(--ink-900); }
+
+    /* Mobile bottom nav */
+    .mobile-bottomnav {
+      display: none; position: fixed; bottom: 0; left: 0; right: 0; z-index: 40;
+      background: rgba(255,255,255,0.96); backdrop-filter: blur(10px); border-top: 1px solid var(--ink-200);
+    }
+    .mobile-bottomnav-inner {
+      display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; max-width: 100%;
+    }
+    .bottomnav-item {
+      display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 6px 10px;
+      border-radius: var(--radius-md); color: var(--ink-400); font-size: 11px; font-weight: 600;
+      border: 1.5px solid transparent; transition: color 0.2s ease;
+    }
+    .bottomnav-item.is-active { color: var(--dg-800); }
+    .bottomnav-item:hover, .bottomnav-item:focus-visible { color: var(--ink-900); }
+
+    /* ===========================================
+       MAIN CONTENT
+       =========================================== */
+    .main { flex: 1; padding: var(--space-xl) 0 calc(72px + var(--space-xl)); }
+    .section { margin-bottom: var(--space-xl); }
+    .section-title {
+      font-size: 14px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-500);
+      margin-bottom: 14px;
+    }
+
+    /* ===========================================
+       WELCOME
+       =========================================== */
+    .welcome {
+      display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px;
+    }
+    .welcome-greeting { font-size: 28px; font-weight: 700; letter-spacing: -0.4px; color: var(--ink-900); }
+    .welcome-meta { font-size: 15px; color: var(--ink-500); font-weight: 500; }
+    .welcome-lsc { font-size: 13px; color: var(--ink-400); font-weight: 500; }
+
+    /* ===========================================
+       CARDS
+       =========================================== */
+    .card {
+      background: var(--white); border: 1px solid var(--ink-200); border-radius: var(--radius-xl);
+      box-shadow: var(--shadow-card); padding: var(--space-lg);
+      transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    .card:hover { transform: translateY(-1px); box-shadow: 0 18px 50px rgba(11,77,59,0.12), 0 4px 10px rgba(11,77,59,0.07); }
+    .card-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-bottom: 14px; }
+    .card-label {
+      display: inline-flex; align-items: center; gap: 8px;
+      font-size: 11px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--dg-700);
+      padding: 4px 10px; border-radius: 999px; background: var(--dg-100); border: 1px solid var(--dg-100);
+    }
+    .card-title { font-size: 22px; font-weight: 700; letter-spacing: -0.2px; color: var(--ink-900); margin-top: 10px; }
+    .card-subtitle { font-size: 14px; color: var(--ink-500); margin-top: 4px; line-height: 1.55; }
+    .card-meta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+    .meta-chip {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 5px 10px; border-radius: 999px; background: var(--bg-page); border: 1px solid var(--ink-200);
+      font-size: 12px; font-weight: 600; color: var(--ink-700);
+    }
+
+    /* ===========================================
+       PROGRESS
+       =========================================== */
+    .progress { display: flex; flex-direction: column; gap: 8px; }
+    .progress-track {
+      height: 10px; width: 100%; border-radius: 999px; background: var(--ink-200); overflow: hidden;
+    }
+    .progress-fill { height: 100%; width: 72%; border-radius: 999px; background: var(--dg-800); }
+    .progress-header { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .progress-value { font-size: 13px; font-weight: 700; color: var(--ink-900); }
+    .progress-note { font-size: 12px; color: var(--ink-500); }
+
+    /* ===========================================
+       BUTTONS
+       =========================================== */
+    .btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+      height: 48px; padding: 0 18px; border-radius: var(--radius-md); font-size: 14px; font-weight: 600;
+      border: 1.5px solid transparent; cursor: pointer; transition: transform 0.12s ease, background 0.2s ease, border-color 0.2s ease;
+    }
+    .btn:active { transform: translateY(1px); }
+    .btn-primary { background: var(--dg-800); color: var(--white); border-color: var(--dg-800); box-shadow: 0 6px 18px rgba(11,77,59,0.25); }
+    .btn-primary:hover { background: var(--dg-900); border-color: var(--dg-900); }
+    .btn-secondary { background: var(--white); color: var(--ink-900); border-color: var(--ink-200); }
+    .btn-secondary:hover { background: var(--bg-page); border-color: var(--ink-400); }
+    .btn-ghost { background: transparent; color: var(--dg-800); border-color: transparent; }
+    .btn-ghost:hover { color: var(--dg-900); text-decoration: underline; }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    /* ===========================================
+       COURSE GRID
+       =========================================== */
+    .course-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+    .course-card {
+      background: var(--white); border: 1px solid var(--ink-200); border-radius: var(--radius-xl);
+      padding: 18px; display: flex; flex-direction: column; gap: 10px;
+      box-shadow: 0 8px 28px rgba(11,77,59,0.08); transition: transform 0.2s ease, box-shadow 0.2s ease;
+    }
+    .course-card:hover { transform: translateY(-1px); box-shadow: var(--shadow-card); }
+    .course-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+    .course-card-title { font-size: 16px; font-weight: 700; color: var(--ink-900); }
+    .course-card-code { font-size: 12px; color: var(--ink-500); font-weight: 600; }
+    .course-status {
+      display: inline-flex; align-items: center; padding: 4px 10px; border-radius: 999px;
+      font-size: 12px; font-weight: 600; border: 1px solid transparent;
+    }
+    .status-started { background: var(--dg-100); color: var(--dg-800); border-color: var(--dg-100); }
+    .status-not-started { background: var(--bg-page); color: var(--ink-500); border-color: var(--ink-200); }
+
+    /* ===========================================
+       COURSE SELECTOR
+       =========================================== */
+    .select-wrap { position: relative; }
+    .select-wrap::after {
+      content: '▼'; position: absolute; right: 14px; top: 50%; transform: translateY(-50%);
+      font-size: 10px; color: var(--ink-500); pointer-events: none;
+    }
+    .select {
+      width: 100%; height: 48px; padding: 0 14px; padding-right: 36px; border-radius: var(--radius-md);
+      border: 1.5px solid var(--ink-200); background: var(--white); color: var(--ink-900);
+      font-size: 14px; font-weight: 500; appearance: none;
+    }
+    .select:focus { outline: none; border-color: var(--dg-800); box-shadow: 0 0 0 3px rgba(26,138,104,0.15); }
+
+    /* ===========================================
+       ACTIVITY TIMELINE
+       =========================================== */
+    .timeline { display: flex; flex-direction: column; gap: 0; }
+    .timeline-item {
+      display: grid; grid-template-columns: 110px 1fr auto; gap: 14px; align-items: center;
+      padding: 14px 0; border-bottom: 1px solid var(--ink-200);
+    }
+    .timeline-item:last-child { border-bottom: none; }
+    .timeline-date { font-size: 12px; font-weight: 700; color: var(--ink-500); }
+    .timeline-body { display: flex; flex-direction: column; gap: 2px; }
+    .timeline-title { font-size: 14px; font-weight: 600; color: var(--ink-900); }
+    .timeline-sub { font-size: 12px; color: var(--ink-500); }
+    .timeline-result { font-size: 13px; font-weight: 700; color: var(--dg-800); }
+
+    /* ===========================================
+       LEARNING JOURNEY
+       =========================================== */
+    .journey { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .journey-step {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 8px 12px; border-radius: var(--radius-md); background: var(--bg-page);
+      border: 1px solid var(--ink-200); font-size: 13px; font-weight: 600; color: var(--ink-700);
+    }
+    .journey-arrow { color: var(--ink-400); font-size: 18px; }
+
+    /* ===========================================
+       QUICK ACTIONS
+       =========================================== */
+    .quick-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+    .quick-item {
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+      padding: 18px 12px; border-radius: var(--radius-xl); background: var(--white);
+      border: 1px solid var(--ink-200); color: var(--ink-900); font-size: 13px; font-weight: 600;
+      cursor: pointer; transition: border-color 0.2s ease, transform 0.2s ease;
+    }
+    .quick-item:hover { border-color: var(--ink-400); transform: translateY(-1px); }
+    .quick-icon {
+      width: 36px; height: 36px; border-radius: 50%; background: var(--bg-page); border: 1px solid var(--ink-200);
+      display: inline-flex; align-items: center; justify-content: center; color: var(--ink-900); font-size: 12px;
+    }
+
+    /* ===========================================
+       ACADEMIC INFO
+       =========================================== */
+    .info-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .info-row { display: flex; flex-direction: column; gap: 2px; }
+    .info-label { font-size: 12px; font-weight: 600; color: var(--ink-500); text-transform: uppercase; letter-spacing: 0.08em; }
+    .info-value { font-size: 15px; font-weight: 600; color: var(--ink-900); }
+
+    /* ===========================================
+       AI TEACHER
+       =========================================== */
+    .ai-card {
+      background: linear-gradient(145deg, rgba(11,77,59,0.92) 0%, #082e22 100%);
+      color: var(--white); border-radius: var(--radius-xl); padding: var(--space-xl); position: relative; overflow: hidden;
+    }
+    .ai-card::before {
+      content: ''; position: absolute; inset: 0;
+      background-image: radial-gradient(circle, rgba(255,255,255,0.08) 1px, transparent 1px);
+      background-size: 24px 24px; pointer-events: none;
+    }
+    .ai-inner { position: relative; z-index: 1; display: flex; flex-direction: column; gap: 14px; }
+    .ai-title { font-size: 22px; font-weight: 700; letter-spacing: -0.2px; }
+    .ai-sub { font-size: 14px; color: rgba(255,255,255,0.82); line-height: 1.6; max-width: 520px; }
+    .ai-capabilities { display: flex; flex-wrap: wrap; gap: 10px; }
+    .ai-chip {
+      padding: 6px 12px; border-radius: 999px; background: rgba(255,255,255,0.14); border: 1px solid rgba(255,255,255,0.22);
+      font-size: 13px; font-weight: 600;
+    }
+    .ai-card .btn-primary { background: var(--white); color: var(--dg-900); border-color: var(--white); }
+    .ai-card .btn-primary:hover { background: var(--bg-page); }
+
+    /* ===========================================
+       EMPTY STATE
+       =========================================== */
+    .empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 28px; text-align: center; }
+    .empty-icon { width: 52px; height: 52px; border-radius: 50%; border: 2px solid var(--ink-200); display: inline-flex; align-items: center; justify-content: center; color: var(--ink-400); font-weight: 700; }
+    .empty-title { font-size: 16px; font-weight: 700; color: var(--ink-900); }
+    .empty-sub { font-size: 14px; color: var(--ink-500); max-width: 280px; line-height: 1.55; }
+
+    /* ===========================================
+       LOADING SKELETONS
+       =========================================== */
+    .skeleton { position: relative; overflow: hidden; background: var(--ink-200); border-radius: var(--radius-md); }
+    .skeleton::after {
+      content: ''; position: absolute; inset: 0;
+      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.6), transparent);
+      transform: translateX(-100%);
+      animation: shimmer 1.4s infinite;
+    }
+    @keyframes shimmer { 100% { transform: translateX(100%); } }
+    .sk-text { height: 14px; width: 70%; margin-bottom: 10px; }
+    .sk-title { height: 22px; width: 40%; margin-bottom: 14px; }
+    .sk-card { height: 180px; width: 100%; border-radius: var(--radius-xl); }
+    .sk-block { height: 120px; width: 100%; border-radius: var(--radius-xl); }
+
+    /* ===========================================
+       ERROR STATE
+       =========================================== */
+    .error-state {
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+      padding: 28px; text-align: center; border: 1.5px dashed var(--error); border-radius: var(--radius-xl); background: var(--error-bg);
+    }
+    .error-state-title { font-size: 16px; font-weight: 700; color: var(--error); }
+    .error-state-sub { font-size: 14px; color: var(--ink-500); }
+
+    /* ===========================================
+       LAST SESSION
+       =========================================== */
+    .last-session { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+    .last-item { display: flex; flex-direction: column; gap: 2px; }
+    .last-label { font-size: 12px; font-weight: 600; color: var(--ink-500); text-transform: uppercase; letter-spacing: 0.08em; }
+    .last-value { font-size: 15px; font-weight: 600; color: var(--ink-900); }
+
+    /* ===========================================
+       FOOTER
+       =========================================== */
+    .footer {
+      margin-top: var(--space-xl); padding: var(--space-lg) 0; border-top: 1px solid var(--ink-200);
+      display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;
+      font-size: 12px; color: var(--ink-500); font-weight: 500;
+    }
+
+    /* ===========================================
+       UTILITIES
+       =========================================== */
+    .grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+    .gap-lg { gap: var(--space-lg); }
+    .mb-lg { margin-bottom: var(--space-lg); }
+    .mt-lg { margin-top: var(--space-lg); }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+
+    /* ===========================================
+       RESPONSIVE — tablet
+       =========================================== */
+    @media (max-width: 1024px) {
+      .course-grid { grid-template-columns: repeat(2, 1fr); }
+      .quick-grid { grid-template-columns: repeat(2, 1fr); }
+      .timeline-item { grid-template-columns: 90px 1fr auto; }
+    }
+
+    /* ===========================================
+       RESPONSIVE — mobile
+       =========================================== */
+    @media (max-width: 768px) {
+      .topnav-links, .topnav-actions { display: none; }
+      .mobile-header { display: flex; }
+      .mobile-bottomnav { display: block; padding-bottom: env(safe-area-inset-bottom); }
+      .main { padding-top: var(--space-lg); }
+      .welcome-greeting { font-size: 22px; }
+      .course-grid { grid-template-columns: 1fr; }
+      .quick-grid { grid-template-columns: repeat(2, 1fr); }
+      .grid-2 { grid-template-columns: 1fr; }
+      .info-grid { grid-template-columns: 1fr; }
+      .last-session { grid-template-columns: 1fr; }
+      .timeline-item { grid-template-columns: 1fr; gap: 4px; }
+      .timeline-result { justify-self: start; }
+      .journey { flex-direction: column; align-items: stretch; }
+      .journey-arrow { transform: rotate(90deg); align-self: center; }
+      .container { padding: 0 var(--space-md); }
+    }
+
+    @media (max-width: 480px) {
+      .welcome-greeting { font-size: 18px; }
+      .card-title { font-size: 18px; }
+      .btn { height: 52px; }
+    }
+  </style>
+</head>
+<body>
+  <a className="skip-link" href="#main">Skip to main content</a>
+  <div className="page">
+
+    <!-- Desktop top nav -->
+    <header className="topnav" role="banner">
+      <div className="container">
+        <div className="topnav-inner">
+          <a className="topnav-logo" href="#" aria-label="Digi Guru home">
+            <span className="topnav-logo-box" aria-hidden="true">[logo]</span>
+            <span className="topnav-logo-text">Digi Guru</span>
+          </a>
+
+          <nav className="topnav-links" aria-label="Primary">
+            <a className="topnav-link is-active" href="#">Dashboard</a>
+            <a className="topnav-link" href="#">My Courses</a>
+            <a className="topnav-link" href="#">Progress</a>
+            <a className="topnav-link" href="#">Notes</a>
+            <a className="topnav-link" href="#">Tests</a>
+          </nav>
+
+          <div className="topnav-actions">
+            <button className="icon-btn" aria-label="Notifications">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <path d="M6 8a6 6 0 0 1 12 0v5a3 3 0 0 0 3 3v1H3v-1a3 3 0 0 0 3-3V8z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"/>
+                <path d="M10 21a2 2 0 0 0 4 0" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/>
+              </svg>
+            </button>
+            <div className="profile-wrap" id="profileWrap">
+              <button className="profile-btn" id="profileBtn" aria-haspopup="true" aria-expanded="false">
+                <span className="avatar" aria-hidden="true">B</span>
+                <span className="profile-name">Bazil</span>
+                <span className="profile-meta">BA Malayalam</span>
+              </button>
+              <div className="profile-dropdown" role="menu" aria-label="Profile menu">
+                <button className="profile-dropdown-item" role="menuitem">My Profile</button>
+                <button className="profile-dropdown-item" role="menuitem">Settings</button>
+                <div className="profile-dropdown-divider" role="separator" />
+                <button className="profile-dropdown-item danger" role="menuitem">Logout</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- Mobile header -->
+    <div className="mobile-header" role="banner">
+      <div className="mobile-header-left">
+        <span className="topnav-logo-box" aria-hidden="true">[logo]</span>
+        <span className="mobile-header-title">Digi Guru</span>
+      </div>
+      <button className="profile-btn" aria-label="Open profile menu">
+        <span className="avatar" aria-hidden="true">B</span>
+        <span className="profile-name">Bazil</span>
+      </button>
+    </div>
+
+    <main id="main" className="main" tabIndex="-1">
+      <div className="container">
+
+        <!-- Welcome -->
+        <section className="section" aria-labelledby="welcome">
+          <div className="welcome">
+            <h1 id="welcome" className="welcome-greeting">Good morning, Bazil</h1>
+            <p className="welcome-meta">BA Malayalam • Semester 2 • Roll No. 10245</p>
+            <p className="welcome-lsc">LSC: Karunagappally</p>
+          </div>
+        </section>
+
+        <!-- Continue Learning -->
+        <section className="section" aria-labelledby="continue">
+          <div className="card">
+            <div className="card-header">
+              <div>
+                <span className="card-label" id="continue">Continue Learning</span>
+                <h2 className="card-title">Malayalam Literature</h2>
+                <p className="card-subtitle">Unit 2 • Chapter 3 — Modern Malayalam Poetry</p>
+              </div>
+              <span className="meta-chip">Last studied today</span>
+            </div>
+            <div className="progress">
+              <div className="progress-header">
+                <span className="progress-note">Your progress</span>
+                <span className="progress-value">72%</span>
+              </div>
+              <div className="progress-track" aria-hidden="true"><div className="progress-fill" /></div>
+            </div>
+            <div className="mt-lg" style="display:flex;gap:10px;flex-wrap:wrap;">
+              <button className="btn btn-primary" type="button">Continue Class →</button>
+              <button className="btn btn-secondary" type="button">View Syllabus</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- Current Course Selector -->
+        <section className="section" aria-labelledby="courseSelector">
+          <label htmlFor="currentCourse" id="courseSelector" className="section-title">Current Course</label>
+          <div className="select-wrap" style="max-width: 360px;">
+            <select id="currentCourse" className="select">
+              <option>Malayalam Literature</option>
+              <option>Language Studies</option>
+              <option>Literary Criticism</option>
+            </select>
+          </div>
+        </section>
+
+        <!-- My Courses -->
+        <section className="section" aria-labelledby="myCourses">
+          <h2 id="myCourses" className="section-title">My Courses</h2>
+          <div className="course-grid">
+            <article className="course-card">
+              <div className="course-card-head">
+                <div>
+                  <div className="course-card-title">Malayalam Literature</div>
+                  <div className="course-card-code">Course Code: MAL-201</div>
+                </div>
+                <span className="course-status status-started">72% Complete</span>
+              </div>
+              <div className="progress">
+                <div className="progress-track" aria-hidden="true"><div className="progress-fill" /></div>
+              </div>
+              <button className="btn btn-secondary" type="button" style="width:100%;">Continue →</button>
+            </article>
+            <article className="course-card">
+              <div className="course-card-head">
+                <div>
+                  <div className="course-card-title">Language Studies</div>
+                  <div className="course-card-code">Course Code: MAL-202</div>
+                </div>
+                <span className="course-status status-started">38% Complete</span>
+              </div>
+              <div className="progress">
+                <div className="progress-track" aria-hidden="true"><div className="progress-fill" style="width:38%;" /></div>
+              </div>
+              <button className="btn btn-secondary" type="button" style="width:100%;">Open Course →</button>
+            </article>
+            <article className="course-card">
+              <div className="course-card-head">
+                <div>
+                  <div className="course-card-title">Literary Criticism</div>
+                  <div className="course-card-code">Course Code: MAL-203</div>
+                </div>
+                <span className="course-status status-not-started">Not Started</span>
+              </div>
+              <div className="progress">
+                <div className="progress-track" aria-hidden="true"><div className="progress-fill" style="width:0%;" /></div>
+              </div>
+              <button className="btn btn-secondary" type="button" style="width:100%;">Start Course →</button>
+            </article>
+          </div>
+        </section>
+
+        <!-- 2-column: Progress + Recent Activity -->
+        <section className="grid-2 gap-lg section" aria-labelledby="progress">
+          <div className="card">
+            <h2 id="progress" className="section-title">Your Learning Progress</h2>
+            <div className="progress" style="margin-bottom: 14px;">
+              <div className="progress-header">
+                <span className="progress-note">Overall Progress</span>
+                <span className="progress-value">72%</span>
+              </div>
+              <div className="progress-track" aria-hidden="true"><div className="progress-fill" /></div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:10px;">
+              <div style="display:flex;align-items:center;justify-content:space-between;">
+                <span style="font-size:14px;font-weight:600;color:var(--ink-700);">Unit 1</span>
+                <span className="course-status status-started">Completed</span>
+              </div>
+              <div style="display:flex;align-items:center;justify-content:space-between;">
+                <span style="font-size:14px;font-weight:600;color:var(--ink-700);">Unit 2</span>
+                <span style="font-size:14px;font-weight:700;color:var(--dg-800);">72%</span>
+              </div>
+              <div style="display:flex;align-items:center;justify-content:space-between;">
+                <span style="font-size:14px;font-weight:600;color:var(--ink-700);">Unit 3</span>
+                <span className="course-status status-not-started">Not Started</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="card">
+            <h2 className="section-title">Recent Activity</h2>
+            <div className="timeline" role="list">
+              <div className="timeline-item" role="listitem">
+                <span className="timeline-date">Today</span>
+                <div className="timeline-body">
+                  <span className="timeline-title">Modern Malayalam Poetry</span>
+                  <span className="timeline-sub">Malayalam Literature</span>
+                </div>
+                <span className="timeline-result">20 min</span>
+              </div>
+              <div className="timeline-item" role="listitem">
+                <span className="timeline-date">Yesterday</span>
+                <div className="timeline-body">
+                  <span className="timeline-title">Literary Forms</span>
+                  <span className="timeline-sub">Malayalam Literature</span>
+                </div>
+                <span className="timeline-result">18 min</span>
+              </div>
+              <div className="timeline-item" role="listitem">
+                <span className="timeline-date">Sep 7</span>
+                <div className="timeline-body">
+                  <span className="timeline-title">Unit 1 Test</span>
+                  <span className="timeline-sub">Malayalam Literature</span>
+                </div>
+                <span className="timeline-result">Score: 82%</span>
+              </div>
+              <div className="timeline-item" role="listitem">
+                <span className="timeline-date">Sep 5</span>
+                <div className="timeline-body">
+                  <span className="timeline-title">Language Studies</span>
+                  <span className="timeline-sub">MAL-202</span>
+                </div>
+                <span className="timeline-result">25 min</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Last Session -->
+        <section className="section" aria-labelledby="lastSession">
+          <h2 id="lastSession" className="section-title">Continue From Your Last Session</h2>
+          <div className="card">
+            <div className="last-session">
+              <div className="last-item">
+                <span className="last-label">Course</span>
+                <span className="last-value">Malayalam Literature</span>
+              </div>
+              <div className="last-item">
+                <span className="last-label">Unit</span>
+                <span className="last-value">Unit 2</span>
+              </div>
+              <div className="last-item">
+                <span className="last-label">Chapter</span>
+                <span className="last-value">Modern Malayalam Poetry</span>
+              </div>
+              <div className="last-item">
+                <span className="last-label">Last Session</span>
+                <span className="last-value">Today, 10:00 AM</span>
+              </div>
+            </div>
+            <div className="mt-lg" style="display:flex;gap:10px;flex-wrap:wrap;">
+              <button className="btn btn-primary" type="button">Continue Learning</button>
+              <button className="btn btn-ghost" type="button">Start New Session</button>
+            </div>
+          </div>
+        </section>
+
+        <!-- Quick Actions -->
+        <section className="section" aria-labelledby="quick">
+          <h2 id="quick" className="section-title">Quick Access</h2>
+          <div className="quick-grid">
+            <button className="quick-item" type="button">
+              <span className="quick-icon" aria-hidden="true">[icon]</span>
+              <span>Courses</span>
+            </button>
+            <button className="quick-item" type="button">
+              <span className="quick-icon" aria-hidden="true">[icon]</span>
+              <span>Notes</span>
+            </button>
+            <button className="quick-item" type="button">
+              <span className="quick-icon" aria-hidden="true">[icon]</span>
+              <span>Tests</span>
+            </button>
+            <button className="quick-item" type="button">
+              <span className="quick-icon" aria-hidden="true">[icon]</span>
+              <span>Progress</span>
+            </button>
+          </div>
+        </section>
+
+        <!-- Learning Journey -->
+        <section className="section" aria-labelledby="journey">
+          <h2 id="journey" className="section-title">Your Learning Journey</h2>
+          <div className="card">
+            <div className="journey">
+              <span className="journey-step">Course</span>
+              <span className="journey-arrow" aria-hidden="true">↓</span>
+              <span className="journey-step">Unit</span>
+              <span className="journey-arrow" aria-hidden="true">↓</span>
+              <span className="journey-step">Chapter</span>
+              <span className="journey-arrow" aria-hidden="true">↓</span>
+              <span className="journey-step">Learning Session</span>
+              <span className="journey-arrow" aria-hidden="true">↓</span>
+              <span className="journey-step">Practice</span>
+              <span className="journey-arrow" aria-hidden="true">↓</span>
+              <span className="journey-step">Progress</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- AI Teacher -->
+        <section className="section" aria-labelledby="aiTeacher">
+          <h2 id="aiTeacher" className="section-title">Meet Your AI Teacher</h2>
+          <div className="ai-card">
+            <div className="ai-inner">
+              <h3 className="ai-title">Learn through an interactive teaching experience</h3>
+              <p className="ai-sub">Designed around your course and learning progress. Voice interaction, an interactive whiteboard, and personalized guidance.</p>
+              <div className="ai-capabilities">
+                <span className="ai-chip">Voice Interaction</span>
+                <span className="ai-chip">Interactive Whiteboard</span>
+                <span className="ai-chip">Personalized Learning</span>
+              </div>
+              <div>
+                <button className="btn btn-primary" type="button">Start AI Class →</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Academic Information -->
+        <section className="section" aria-labelledby="academic">
+          <div className="card">
+            <div className="card-header">
+              <h2 id="academic" className="section-title" style="margin:0;">My Academic Information</h2>
+              <button className="btn btn-ghost" type="button" style="padding:6px 4px;height:auto;">View Profile →</button>
+            </div>
+            <div className="info-grid">
+              <div className="info-row"><span className="info-label">Student Name</span><span className="info-value">Bazil</span></div>
+              <div className="info-row"><span className="info-label">Roll Number</span><span className="info-value">10245</span></div>
+              <div className="info-row"><span className="info-label">Program</span><span className="info-value">BA Malayalam</span></div>
+              <div className="info-row"><span className="info-label">Semester</span><span className="info-value">2</span></div>
+              <div className="info-row"><span className="info-label">LSC</span><span className="info-value">Karunagappally</span></div>
+              <div className="info-row"><span className="info-label">Academic Year</span><span className="info-value">2026–27</span></div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Footer -->
+        <footer className="footer" role="contentinfo">
+          <span>Digi Guru • Student Portal</span>
+          <span>Need help? Contact support</span>
+        </footer>
+
+      </div>
+    </main>
+
+    <!-- Mobile bottom navigation -->
+    <nav className="mobile-bottomnav" aria-label="Mobile">
+      <div className="mobile-bottomnav-inner">
+        <a className="bottomnav-item is-active" href="#" aria-label="Home">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M3 10.5L12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1V10.5z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"/></svg>
+          <span>Home</span>
+        </a>
+        <a className="bottomnav-item" href="#" aria-label="Courses">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"/></svg>
+          <span>Courses</span>
+        </a>
+        <a className="bottomnav-item" href="#" aria-label="Progress">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.8"/><path d="M12 7v5l3.5 3.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/></svg>
+          <span>Progress</span>
+        </a>
+        <a className="bottomnav-item" href="#" aria-label="Notes">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8l-6-6z" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/></svg>
+          <span>Notes</span>
+        </a>
+        <a className="bottomnav-item" href="#" aria-label="Profile">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="12" cy="8" r="4" stroke="currentColor" strokeWidth="1.8"/><path d="M4 20c0-4 4-7 8-7s8 3 8 7" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"/></svg>
+          <span>Profile</span>
+        </a>
+      </div>
+    </nav>
+  </div>
+
+  <script>
+    (function() {
+      'use strict';
+      var profileWrap = document.getElementById('profileWrap');
+      var profileBtn = document.getElementById('profileBtn');
+      var profileOpen = false;
+
+      function closeProfile() {
+        profileOpen = false;
+        profileWrap.classList.remove('is-open');
+        profileBtn.setAttribute('aria-expanded', 'false');
+      }
+
+      function openProfile() {
+        profileOpen = true;
+        profileWrap.classList.add('is-open');
+        profileBtn.setAttribute('aria-expanded', 'true');
+      }
+
+      profileBtn.addEventListener('click', function(e) {
+        e.stopPropagation();
+        if (profileOpen) closeProfile();
+        else openProfile();
+      });
+
+      document.addEventListener('click', function() { if (profileOpen) closeProfile(); });
+      document.addEventListener('keydown', function(e) { if (e.key === 'Escape' && profileOpen) closeProfile(); });
+    })();
+  </script>
+</body>
+</html>
