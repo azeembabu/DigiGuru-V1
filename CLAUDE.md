@@ -81,6 +81,27 @@ Run this before touching prompt engines, `.claude/` rules, or backend logic — 
 Never edit prompt instructions or `.claude/rules/*` locally without pushing — a divergent local
 rule set is worse than no rule set, since it silently changes agent behavior for only one developer.
 
+## MANDATORY: sync CLAUDE.md / `.claude/` on every prompt or rule change
+
+This is not optional. Any change to the agent's instructions — `CLAUDE.md`, anything under
+`.claude/rules/`, `.claude/agents/`, `.claude/commands/`, `.claude/skills/`, or `.claude/settings.json`
+— must go through this exact sequence before the change is considered done:
+
+1. `git pull origin main --rebase` first, so the edit is applied on top of the other developer's
+   latest rules, not a stale copy — this is what prevents the two machines' rule sets from
+   silently diverging and causing conflicting agent behavior.
+2. Make the edit.
+3. Commit with a message that names which rule/file changed and why, e.g.
+   `git commit -m "docs(claude): tighten RBAC capability rule after sub-admin scope bug"`.
+4. `git push origin main` (or the branch, if the change rides with a feature branch) **immediately**
+   — an unpushed prompt change is treated as not having happened. Never leave a `.claude/`/`CLAUDE.md`
+   edit uncommitted or unpushed at the end of a session.
+5. Tell the other developer (or leave it visible in the commit) that the rule set changed, so their
+   next `git pull --rebase` picks it up before their next task.
+
+A rule change that lives on only one computer is the single fastest way for the two of you to get
+conflicting agent behavior — treat every `.claude/`/`CLAUDE.md` edit as incomplete until it is pushed.
+
 ## Working agreements
 
 - Do not add a dependency without noting why in the PR description.
