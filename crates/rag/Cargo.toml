@@ -10,3 +10,16 @@ name = "rag"
 path = "src/lib.rs"
 
 [dependencies]
+dg-core = { workspace = true }
+dg-db = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+async-trait = { workspace = true }
+rand = { workspace = true }
+sqlx = { workspace = true }
+lopdf = { workspace = true }
+qdrant-client = { workspace = true }

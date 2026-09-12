@@ -20,6 +20,12 @@ pub struct Config {
     /// cannot be replayed without it.
     pub jwt_refresh_secret: String,
     pub port: u16,
+    /// Gemini API key for `gemini-embedding-001` (Phase 2 ingestion) and,
+    /// later, Gemini Live (Phase 3). Optional for now: the ingestion
+    /// pipeline runs against `rag::embed::StubEmbedder` until a real key is
+    /// available in this environment (`// TODO(phase2-api-key)` in
+    /// `crates/rag/src/embed.rs`).
+    pub gemini_api_key: Option<String>,
 }
 
 /// A single missing or invalid environment variable.
@@ -43,6 +49,7 @@ impl Config {
                 .ok()
                 .and_then(|p| p.parse().ok())
                 .unwrap_or(8080),
+            gemini_api_key: std::env::var("GEMINI_API_KEY").ok(),
         })
     }
 }

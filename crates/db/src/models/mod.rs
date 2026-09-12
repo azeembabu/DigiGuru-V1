@@ -14,6 +14,7 @@ pub mod auth_sessions;
 pub mod blocks;
 pub mod content;
 pub mod courses;
+pub mod documents;
 pub mod lscs;
 pub mod password_resets;
 pub mod programs;

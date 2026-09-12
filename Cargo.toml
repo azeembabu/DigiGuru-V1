@@ -40,6 +40,9 @@ rand = "0.8"
 sha2 = "0.10"
 base64 = "0.22"
 regex = "1"
+async-trait = "0.1"
+lopdf = "0.32"
+qdrant-client = "1"
 
 dg-core = { path = "crates/core" }
 dg-db = { path = "crates/db" }
