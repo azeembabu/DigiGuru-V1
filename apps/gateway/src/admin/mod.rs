@@ -10,6 +10,7 @@
 //! `students.current_block_id`). Noted as a gap, not silently added.
 
 pub mod courses;
+pub mod documents;
 pub mod lscs;
 pub mod programs;
 pub mod semesters;
@@ -39,6 +40,7 @@ pub fn router() -> Router<AppState> {
         .route("/students/{id}", get(students::get_student))
         .route("/students/{id}/academic", patch(students::update_student_academic))
         .route("/students/{id}/current-block", patch(students::set_current_block))
+        .route("/blocks/{block_id}/documents", post(documents::upload))
         .route("/users", get(users::list_users).post(users::create_admin))
         .route("/users/{id}/status", patch(users::set_user_status))
         .route("/users/{id}/scopes", get(users::list_scopes).post(users::add_scope))

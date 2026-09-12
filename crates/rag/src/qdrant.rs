@@ -115,7 +115,24 @@ pub async fn upsert_chunks(
             payload.insert("text".to_string(), chunk.text.clone().into());
             payload.insert("lang".to_string(), chunk.lang.clone().into());
 
-            PointStruct::new(id, [(DENSE_VECTOR_NAME.to_string(), embedding.clone())], payload)
+            // Shared encoding with `retrieve::search_sparse` (`crate::sparse`)
+            // — the two sides MUST use the same scheme or sparse search
+            // silently returns nothing meaningful.
+            //
+            // NOTE(review): flagged alongside the rest of this file as
+            // unverified against the pinned qdrant-client version (no
+            // compiler available in the environment that wrote it) — the
+            // exact way to attach a *named* dense vector plus a *named*
+            // sparse vector on one `PointStruct` may need adjusting once
+            // `cargo check` is available. The intent: both `dense` and
+            // `bm25` named vectors on every point, not dense-only.
+            let sparse = crate::sparse::sparse_encode(&chunk.text);
+            let mut vectors: std::collections::HashMap<String, qdrant_client::qdrant::Vector> =
+                std::collections::HashMap::new();
+            vectors.insert(DENSE_VECTOR_NAME.to_string(), embedding.clone().into());
+            vectors.insert(SPARSE_VECTOR_NAME.to_string(), sparse.into());
+
+            PointStruct::new(id, vectors, payload)
         })
         .collect();
 
