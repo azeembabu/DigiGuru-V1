@@ -55,6 +55,21 @@ Detailed conventions live in `.claude/rules/` — read the one that matches what
 - `realtime-audio.md` — WebSocket, VAD, buffering, latency budget
 - `whiteboard-sync.md` — the board protocol and NN-1 enforcement
 - `security.md` — RBAC, secrets, PII, guardrails
+- `pedagogy.md` — turn-taking, backchanneling, adaptive difficulty, tone switching, note export
+
+## Git workflow (2-developer team)
+
+Run this before touching prompt engines, `.claude/` rules, or backend logic — and before any push:
+
+1. `git pull origin main --rebase` — always start from latest origin.
+2. Diff local `.claude/` and `CLAUDE.md` against the pulled version before editing further — both
+   developers must be working from the same rule set.
+3. Run the relevant test suite locally (see Commands below) before committing.
+4. `git commit -m "feat: <detailed description>"` — no vague messages.
+5. `git push origin <branch-name>`.
+
+Never edit prompt instructions or `.claude/rules/*` locally without pushing — a divergent local
+rule set is worse than no rule set, since it silently changes agent behavior for only one developer.
 
 ## Working agreements
 
