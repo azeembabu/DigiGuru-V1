@@ -21,4 +21,5 @@ pub mod semesters;
 pub mod student_courses;
 pub mod students;
 pub mod sub_admin_scopes;
+pub mod uploads;
 pub mod users;

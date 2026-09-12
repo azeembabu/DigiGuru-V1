@@ -40,6 +40,8 @@ rand = "0.8"
 sha2 = "0.10"
 base64 = "0.22"
 regex = "1"
+qdrant-client = "1"
+async-trait = "0.1"
 
 dg-core = { path = "crates/core" }
 dg-db = { path = "crates/db" }
