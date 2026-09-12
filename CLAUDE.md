@@ -102,6 +102,31 @@ This is not optional. Any change to the agent's instructions — `CLAUDE.md`, an
 A rule change that lives on only one computer is the single fastest way for the two of you to get
 conflicting agent behavior — treat every `.claude/`/`CLAUDE.md` edit as incomplete until it is pushed.
 
+## Machine ownership (2-developer split)
+
+To avoid both developers editing the same files, each computer owns a fixed half of the repo.
+This assignment is fixed per machine — it does not rotate per task. If the split needs to change,
+edit this section (which pushes live to both machines via the sync hooks above) and both developers
+switch together, not unilaterally.
+
+| Machine | Owns | Must not touch |
+|---|---|---|
+| **This machine (backend)** | `apps/gateway/`, `crates/*`, `migrations/`, `infra/` | `apps/web/` |
+| **Other machine (frontend)** | `apps/web/` (Next.js) | `apps/gateway/`, `crates/*`, `migrations/`, `infra/` |
+
+- The contract between the two halves is `.claude/rules/api-conventions.md` — the frontend builds
+  against that documented REST/WebSocket contract; it does not need the backend to be running or
+  even implemented yet to start.
+- If a task genuinely requires touching the other side (e.g. a schema change that shifts an API
+  response shape), change `api-conventions.md` first, push it (per the mandatory sync rule above),
+  and let the other machine pick it up on its next pull — don't reach across and edit their files
+  directly.
+- Each machine should add a local, non-synced guard for its own boundary in
+  `.claude/settings.local.json` (gitignored, so this doesn't get pushed and doesn't affect the other
+  machine): a `permissions.deny` rule blocking `Edit`/`Write` on the other side's paths, so an
+  accidental cross-boundary edit is caught immediately rather than surfacing later as a merge
+  conflict.
+
 ## Working agreements
 
 - Do not add a dependency without noting why in the PR description.
