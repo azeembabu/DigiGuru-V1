@@ -29,7 +29,7 @@ export function Hero() {
           </p>
 
           <div className="mt-8 flex flex-wrap items-center gap-x-6 gap-y-4">
-            <Button href="#cta" variant="primary">
+            <Button href="/signup" variant="primary">
               Start a session
             </Button>
             <Button href="#how-it-works" variant="ghost" className="group">

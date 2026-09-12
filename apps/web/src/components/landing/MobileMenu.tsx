@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { IconClose, IconMenu } from "@/components/icons";
 
@@ -40,13 +41,20 @@ export function MobileMenu() {
                 {link.label}
               </a>
             ))}
-            <a
-              href="#cta"
+            <Link
+              href="/login"
+              onClick={() => setOpen(false)}
+              className="text-base text-gray-300 hover:text-lavender-50"
+            >
+              Sign in
+            </Link>
+            <Link
+              href="/signup"
               onClick={() => setOpen(false)}
               className="mt-2 inline-flex w-fit items-center rounded-full border-[1.5px] border-lime-400 px-5 py-2 text-sm font-semibold text-lime-400"
             >
               Register
-            </a>
+            </Link>
           </nav>
         </div>
       )}

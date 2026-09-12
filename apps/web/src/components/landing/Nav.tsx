@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import { Logo } from "@/components/ui/Logo";
 import { MobileMenu } from "@/components/landing/MobileMenu";
 
@@ -27,12 +29,20 @@ export function Nav() {
           ))}
         </nav>
 
-        <a
-          href="#cta"
-          className="hidden rounded-full border-[1.5px] border-lime-400 px-5 py-2 text-sm font-semibold text-lime-400 transition-colors hover:bg-lime-400/10 sm:inline-flex"
-        >
-          Register
-        </a>
+        <div className="hidden items-center gap-5 sm:flex">
+          <Link
+            href="/login"
+            className="text-[15px] text-gray-300 transition-colors hover:text-lavender-50"
+          >
+            Sign in
+          </Link>
+          <Link
+            href="/signup"
+            className="rounded-full border-[1.5px] border-lime-400 px-5 py-2 text-sm font-semibold text-lime-400 transition-colors hover:bg-lime-400/10"
+          >
+            Register
+          </Link>
+        </div>
 
         <MobileMenu />
       </div>

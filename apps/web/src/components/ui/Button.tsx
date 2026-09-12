@@ -1,7 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 
-type Variant = "primary" | "outline" | "ghost";
+export type Variant = "primary" | "outline" | "ghost";
 
 const base =
   "inline-flex items-center justify-center gap-2 rounded-full font-sans text-[15px] font-semibold " +
@@ -15,6 +15,11 @@ const variants: Record<Variant, string> = {
   ghost: "text-lavender-50 underline decoration-gray-500 underline-offset-4 hover:decoration-lime-400",
 };
 
+/** Shared by `Button` and the form submit button, so both stay on one spec. */
+export function buttonClass(variant: Variant = "primary", className = ""): string {
+  return `${base} ${variants[variant]} ${className}`;
+}
+
 export function Button({
   href,
   variant = "primary",
@@ -27,7 +32,7 @@ export function Button({
   className?: string;
 }) {
   return (
-    <Link href={href} className={`${base} ${variants[variant]} ${className}`}>
+    <Link href={href} className={buttonClass(variant, className)}>
       {children}
     </Link>
   );

@@ -80,3 +80,23 @@ export function IconClose({ className }: IconProps) {
     </svg>
   );
 }
+
+export function IconUsers({ className }: IconProps) {
+  return (
+    <svg {...base} className={className} aria-hidden="true">
+      <circle cx="9" cy="9" r="3.25" />
+      <path d="M3.5 19.5a5.5 5.5 0 0 1 11 0" />
+      <path d="M16 6.3a3.25 3.25 0 0 1 0 6.4M17.5 14.5a5.5 5.5 0 0 1 3 5" />
+    </svg>
+  );
+}
+
+export function IconTarget({ className }: IconProps) {
+  return (
+    <svg {...base} className={className} aria-hidden="true">
+      <circle cx="12" cy="12" r="8.25" />
+      <circle cx="12" cy="12" r="4" />
+      <circle cx="12" cy="12" r="1" fill="currentColor" stroke="none" />
+    </svg>
+  );
+}

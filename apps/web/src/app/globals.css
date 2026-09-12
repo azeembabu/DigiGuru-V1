@@ -30,6 +30,26 @@
   --color-gray-500: #6c6f82;
   --color-gray-900: #15161f;
 
+  /* Brand marks — sampled from the official SGOU "Digi Guru" logo
+     (public/brand/digi-guru-emblem.png). These are LOGO colours, not new
+     accents: gold is used only for the "Guru" half of the wordmark, navy only
+     where the emblem needs a matching ground. DESIGN.md §1.1 keeps lime and
+     indigo as the only saturated hues in the UI itself — do not start
+     styling buttons or links with these. */
+  --color-brand-gold: #c3922b;
+  --color-brand-navy: #153568;
+
+  /* Sampled directly from the auth key art (public/brand/auth-key-art.webp)
+     so the form side of the split continues the artwork's own palette rather
+     than approximating it. These are surface colours for the auth route only
+     — the lime/indigo accent discipline in DESIGN.md §1.1 still governs
+     buttons, links, and focus states. */
+  --color-art-base: #05090c;
+  --color-art-deep: #0b1a12;
+  --color-art-mid: #193425;
+  --color-art-edge: #609d4f;
+  --color-art-glow: #4fe955;
+
   --color-success: #3fcf7f;
   --color-danger: #f1503d;
   --color-warning: #f5b84a;
@@ -105,4 +125,26 @@ body {
 .dg-wave-bar {
   animation: dg-wave 1s ease-in-out infinite;
   transform-origin: bottom;
+}
+
+/*
+ * Auth key art — one very slow, low-amplitude glow so the panel is not dead
+ * still. Deliberately opacity-only: an earlier scale/pan version cropped the
+ * artwork's own headline, which is baked into the image. Never animate
+ * transform on this element.
+ * The `prefers-reduced-motion` block above collapses this to a static frame.
+ */
+@keyframes dg-art-glow {
+  0%,
+  100% {
+    opacity: 0.1;
+  }
+  50% {
+    opacity: 0.26;
+  }
+}
+
+.dg-art-glow {
+  animation: dg-art-glow 18s ease-in-out infinite;
+  will-change: opacity;
 }

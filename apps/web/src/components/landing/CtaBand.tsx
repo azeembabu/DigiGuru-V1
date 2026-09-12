@@ -18,8 +18,7 @@ export function CtaBand() {
             centre to get started.
           </p>
           <div className="mt-8 flex justify-center">
-            {/* Placeholder target until /signup exists (Phase 1, IMPLEMENTATION_PLAN.md §4). */}
-            <Button href="#top" variant="primary">
+            <Button href="/signup" variant="primary">
               Start a session
             </Button>
           </div>
