@@ -4,12 +4,14 @@ mod auth;
 mod extractors;
 mod health;
 mod me;
+mod reference;
 mod state;
 mod validation;
 
 use std::net::SocketAddr;
 use std::time::Duration;
 
+use axum::http::{header, HeaderValue, Method};
 use axum::Router;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
@@ -71,6 +73,7 @@ async fn main() {
 fn build_router(state: AppState) -> Router {
     let api_v1 = Router::new()
         .nest("/auth", auth::router())
+        .nest("/reference", reference::router())
         .nest("/me", me::router())
         .nest("/admin", admin::router());
 
@@ -78,13 +81,41 @@ fn build_router(state: AppState) -> Router {
         .route("/health", axum::routing::get(health::health))
         .nest("/api/v1", api_v1)
         .layer(TraceLayer::new_for_http())
-        // CORS: locked down to same-origin by default (no `Any` origin) —
-        // the Next.js app (`apps/web`, not built in this pass) will need its
-        // own origin added here once it exists. `.claude/rules/security.md`:
-        // cookies are the auth transport, so `allow_credentials` matters
-        // more here than a permissive origin list ever should.
-        .layer(CorsLayer::new().allow_credentials(true))
+        // CORS: an explicit origin allow-list, never `Any`. `apps/web` now
+        // exists and calls this from its own origin, so that origin has to be
+        // named here — and because cookies are the auth transport
+        // (`.claude/rules/security.md`), `allow_credentials(true)` makes a
+        // wildcard origin both invalid per the CORS spec and unsafe. Origins
+        // come from `WEB_ORIGIN` (comma-separated) so deployments set their
+        // own; the default is the local Next.js dev server.
+        .layer(cors_layer())
         .with_state(state)
+}
+
+/// Build the CORS layer from `WEB_ORIGIN` (comma-separated), defaulting to
+/// the local Next.js dev server. An origin that will not parse is skipped
+/// with a warning rather than aborting startup.
+fn cors_layer() -> CorsLayer {
+    let raw = std::env::var("WEB_ORIGIN").unwrap_or_else(|_| "http://localhost:3000".to_string());
+
+    let origins: Vec<HeaderValue> = raw
+        .split(',')
+        .map(str::trim)
+        .filter(|o| !o.is_empty())
+        .filter_map(|o| match o.parse::<HeaderValue>() {
+            Ok(value) => Some(value),
+            Err(_) => {
+                tracing::warn!(origin = %o, "ignoring unparseable WEB_ORIGIN entry");
+                None
+            }
+        })
+        .collect();
+
+    CorsLayer::new()
+        .allow_origin(origins)
+        .allow_credentials(true)
+        .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::DELETE])
+        .allow_headers([header::CONTENT_TYPE])
 }
 
 /// Graceful shutdown on SIGINT (Ctrl+C) or SIGTERM (container/orchestrator

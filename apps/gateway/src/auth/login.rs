@@ -1,10 +1,8 @@
 //! `POST /api/v1/auth/login` — argon2id verify, issues the access-token
 //! cookie plus a rotating refresh token hashed into `auth_sessions`.
 
-use std::net::SocketAddr;
-
 use axum::{
-    extract::{ConnectInfo, State},
+    extract::State,
     http::HeaderMap,
     Json,
 };
@@ -20,6 +18,7 @@ use super::cookies::{access_cookie, refresh_cookie, REFRESH_TOKEN_TTL_DAYS};
 use super::jwt::issue_access_token;
 use super::password::verify_password;
 use super::tokens::{generate_token, hash_token};
+use crate::extractors::ClientIp;
 use crate::state::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -37,7 +36,7 @@ pub struct LoginResponse {
 
 pub async fn login(
     State(state): State<AppState>,
-    connect_info: Option<ConnectInfo<SocketAddr>>,
+    ClientIp(ip_address): ClientIp,
     headers: HeaderMap,
     jar: CookieJar,
     Json(payload): Json<LoginRequest>,
@@ -65,7 +64,6 @@ pub async fn login(
 
     let refresh_raw = generate_token();
     let refresh_hash = hash_token(&state.config.jwt_refresh_secret, &refresh_raw);
-    let ip_address = connect_info.map(|c| c.0.ip());
     let device_info = headers
         .get("user-agent")
         .and_then(|v| v.to_str().ok())
