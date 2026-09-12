@@ -141,6 +141,13 @@ switch together, not unilaterally.
 ## Commands
 
 ```bash
+# Run everything in one go: local deps (docker compose --wait), migrations,
+# gateway on :8080 and the web app on :3000, streaming into one window.
+# Ctrl-C stops both processes; the containers are left up deliberately.
+./dev.ps1
+./dev.ps1 -WebOnly      # frontend only - no Docker, no Rust toolchain needed
+./dev.ps1 -NoDeps       # deps already running
+
 cargo test --workspace          # Rust tests
 cargo clippy --all-targets -- -D warnings
 pnpm --filter web test          # frontend tests
