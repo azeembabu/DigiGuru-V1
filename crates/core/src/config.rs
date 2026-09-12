@@ -11,7 +11,15 @@ pub struct Config {
     pub database_url: String,
     pub redis_url: String,
     pub qdrant_url: String,
-    pub jwt_secret: String,
+    /// Signs/verifies the short-lived (15 min) access-token JWT.
+    pub jwt_access_secret: String,
+    /// Signs/verifies... actually verifies nothing by itself: rotating
+    /// refresh tokens are opaque random values, hashed with SHA-256 before
+    /// storage in `auth_sessions.refresh_token_hash`. This secret is mixed
+    /// into that hash (HMAC-style) so a raw DB read of the hash column alone
+    /// cannot be replayed without it.
+    pub jwt_refresh_secret: String,
+    pub port: u16,
 }
 
 /// A single missing or invalid environment variable.
@@ -29,7 +37,12 @@ impl Config {
             database_url: require_env("DATABASE_URL")?,
             redis_url: require_env("REDIS_URL")?,
             qdrant_url: require_env("QDRANT_URL")?,
-            jwt_secret: require_env("JWT_SECRET")?,
+            jwt_access_secret: require_env("JWT_ACCESS_SECRET")?,
+            jwt_refresh_secret: require_env("JWT_REFRESH_SECRET")?,
+            port: std::env::var("PORT")
+                .ok()
+                .and_then(|p| p.parse().ok())
+                .unwrap_or(8080),
         })
     }
 }

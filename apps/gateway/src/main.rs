@@ -1,10 +1,28 @@
+mod admin;
+mod audit;
 mod auth;
+mod extractors;
 mod health;
+mod me;
+mod state;
+mod validation;
+
+use std::net::SocketAddr;
+use std::time::Duration;
 
 use axum::Router;
+use tower_http::{cors::CorsLayer, trace::TraceLayer};
+
+use dg_core::config::Config;
+use state::AppState;
 
 #[tokio::main]
 async fn main() {
+    // Non-fatal: in production, real secrets come from the environment
+    // (or a secrets manager) directly, never from a committed `.env`
+    // (`.claude/rules/security.md`). Local/dev loads `.env` if present.
+    let _ = dotenvy::dotenv();
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -12,21 +30,91 @@ async fn main() {
         )
         .init();
 
-    let app = build_router();
+    let config = Config::from_env().unwrap_or_else(|err| {
+        // A missing required env var is a startup-abort condition, per
+        // `.claude/rules/code-style.md` ("panic! ... allowed ... in `main`
+        // during startup where a failure should abort the process").
+        eprintln!("configuration error: {err}");
+        std::process::exit(1);
+    });
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:8080")
+    let pool = dg_db::create_pool(&config.database_url)
+        .await
+        .expect("failed to connect to Postgres");
+
+    let redis_client = redis::Client::open(config.redis_url.clone()).expect("invalid REDIS_URL");
+    let redis = redis::aio::ConnectionManager::new(redis_client)
+        .await
+        .expect("failed to connect to Redis");
+
+    let port = config.port;
+    let state = AppState::new(pool, redis, config);
+
+    let app = build_router(state);
+
+    let addr = SocketAddr::from(([0, 0, 0, 0], port));
+    let listener = tokio::net::TcpListener::bind(addr)
         .await
         .expect("failed to bind gateway listener");
 
-    tracing::info!(addr = %listener.local_addr().unwrap(), "gateway listening");
+    tracing::info!(addr = %addr, "gateway listening");
 
-    axum::serve(listener, app)
-        .await
-        .expect("gateway server error");
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await
+    .expect("gateway server error");
 }
 
-fn build_router() -> Router {
+fn build_router(state: AppState) -> Router {
+    let api_v1 = Router::new()
+        .nest("/auth", auth::router())
+        .nest("/me", me::router())
+        .nest("/admin", admin::router());
+
     Router::new()
         .route("/health", axum::routing::get(health::health))
-        .nest("/auth", auth::router())
+        .nest("/api/v1", api_v1)
+        .layer(TraceLayer::new_for_http())
+        // CORS: locked down to same-origin by default (no `Any` origin) —
+        // the Next.js app (`apps/web`, not built in this pass) will need its
+        // own origin added here once it exists. `.claude/rules/security.md`:
+        // cookies are the auth transport, so `allow_credentials` matters
+        // more here than a permissive origin list ever should.
+        .layer(CorsLayer::new().allow_credentials(true))
+        .with_state(state)
+}
+
+/// Graceful shutdown on SIGINT (Ctrl+C) or SIGTERM (container/orchestrator
+/// stop). A live audio/WS gateway must drain, not hard-kill, connections —
+/// this scaffold wires the signal; the actual drain logic belongs to the
+/// Phase 3 WS layer once it exists.
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => tracing::info!("received Ctrl+C, shutting down"),
+        _ = terminate => tracing::info!("received SIGTERM, shutting down"),
+    }
+
+    // Give in-flight requests a moment to complete before axum's own
+    // graceful-shutdown drain proceeds.
+    tokio::time::sleep(Duration::from_millis(50)).await;
 }
