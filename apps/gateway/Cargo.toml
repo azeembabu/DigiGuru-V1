@@ -12,10 +12,14 @@ path = "src/main.rs"
 [dependencies]
 dg-core = { workspace = true }
 dg-db = { workspace = true }
+dg-live = { workspace = true }
 
 tokio = { workspace = true }
-axum = { workspace = true }
+# `ws` enables axum's built-in WebSocket upgrade extractor/`Message` type,
+# used by `src/ws` (Phase 3, `.claude/rules/api-conventions.md` "WebSocket").
+axum = { workspace = true, features = ["ws"] }
 axum-extra = { workspace = true }
+bytes = "1"
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }

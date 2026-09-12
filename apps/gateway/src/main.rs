@@ -6,6 +6,7 @@ mod health;
 mod me;
 mod state;
 mod validation;
+mod ws;
 
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -76,6 +77,10 @@ fn build_router(state: AppState) -> Router {
 
     Router::new()
         .route("/health", axum::routing::get(health::health))
+        // `/ws/session` is a sibling of `/api/v1`, not nested under it — WS is
+        // a distinct transport (query-param token, not the cookie used by
+        // REST), per `.claude/rules/api-conventions.md` "WebSocket".
+        .route("/ws/session", axum::routing::get(ws::upgrade_handler))
         .nest("/api/v1", api_v1)
         .layer(TraceLayer::new_for_http())
         // CORS: locked down to same-origin by default (no `Any` origin) —
