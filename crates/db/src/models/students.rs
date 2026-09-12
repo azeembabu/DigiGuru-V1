@@ -120,51 +120,158 @@ pub async fn roll_number_taken(pool: &PgPool, roll_number: &str) -> Result<bool>
     Ok(row.is_some())
 }
 
+/// A student as the admin console needs to render one table row: the
+/// `students` columns plus the two things that are not on the row —
+/// the account lifecycle (`users.status`) and the semester's
+/// number/name.
+///
+/// Denormalised rather than fetched per row on purpose: the students table
+/// shows a semester on every line, and `semesters` is otherwise reachable
+/// only per program, so resolving names client-side would mean fanning out
+/// across the whole program catalogue for one page of students.
+///
+/// Kept separate from `Student` so the auth and self-service paths
+/// (`find_by_user_id`, `find_by_id`) keep their narrow struct and are not
+/// dragged through two joins they have no use for.
+#[derive(Debug, Clone)]
+pub struct StudentDetail {
+    pub id: StudentId,
+    pub user_id: UserId,
+    pub full_name: String,
+    pub roll_number: String,
+    pub phone_number: String,
+    pub program_id: ProgramId,
+    pub semester_id: SemesterId,
+    pub semester_number: i16,
+    pub semester_name: String,
+    pub lsc_id: LscId,
+    pub current_block_id: Option<BlockId>,
+    pub is_first_login: bool,
+    pub status: dg_core::UserStatus,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
 /// Admin listing, optionally scoped to a set of programs (sub-admin RBAC).
 /// `program_ids = None` means unrestricted (super-admin).
+///
+/// `q` is a case-insensitive substring match over the three things an
+/// operator actually types into a student search — full name, roll number,
+/// and login email. `status` filters on `users.status`: `students` has no
+/// status column of its own (see `0001_init.sql`), the account's lifecycle
+/// lives on the `users` row, which is why this query joins — and why the
+/// same join carries `status` back out on every row, so the console can
+/// display what it just filtered on.
+///
+/// Every filter is expressed as `$n IS NULL OR ...` inside one
+/// compile-time-checked statement rather than as string-built SQL — a
+/// `query_as!` cannot take a dynamic `WHERE`, and `.claude/rules/code-style.md`
+/// rules string-built SQL out entirely.
 pub async fn list(
     pool: &PgPool,
     program_ids: Option<&[ProgramId]>,
+    q: Option<&str>,
+    status: Option<dg_core::UserStatus>,
     limit: i64,
     offset: i64,
-) -> Result<Vec<Student>> {
-    match program_ids {
-        Some(ids) => {
-            let raw_ids: Vec<uuid::Uuid> = ids.iter().map(|p| (*p).into()).collect();
-            sqlx::query_as!(
-                Student,
-                r#"
-                SELECT id, user_id, full_name, roll_number, phone_number, program_id, semester_id,
-                       lsc_id, current_block_id as "current_block_id: BlockId", is_first_login, locale, timezone, created_at, updated_at
-                FROM students
-                WHERE program_id = ANY($1)
-                ORDER BY created_at DESC
-                LIMIT $2 OFFSET $3
-                "#,
-                &raw_ids,
-                limit,
-                offset
-            )
-            .fetch_all(pool)
-            .await
-            .map_err(Error::from_sqlx)
-        }
-        None => sqlx::query_as!(
-            Student,
-            r#"
-            SELECT id, user_id, full_name, roll_number, phone_number, program_id, semester_id,
-                   lsc_id, current_block_id as "current_block_id: BlockId", is_first_login, locale, timezone, created_at, updated_at
-            FROM students
-            ORDER BY created_at DESC
-            LIMIT $1 OFFSET $2
-            "#,
-            limit,
-            offset
-        )
-        .fetch_all(pool)
-        .await
-        .map_err(Error::from_sqlx),
-    }
+) -> Result<Vec<StudentDetail>> {
+    let raw_ids: Option<Vec<uuid::Uuid>> =
+        program_ids.map(|ids| ids.iter().map(|p| p.into_uuid()).collect());
+
+    sqlx::query_as!(
+        StudentDetail,
+        r#"
+        SELECT s.id as "id!: StudentId", s.user_id as "user_id!: UserId",
+               s.full_name as "full_name!", s.roll_number as "roll_number!",
+               s.phone_number as "phone_number!", s.program_id as "program_id!: ProgramId",
+               s.semester_id as "semester_id!: SemesterId",
+               sem.semester_number as "semester_number!", sem.name as "semester_name!",
+               s.lsc_id as "lsc_id!: LscId",
+               s.current_block_id as "current_block_id: BlockId",
+               s.is_first_login as "is_first_login!",
+               u.status as "status!: dg_core::UserStatus",
+               s.created_at as "created_at!", s.updated_at as "updated_at!"
+        FROM students s
+        JOIN users u ON u.id = s.user_id
+        JOIN semesters sem ON sem.id = s.semester_id
+        WHERE ($1::uuid[] IS NULL OR s.program_id = ANY($1))
+          AND ($2::text IS NULL
+               OR s.full_name   ILIKE '%' || $2 || '%'
+               OR s.roll_number ILIKE '%' || $2 || '%'
+               OR u.email       ILIKE '%' || $2 || '%')
+          AND ($3::text IS NULL OR u.status = $3::text::user_status)
+        ORDER BY s.created_at DESC
+        LIMIT $4 OFFSET $5
+        "#,
+        raw_ids.as_deref(),
+        q,
+        status.map(dg_core::UserStatus::as_db_str),
+        limit,
+        offset
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(Error::from_sqlx)
+}
+
+/// The same enriched row for one student — `GET /api/v1/admin/students/{id}`,
+/// so the detail screen and the table agree on a shape.
+pub async fn find_detail_by_id(pool: &PgPool, id: StudentId) -> Result<Option<StudentDetail>> {
+    sqlx::query_as!(
+        StudentDetail,
+        r#"
+        SELECT s.id as "id!: StudentId", s.user_id as "user_id!: UserId",
+               s.full_name as "full_name!", s.roll_number as "roll_number!",
+               s.phone_number as "phone_number!", s.program_id as "program_id!: ProgramId",
+               s.semester_id as "semester_id!: SemesterId",
+               sem.semester_number as "semester_number!", sem.name as "semester_name!",
+               s.lsc_id as "lsc_id!: LscId",
+               s.current_block_id as "current_block_id: BlockId",
+               s.is_first_login as "is_first_login!",
+               u.status as "status!: dg_core::UserStatus",
+               s.created_at as "created_at!", s.updated_at as "updated_at!"
+        FROM students s
+        JOIN users u ON u.id = s.user_id
+        JOIN semesters sem ON sem.id = s.semester_id
+        WHERE s.id = $1
+        "#,
+        id.into_uuid()
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(Error::from_sqlx)
+}
+
+/// Total matching `list`'s filters, ignoring `limit`/`offset` — the
+/// `X-Total-Count` header of `GET /api/v1/admin/students`.
+pub async fn count(
+    pool: &PgPool,
+    program_ids: Option<&[ProgramId]>,
+    q: Option<&str>,
+    status: Option<dg_core::UserStatus>,
+) -> Result<i64> {
+    let raw_ids: Option<Vec<uuid::Uuid>> =
+        program_ids.map(|ids| ids.iter().map(|p| p.into_uuid()).collect());
+
+    sqlx::query_scalar!(
+        r#"
+        SELECT count(*) as "count!"
+        FROM students s
+        JOIN users u ON u.id = s.user_id
+        WHERE ($1::uuid[] IS NULL OR s.program_id = ANY($1))
+          AND ($2::text IS NULL
+               OR s.full_name   ILIKE '%' || $2 || '%'
+               OR s.roll_number ILIKE '%' || $2 || '%'
+               OR u.email       ILIKE '%' || $2 || '%')
+          AND ($3::text IS NULL OR u.status = $3::text::user_status)
+        "#,
+        raw_ids.as_deref(),
+        q,
+        status.map(dg_core::UserStatus::as_db_str)
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(Error::from_sqlx)
 }
 
 /// Self-service update — allow-listed to `full_name`/`phone_number` at the

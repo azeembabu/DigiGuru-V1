@@ -7,7 +7,8 @@
 //! program creation in `admin/programs.rs`.
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
+    http::HeaderMap,
     Json,
 };
 use serde::{Deserialize, Serialize};
@@ -71,15 +72,40 @@ pub async fn create_lsc(
     Ok(Json(lsc.into()))
 }
 
+/// Same reasoning as `admin/programs.rs`: this route shipped unpaginated,
+/// so its default page is the ceiling rather than 50.
+const DEFAULT_LSC_PAGE: i64 = super::MAX_PAGE_LIMIT;
+
+#[derive(Debug, Deserialize)]
+pub struct ListLscsQuery {
+    #[serde(default)]
+    pub q: Option<String>,
+    #[serde(default)]
+    pub limit: Option<i64>,
+    #[serde(default)]
+    pub offset: Option<i64>,
+}
+
 pub async fn list_lscs(
     State(state): State<AppState>,
     AuthenticatedActor(actor): AuthenticatedActor,
-) -> Result<Json<Vec<LscResponse>>, PublicError> {
+    Query(query): Query<ListLscsQuery>,
+) -> Result<(HeaderMap, Json<Vec<LscResponse>>), PublicError> {
     // Reference data, unscoped — any admin capability suffices.
     actor.require(Capability::ManagePrograms)?;
 
-    let rows = lscs::list(&state.pool).await.map_err(PublicError::from)?;
-    Ok(Json(rows.into_iter().map(LscResponse::from).collect()))
+    let page = super::page(query.limit, query.offset, DEFAULT_LSC_PAGE)?;
+    let q = super::search_term(query.q.as_deref());
+
+    let total = lscs::count(&state.pool, q).await.map_err(PublicError::from)?;
+    let rows = lscs::list(&state.pool, q, page.limit, page.offset)
+        .await
+        .map_err(PublicError::from)?;
+
+    Ok((
+        super::total_count(total),
+        Json(rows.into_iter().map(LscResponse::from).collect()),
+    ))
 }
 
 #[derive(Debug, Deserialize, Validate)]

@@ -11,7 +11,7 @@ mod validation;
 use std::net::SocketAddr;
 use std::time::Duration;
 
-use axum::http::{header, HeaderValue, Method};
+use axum::http::{header, header::HeaderName, HeaderValue, Method};
 use axum::Router;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
@@ -116,6 +116,11 @@ fn cors_layer() -> CorsLayer {
         .allow_credentials(true)
         .allow_methods([Method::GET, Method::POST, Method::PATCH, Method::DELETE])
         .allow_headers([header::CONTENT_TYPE])
+        // Paginated admin lists report their pre-pagination total in
+        // `X-Total-Count` (`.claude/rules/api-conventions.md`). A response
+        // header is invisible to a browser client unless it is exposed, so
+        // without this the header may as well not be sent.
+        .expose_headers([HeaderName::from_static("x-total-count")])
 }
 
 /// Graceful shutdown on SIGINT (Ctrl+C) or SIGTERM (container/orchestrator

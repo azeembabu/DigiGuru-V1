@@ -6,7 +6,8 @@
 //! can ever widen that.
 
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
+    http::HeaderMap,
     Json,
 };
 use serde::{Deserialize, Serialize};
@@ -71,20 +72,53 @@ pub async fn create_program(
     Ok(Json(program.into()))
 }
 
+/// Default page size for the programs catalogue. Higher than the 50 used
+/// for `students`/`users` deliberately: this route shipped unpaginated, and
+/// a realistic programs table fits in one page — so an existing caller that
+/// sends no `limit` keeps seeing everything, and `X-Total-Count` tells it
+/// when that stops being true.
+const DEFAULT_PROGRAM_PAGE: i64 = super::MAX_PAGE_LIMIT;
+
+#[derive(Debug, Deserialize)]
+pub struct ListProgramsQuery {
+    #[serde(default)]
+    pub q: Option<String>,
+    #[serde(default)]
+    pub limit: Option<i64>,
+    #[serde(default)]
+    pub offset: Option<i64>,
+}
+
 pub async fn list_programs(
     State(state): State<AppState>,
     AuthenticatedActor(actor): AuthenticatedActor,
-) -> Result<Json<Vec<ProgramResponse>>, PublicError> {
+    Query(query): Query<ListProgramsQuery>,
+) -> Result<(HeaderMap, Json<Vec<ProgramResponse>>), PublicError> {
     actor.require(Capability::ManagePrograms)?;
 
-    let all = programs::list(&state.pool).await.map_err(PublicError::from)?;
-    let visible = match actor.role {
-        Role::SuperAdmin => all,
-        Role::SubAdmin => all.into_iter().filter(|p| actor.in_scope(p.id)).collect(),
+    let page = super::page(query.limit, query.offset, DEFAULT_PROGRAM_PAGE)?;
+    let q = super::search_term(query.q.as_deref());
+
+    // The scope filter goes into the query, not over its result: filtering a
+    // page after fetching it would give a sub-admin short pages that do not
+    // line up with any offset into its own visible set.
+    let program_scope: Option<&[dg_core::ProgramId]> = match actor.role {
+        Role::SuperAdmin => None,
+        Role::SubAdmin => Some(&actor.scopes),
         Role::Student => return Err(PublicError::Forbidden),
     };
 
-    Ok(Json(visible.into_iter().map(ProgramResponse::from).collect()))
+    let total = programs::count(&state.pool, program_scope, q)
+        .await
+        .map_err(PublicError::from)?;
+    let rows = programs::list(&state.pool, program_scope, q, page.limit, page.offset)
+        .await
+        .map_err(PublicError::from)?;
+
+    Ok((
+        super::total_count(total),
+        Json(rows.into_iter().map(ProgramResponse::from).collect()),
+    ))
 }
 
 pub async fn get_program(

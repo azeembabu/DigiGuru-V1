@@ -19,6 +19,7 @@ pub mod lscs;
 pub mod password_resets;
 pub mod programs;
 pub mod semesters;
+pub mod stats;
 pub mod student_courses;
 pub mod students;
 pub mod sub_admin_scopes;

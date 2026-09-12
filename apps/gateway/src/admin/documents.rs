@@ -9,6 +9,12 @@
 //! the ingestion worker (`workers/ingest`, owned by a parallel agent in this
 //! pass) — out of scope here by design, not an oversight.
 //!
+//! The two `GET` routes alongside it are the read side an admin console
+//! needs to answer "did that PDF ingest?" — they expose the `documents` row
+//! plus the status and error of its most recent `ingestion_jobs` attempt
+//! (`documents` itself has no error column). `storage_key` is not on the
+//! wire: it is a server-side filesystem path.
+//!
 //! Request body is the raw PDF bytes (`Content-Type: application/pdf` or
 //! `application/octet-stream`), not multipart — simpler to get right for
 //! this pass than a multipart boundary parser, and the frontend's upload
@@ -19,12 +25,13 @@ use axum::{
     extract::{Path, Query, State},
     Json,
 };
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use dg_core::{BlockId, Capability, PublicError};
-use dg_db::models::uploads;
+use dg_core::{BlockId, Capability, DocumentId, PublicError};
+use dg_db::models::{documents, uploads};
 
 use crate::extractors::AuthenticatedActor;
 use crate::state::AppState;
@@ -141,4 +148,127 @@ pub async fn upload(
         document_id: document_id.into_uuid(),
         job_id,
     }))
+}
+
+/// The ingestion-status view of a document. Mirrors
+/// `dg_db::models::documents::DocumentSummary` — see that struct for why
+/// `storage_key` is absent.
+#[derive(Debug, Serialize)]
+pub struct DocumentResponse {
+    pub id: Uuid,
+    pub block_id: Uuid,
+    pub uploaded_by: Uuid,
+    pub title: String,
+    pub sha256: String,
+    pub page_count: i32,
+    pub ocr_confidence: Option<f32>,
+    /// `pending|parsing|pending_review|embedded|failed`.
+    pub status: String,
+    pub created_at: DateTime<Utc>,
+    /// `pending|processing|completed|failed` of the latest ingestion attempt,
+    /// `null` if no job row was ever enqueued.
+    pub job_status: Option<String>,
+    /// The latest attempt's failure reason, `null` unless it failed.
+    pub last_error: Option<String>,
+}
+
+impl From<documents::DocumentSummary> for DocumentResponse {
+    fn from(d: documents::DocumentSummary) -> Self {
+        Self {
+            id: d.id.into_uuid(),
+            block_id: d.block_id.into_uuid(),
+            uploaded_by: d.uploaded_by.into_uuid(),
+            title: d.title,
+            sha256: d.sha256,
+            page_count: d.page_count,
+            ocr_confidence: d.ocr_confidence,
+            status: d.status,
+            created_at: d.created_at,
+            job_status: d.job_status,
+            last_error: d.last_error,
+        }
+    }
+}
+
+pub async fn list_documents_for_block(
+    AuthenticatedActor(actor): AuthenticatedActor,
+    State(state): State<AppState>,
+    Path(block_id): Path<Uuid>,
+) -> Result<Json<Vec<DocumentResponse>>, PublicError> {
+    let block_id = BlockId::from(block_id);
+
+    // Same ordering as `upload`: resolve the owning program before the
+    // capability check, so block existence never leaks across a scope.
+    let program_id = uploads::program_id_for_block(&state.pool, block_id)
+        .await
+        .map_err(PublicError::from)?
+        .ok_or(PublicError::NotFound)?;
+
+    actor.require_scoped(Capability::UploadDocuments, program_id)?;
+
+    let rows = documents::list_summaries_by_block(&state.pool, block_id)
+        .await
+        .map_err(PublicError::from)?;
+
+    Ok(Json(rows.into_iter().map(DocumentResponse::from).collect()))
+}
+
+pub async fn get_document(
+    AuthenticatedActor(actor): AuthenticatedActor,
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<DocumentResponse>, PublicError> {
+    let document_id = DocumentId::from(id);
+    let document = documents::find_summary_by_id(&state.pool, document_id)
+        .await
+        .map_err(PublicError::from)?
+        .ok_or(PublicError::NotFound)?;
+
+    let program_id = uploads::program_id_for_block(&state.pool, document.block_id)
+        .await
+        .map_err(PublicError::from)?
+        .ok_or(PublicError::Internal)?;
+
+    actor.require_scoped(Capability::UploadDocuments, program_id)?;
+
+    Ok(Json(document.into()))
+}
+
+#[cfg(test)]
+mod tests {
+    use dg_core::{Actor, Capability, ProgramId, Role, UserId};
+
+    /// The authorization rule shared by upload and both read routes, applied
+    /// after the document's owning program has been resolved.
+    fn authorize(actor: &Actor, program_id: ProgramId) -> Result<(), dg_core::PublicError> {
+        actor.require_scoped(Capability::UploadDocuments, program_id)
+    }
+
+    #[test]
+    fn super_admin_may_read_documents_in_any_program() {
+        let actor = Actor::new(UserId::new(), Role::SuperAdmin, vec![]);
+        assert!(authorize(&actor, ProgramId::new()).is_ok());
+    }
+
+    #[test]
+    fn sub_admin_may_read_documents_only_in_scoped_programs() {
+        let scoped = ProgramId::new();
+        let actor = Actor::new(UserId::new(), Role::SubAdmin, vec![scoped]);
+        assert!(authorize(&actor, scoped).is_ok());
+    }
+
+    #[test]
+    fn sub_admin_is_forbidden_documents_outside_its_scope() {
+        let actor = Actor::new(UserId::new(), Role::SubAdmin, vec![ProgramId::new()]);
+        let err = authorize(&actor, ProgramId::new()).expect_err("out of scope");
+        assert_eq!(err.code(), "FORBIDDEN");
+    }
+
+    #[test]
+    fn student_is_forbidden_every_document_route() {
+        let program_id = ProgramId::new();
+        let actor = Actor::new(UserId::new(), Role::Student, vec![program_id]);
+        let err = authorize(&actor, program_id).expect_err("students never read documents");
+        assert_eq!(err.code(), "FORBIDDEN");
+    }
 }

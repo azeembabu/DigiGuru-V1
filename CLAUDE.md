@@ -147,5 +147,23 @@ pnpm --filter web test          # frontend tests
 pnpm --filter web lint
 docker compose -f infra/docker-compose.yml up -d   # local deps
 sqlx migrate run                # apply migrations
+
+# First login: create the bootstrap super-admin. Nothing in migrations/ or
+# migrations/seed/ inserts an admin — a committed credential is a published
+# credential (security.md) — so the admin console cannot be signed into until
+# this is run once. Prompts for the password (twice, not echoed); never takes
+# it as an argument, so it cannot land in shell history.
+cargo run -p gateway --bin create_admin -- \
+  --email you@example.com --full-name "Your Name" --role super_admin
+
+# A scoped sub-admin. --scope is repeatable and takes a program UUID; it
+# refuses to create a sub-admin with no scopes (which would see nothing).
+cargo run -p gateway --bin create_admin -- \
+  --email sub@example.com --full-name "Sub Admin" --role sub_admin --scope <PROGRAM_UUID>
+
+# Non-interactive (CI, containers): supply the password out of band, never
+# as an argument.
+ADMIN_PASSWORD=... cargo run -p gateway --bin create_admin -- ...   # or --password-stdin
+
 cargo run -p evals              # RAGAs golden-set harness
 ```

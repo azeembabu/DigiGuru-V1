@@ -13,7 +13,13 @@ pub struct Admin {
     pub full_name: String,
 }
 
-pub async fn create(pool: &PgPool, user_id: UserId, full_name: &str) -> Result<Admin> {
+/// Executor-generic so the `users` row and this profile row can be written
+/// in one transaction — see `users::create`.
+pub async fn create<'e, E: sqlx::PgExecutor<'e>>(
+    executor: E,
+    user_id: UserId,
+    full_name: &str,
+) -> Result<Admin> {
     sqlx::query_as!(
         Admin,
         r#"
@@ -24,7 +30,7 @@ pub async fn create(pool: &PgPool, user_id: UserId, full_name: &str) -> Result<A
         user_id.into_uuid(),
         full_name
     )
-    .fetch_one(pool)
+    .fetch_one(executor)
     .await
     .map_err(Error::from_sqlx)
 }

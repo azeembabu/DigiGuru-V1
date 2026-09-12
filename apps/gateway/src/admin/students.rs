@@ -8,13 +8,16 @@
 
 use axum::{
     extract::{Path, Query, State},
+    http::HeaderMap,
     Json,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use dg_core::{BlockId, Capability, LscId, ProgramId, PublicError, Role, SemesterId, StudentId};
+use dg_core::{
+    BlockId, Capability, LscId, ProgramId, PublicError, Role, SemesterId, StudentId, UserStatus,
+};
 use dg_db::models::{blocks, lscs, programs, semesters, students};
 
 use crate::extractors::AuthenticatedActor;
@@ -29,15 +32,25 @@ pub struct StudentResponse {
     pub phone_number: String,
     pub program_id: Uuid,
     pub semester_id: Uuid,
+    /// The semester's number and name, denormalised from the join this
+    /// query already makes. Semesters are otherwise listable only per
+    /// program, so a students table would need a fan-out across the whole
+    /// catalogue to name the semester on each row.
+    pub semester_number: i16,
+    pub semester_name: String,
     pub lsc_id: Uuid,
     pub current_block_id: Option<Uuid>,
     pub is_first_login: bool,
+    /// The linked account's lifecycle (`users.status`) — the same field the
+    /// `status` query parameter filters on, so the console can display what
+    /// it filtered by.
+    pub status: UserStatus,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
 
-impl From<students::Student> for StudentResponse {
-    fn from(s: students::Student) -> Self {
+impl From<students::StudentDetail> for StudentResponse {
+    fn from(s: students::StudentDetail) -> Self {
         Self {
             id: s.id.into_uuid(),
             user_id: s.user_id.into_uuid(),
@@ -46,9 +59,12 @@ impl From<students::Student> for StudentResponse {
             phone_number: s.phone_number,
             program_id: s.program_id.into_uuid(),
             semester_id: s.semester_id.into_uuid(),
+            semester_number: s.semester_number,
+            semester_name: s.semester_name,
             lsc_id: s.lsc_id.into_uuid(),
             current_block_id: s.current_block_id.map(BlockId::into_uuid),
             is_first_login: s.is_first_login,
+            status: s.status,
             created_at: s.created_at,
             updated_at: s.updated_at,
         }
@@ -57,6 +73,15 @@ impl From<students::Student> for StudentResponse {
 
 #[derive(Debug, Deserialize)]
 pub struct ListStudentsQuery {
+    /// Case-insensitive substring search over full name, roll number, and
+    /// login email.
+    #[serde(default)]
+    pub q: Option<String>,
+    /// Account lifecycle filter. `students` has no status column — this
+    /// filters the linked `users.status`, which is where a student's
+    /// active/inactive/suspended state actually lives.
+    #[serde(default)]
+    pub status: Option<UserStatus>,
     #[serde(default)]
     pub limit: Option<i64>,
     #[serde(default)]
@@ -67,11 +92,11 @@ pub async fn list_students(
     State(state): State<AppState>,
     AuthenticatedActor(actor): AuthenticatedActor,
     Query(query): Query<ListStudentsQuery>,
-) -> Result<Json<Vec<StudentResponse>>, PublicError> {
+) -> Result<(HeaderMap, Json<Vec<StudentResponse>>), PublicError> {
     actor.require(Capability::ManageStudents)?;
 
-    let limit = query.limit.unwrap_or(50).clamp(1, 200);
-    let offset = query.offset.unwrap_or(0).max(0);
+    let page = super::page(query.limit, query.offset, 50)?;
+    let q = super::search_term(query.q.as_deref());
 
     let program_scope: Option<&[ProgramId]> = match actor.role {
         Role::SuperAdmin => None,
@@ -79,11 +104,24 @@ pub async fn list_students(
         Role::Student => return Err(PublicError::Forbidden),
     };
 
-    let rows = students::list(&state.pool, program_scope, limit, offset)
+    let total = students::count(&state.pool, program_scope, q, query.status)
         .await
         .map_err(PublicError::from)?;
+    let rows = students::list(
+        &state.pool,
+        program_scope,
+        q,
+        query.status,
+        page.limit,
+        page.offset,
+    )
+    .await
+    .map_err(PublicError::from)?;
 
-    Ok(Json(rows.into_iter().map(StudentResponse::from).collect()))
+    Ok((
+        super::total_count(total),
+        Json(rows.into_iter().map(StudentResponse::from).collect()),
+    ))
 }
 
 pub async fn get_student(
@@ -93,7 +131,7 @@ pub async fn get_student(
 ) -> Result<Json<StudentResponse>, PublicError> {
     actor.require(Capability::ManageStudents)?;
 
-    let student = students::find_by_id(&state.pool, StudentId::from(id))
+    let student = students::find_detail_by_id(&state.pool, StudentId::from(id))
         .await
         .map_err(PublicError::from)?
         .ok_or(PublicError::NotFound)?;
@@ -205,6 +243,14 @@ pub async fn set_current_block(
         .ok_or(PublicError::NotFound)?;
 
     actor.require_scoped(Capability::ManageStudents, student.program_id)?;
+
+    // Same guard as `update_student_academic`: a block change is an academic
+    // context change, so both mutation paths must answer `409 SESSION_ACTIVE`
+    // identically or a console cannot state one rule for either. Stub today
+    // (see `admin/mod.rs`), real once Phase 3 writes `learning_sessions`.
+    if super::session_active_stub(&state, student_id).await? {
+        return Err(PublicError::session_active());
+    }
 
     let block_id = BlockId::from(payload.block_id);
     if blocks::find_by_id(&state.pool, block_id).await.map_err(PublicError::from)?.is_none() {

@@ -23,8 +23,12 @@ pub struct User {
 
 /// Create the base `users` row. Role-specific profile rows (`admins`,
 /// `students`) are created by the caller in the same transaction.
-pub async fn create(
-    pool: &PgPool,
+///
+/// Generic over the executor rather than taking `&PgPool` so that caller
+/// *can* actually be a transaction: `&PgPool` still passes unchanged, and a
+/// `&mut PgConnection` from `pool.begin()` now passes too.
+pub async fn create<'e, E: sqlx::PgExecutor<'e>>(
+    executor: E,
     role: Role,
     email: &str,
     password_hash: &str,
@@ -40,7 +44,7 @@ pub async fn create(
         email,
         password_hash
     )
-    .fetch_one(pool)
+    .fetch_one(executor)
     .await
     .map_err(Error::from_sqlx)
 }
@@ -75,22 +79,65 @@ pub async fn find_by_id(pool: &PgPool, id: UserId) -> Result<Option<User>> {
     .map_err(Error::from_sqlx)
 }
 
-/// Admin console listing — every user, newest first. Callers filter by role
-/// or status in the handler layer; this scaffold keeps the query simple and
-/// paginates via `limit`/`offset`.
-pub async fn list(pool: &PgPool, limit: i64, offset: i64) -> Result<Vec<User>> {
+/// Admin console listing, newest first.
+///
+/// `q` is a case-insensitive substring match on `email` — the only
+/// identifying field on a `users` row (display names live on the
+/// role-specific `admins`/`students` rows). `role` and `status` are exact
+/// filters so an admin-users screen can ask for "all sub_admins" or "all
+/// suspended accounts" server-side instead of paging the whole table and
+/// filtering client-side.
+pub async fn list(
+    pool: &PgPool,
+    q: Option<&str>,
+    role: Option<Role>,
+    status: Option<UserStatus>,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<User>> {
     sqlx::query_as!(
         User,
         r#"
         SELECT id, role as "role: Role", status as "status: UserStatus", email, password_hash, last_login_at, created_at, updated_at
         FROM users
+        WHERE ($1::text IS NULL OR email ILIKE '%' || $1 || '%')
+          AND ($2::text IS NULL OR role = $2::text::user_role)
+          AND ($3::text IS NULL OR status = $3::text::user_status)
         ORDER BY created_at DESC
-        LIMIT $1 OFFSET $2
+        LIMIT $4 OFFSET $5
         "#,
+        q,
+        role.map(Role::as_db_str),
+        status.map(UserStatus::as_db_str),
         limit,
         offset
     )
     .fetch_all(pool)
+    .await
+    .map_err(Error::from_sqlx)
+}
+
+/// Total matching `list`'s filters, ignoring `limit`/`offset` — the
+/// `X-Total-Count` header of `GET /api/v1/admin/users`.
+pub async fn count(
+    pool: &PgPool,
+    q: Option<&str>,
+    role: Option<Role>,
+    status: Option<UserStatus>,
+) -> Result<i64> {
+    sqlx::query_scalar!(
+        r#"
+        SELECT count(*) as "count!"
+        FROM users
+        WHERE ($1::text IS NULL OR email ILIKE '%' || $1 || '%')
+          AND ($2::text IS NULL OR role = $2::text::user_role)
+          AND ($3::text IS NULL OR status = $3::text::user_status)
+        "#,
+        q,
+        role.map(Role::as_db_str),
+        status.map(UserStatus::as_db_str)
+    )
+    .fetch_one(pool)
     .await
     .map_err(Error::from_sqlx)
 }

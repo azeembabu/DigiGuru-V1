@@ -3,6 +3,7 @@
 
 use axum::{
     extract::{Path, Query, State},
+    http::HeaderMap,
     Json,
 };
 use chrono::{DateTime, Utc};
@@ -15,6 +16,7 @@ use dg_db::models::{admins, sub_admin_scopes, users};
 
 use crate::auth::password::hash_password;
 use crate::extractors::AuthenticatedActor;
+use crate::me::identity::ScopeSummary;
 use crate::state::AppState;
 
 fn require_super_admin(actor: &dg_core::Actor) -> Result<(), PublicError> {
@@ -50,6 +52,15 @@ impl From<users::User> for UserResponse {
 
 #[derive(Debug, Deserialize)]
 pub struct ListUsersQuery {
+    /// Case-insensitive substring search over `email` — the only
+    /// identifying field on a `users` row; display names live on the
+    /// role-specific `admins`/`students` rows.
+    #[serde(default)]
+    pub q: Option<String>,
+    #[serde(default)]
+    pub role: Option<Role>,
+    #[serde(default)]
+    pub status: Option<UserStatus>,
     #[serde(default)]
     pub limit: Option<i64>,
     #[serde(default)]
@@ -60,14 +71,30 @@ pub async fn list_users(
     State(state): State<AppState>,
     AuthenticatedActor(actor): AuthenticatedActor,
     Query(query): Query<ListUsersQuery>,
-) -> Result<Json<Vec<UserResponse>>, PublicError> {
+) -> Result<(HeaderMap, Json<Vec<UserResponse>>), PublicError> {
     require_super_admin(&actor)?;
 
-    let limit = query.limit.unwrap_or(50).clamp(1, 200);
-    let offset = query.offset.unwrap_or(0).max(0);
+    let page = super::page(query.limit, query.offset, 50)?;
+    let q = super::search_term(query.q.as_deref());
 
-    let rows = users::list(&state.pool, limit, offset).await.map_err(PublicError::from)?;
-    Ok(Json(rows.into_iter().map(UserResponse::from).collect()))
+    let total = users::count(&state.pool, q, query.role, query.status)
+        .await
+        .map_err(PublicError::from)?;
+    let rows = users::list(
+        &state.pool,
+        q,
+        query.role,
+        query.status,
+        page.limit,
+        page.offset,
+    )
+    .await
+    .map_err(PublicError::from)?;
+
+    Ok((
+        super::total_count(total),
+        Json(rows.into_iter().map(UserResponse::from).collect()),
+    ))
 }
 
 #[derive(Debug, Deserialize, Validate)]
@@ -244,14 +271,35 @@ pub async fn remove_scope(
     Ok(())
 }
 
+/// Returns each scope with its program `code`/`name` joined in, reusing the
+/// exact shape `GET /api/v1/me` already returns for the caller's own scopes
+/// — one scope shape across the API, not two.
+///
+/// This replaced a bare `Vec<Uuid>` response. A breaking change to a shipped
+/// path, taken deliberately while the endpoint is unreleased and has a
+/// single caller: resolving ids cost the console a client-side join against
+/// the programs list, and any scope whose program it had not loaded
+/// rendered as an unresolved placeholder.
 pub async fn list_scopes(
     State(state): State<AppState>,
     AuthenticatedActor(actor): AuthenticatedActor,
     Path(id): Path<Uuid>,
-) -> Result<Json<Vec<Uuid>>, PublicError> {
+) -> Result<Json<Vec<ScopeSummary>>, PublicError> {
     require_super_admin(&actor)?;
 
     let target = UserId::from(id);
-    let scopes = sub_admin_scopes::list_for_user(&state.pool, target).await.map_err(PublicError::from)?;
-    Ok(Json(scopes.into_iter().map(ProgramId::into_uuid).collect()))
+    let scopes = sub_admin_scopes::list_with_programs(&state.pool, target)
+        .await
+        .map_err(PublicError::from)?;
+
+    Ok(Json(
+        scopes
+            .into_iter()
+            .map(|s| ScopeSummary {
+                program_id: s.program_id.into_uuid(),
+                code: s.code,
+                name: s.name,
+            })
+            .collect(),
+    ))
 }

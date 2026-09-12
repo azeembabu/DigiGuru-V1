@@ -4,8 +4,8 @@
 //! landed, per that module's doc comment); this module owns the queries
 //! against it, following the pattern in `students.rs`.
 
-use chrono::Utc;
-use dg_core::DocumentId;
+use chrono::{DateTime, Utc};
+use dg_core::{BlockId, DocumentId, UserId};
 use sqlx::PgPool;
 
 use crate::error::{Error, Result};
@@ -98,4 +98,89 @@ pub async fn fail_latest_job(pool: &PgPool, document_id: DocumentId, error: &str
     .await
     .map_err(Error::from_sqlx)?;
     Ok(())
+}
+
+/// One row of the admin ingestion-status view: the `documents` columns an
+/// operator needs, plus the status and error of that document's most recent
+/// `ingestion_jobs` attempt.
+///
+/// `storage_key` is deliberately **absent**: it is a server-side filesystem
+/// path (`admin/documents.rs`'s `UPLOAD_DIR`), and `.claude/rules/security.md`
+/// keeps internal paths off the wire. Every other column of the row is here.
+/// `documents` itself has no error column — the failure reason lives on the
+/// outbox row, one per attempt — hence the lateral join.
+#[derive(Debug, Clone)]
+pub struct DocumentSummary {
+    pub id: DocumentId,
+    pub block_id: BlockId,
+    pub uploaded_by: UserId,
+    pub title: String,
+    pub sha256: String,
+    pub page_count: i32,
+    pub ocr_confidence: Option<f32>,
+    /// `pending|parsing|pending_review|embedded|failed`.
+    pub status: String,
+    pub created_at: DateTime<Utc>,
+    /// `pending|processing|completed|failed` of the latest ingestion attempt,
+    /// `None` if no job row was ever enqueued.
+    pub job_status: Option<String>,
+    /// The latest attempt's failure reason, `None` unless it failed.
+    pub last_error: Option<String>,
+}
+
+pub async fn list_summaries_by_block(
+    pool: &PgPool,
+    block_id: BlockId,
+) -> Result<Vec<DocumentSummary>> {
+    sqlx::query_as!(
+        DocumentSummary,
+        r#"
+        SELECT d.id as "id: DocumentId", d.block_id as "block_id: BlockId",
+               d.uploaded_by as "uploaded_by: UserId", d.title, d.sha256,
+               d.page_count, d.ocr_confidence, d.status, d.created_at,
+               j.status::text as "job_status?", j.last_error as "last_error?"
+        FROM documents d
+        LEFT JOIN LATERAL (
+            SELECT status, last_error
+            FROM ingestion_jobs
+            WHERE document_id = d.id
+            ORDER BY created_at DESC
+            LIMIT 1
+        ) j ON TRUE
+        WHERE d.block_id = $1
+        ORDER BY d.created_at DESC
+        "#,
+        block_id.into_uuid()
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(Error::from_sqlx)
+}
+
+pub async fn find_summary_by_id(
+    pool: &PgPool,
+    id: DocumentId,
+) -> Result<Option<DocumentSummary>> {
+    sqlx::query_as!(
+        DocumentSummary,
+        r#"
+        SELECT d.id as "id: DocumentId", d.block_id as "block_id: BlockId",
+               d.uploaded_by as "uploaded_by: UserId", d.title, d.sha256,
+               d.page_count, d.ocr_confidence, d.status, d.created_at,
+               j.status::text as "job_status?", j.last_error as "last_error?"
+        FROM documents d
+        LEFT JOIN LATERAL (
+            SELECT status, last_error
+            FROM ingestion_jobs
+            WHERE document_id = d.id
+            ORDER BY created_at DESC
+            LIMIT 1
+        ) j ON TRUE
+        WHERE d.id = $1
+        "#,
+        id.into_uuid()
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(Error::from_sqlx)
 }

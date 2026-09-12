@@ -55,7 +55,10 @@ pub struct ReferenceOption {
 async fn list_programs(
     State(state): State<AppState>,
 ) -> Result<Json<Vec<ReferenceOption>>, PublicError> {
-    let rows = programs::list(&state.pool).await.map_err(PublicError::from)?;
+    // `list_all`, not the paginated `list`: this is a signup form's option
+    // list, not an admin console page. A `LIMIT` here would silently truncate
+    // the programs a student can choose from.
+    let rows = programs::list_all(&state.pool).await.map_err(PublicError::from)?;
 
     Ok(Json(
         rows.into_iter()
@@ -88,7 +91,7 @@ async fn list_semesters(
 }
 
 async fn list_lscs(State(state): State<AppState>) -> Result<Json<Vec<ReferenceOption>>, PublicError> {
-    let rows = lscs::list(&state.pool).await.map_err(PublicError::from)?;
+    let rows = lscs::list_all(&state.pool).await.map_err(PublicError::from)?;
 
     Ok(Json(
         rows.into_iter()
