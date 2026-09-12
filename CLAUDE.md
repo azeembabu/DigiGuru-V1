@@ -147,6 +147,9 @@ switch together, not unilaterally.
 ./dev.ps1
 ./dev.ps1 -WebOnly      # frontend only - no Docker, no Rust toolchain needed
 ./dev.ps1 -NoDeps       # deps already running
+# Prerequisite for anything but -WebOnly: Docker Desktop installed and its engine
+# reachable. dev.ps1 preflights both and stops with the fix rather than letting the
+# gateway panic later on a Postgres connect.
 
 cargo test --workspace          # Rust tests
 cargo clippy --all-targets -- -D warnings

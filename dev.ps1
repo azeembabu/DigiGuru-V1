@@ -33,20 +33,58 @@ if ((Test-Path $cargoBin) -and ($env:PATH -notlike "*$cargoBin*")) { $env:PATH =
 $have = { param($exe) [bool](Get-Command $exe -ErrorAction SilentlyContinue) }
 
 # --- 1. local dependencies -------------------------------------------------
+# Fail loudly and specifically here. A missing Docker used to surface much later
+# as an opaque gateway panic on connect, which cost real debugging time -- the
+# engine is a hard prerequisite for the backend, so say so up front.
 if (-not $WebOnly -and -not $NoDeps) {
-  if (& $have 'docker') {
-    Info 'starting Postgres / Redis / Qdrant'
-    # --wait blocks on the healthchecks in the compose file, so migrations below
-    # never race a Postgres that is listening but not yet accepting queries.
-    docker compose -f infra/docker-compose.yml up -d --wait
-    if ($LASTEXITCODE -ne 0) { throw 'docker compose failed' }
-  } else {
-    Warn 'docker not found -- skipping local deps. The gateway will fail to connect unless Postgres/Redis are already reachable. Use -WebOnly to run just the frontend.'
+  if (-not (& $have 'docker')) {
+    $msg = @'
+Docker is not installed, so Postgres / Redis / Qdrant cannot start.
+
+  Installer on this machine: E:\DOCKER\Docker Desktop Installer.exe
+  Install silently (accept the UAC prompt):
+    & "E:\DOCKER\Docker Desktop Installer.exe" install --quiet --accept-license --backend=wsl-2
+
+WSL2 is already present, so no reboot is needed.
+Run ./dev.ps1 -WebOnly to work on the frontend alone in the meantime.
+'@
+    Write-Host $msg -ForegroundColor Red
+    exit 1
   }
+
+  # Docker Desktop does not auto-start on login here, so the CLI can exist while
+  # the engine is down. Start it and wait rather than letting compose fail.
+  docker info 2>&1 | Out-Null
+  if ($LASTEXITCODE -ne 0) {
+    $desktop = 'C:\Program Files\Docker\Docker\Docker Desktop.exe'
+    if (Test-Path $desktop) {
+      Info 'Docker engine is down -- starting Docker Desktop'
+      Start-Process -FilePath $desktop | Out-Null
+    }
+    Info 'waiting for the Docker engine'
+    $deadline = (Get-Date).AddMinutes(3)
+    while ($true) {
+      docker info 2>&1 | Out-Null
+      if ($LASTEXITCODE -eq 0) { break }
+      if ((Get-Date) -gt $deadline) { throw 'Docker engine did not come up within 3 minutes' }
+      Start-Sleep -Seconds 3
+    }
+  }
+
+  Info 'starting Postgres / Redis / Qdrant'
+  # --wait blocks on the healthchecks in the compose file, so migrations below
+  # never race a Postgres that is listening but not yet accepting queries.
+  docker compose -f infra/docker-compose.yml up -d --wait
+  if ($LASTEXITCODE -ne 0) { throw 'docker compose failed' }
 }
 
 # --- 2. migrations ---------------------------------------------------------
-if (-not $WebOnly -and -not $SkipMigrations -and (& $have 'sqlx')) {
+if (-not $WebOnly -and -not $SkipMigrations) {
+  # sqlx's compile-time query macros need a live, migrated database, so a skipped
+  # migration step shows up later as a confusing build failure. Never skip it silently.
+  if (-not (& $have 'sqlx')) {
+    throw 'sqlx-cli not found. Install it with: cargo install sqlx-cli --no-default-features --features postgres'
+  }
   Info 'applying migrations'
   sqlx migrate run
   if ($LASTEXITCODE -ne 0) { throw 'sqlx migrate run failed' }
