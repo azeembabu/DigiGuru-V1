@@ -1,0 +1,108 @@
+@import "tailwindcss";
+
+/*
+ * Design tokens — mirrors DESIGN.md §9.1/§9.2 exactly.
+ * The marketing site is deliberately single-theme (dark), per DESIGN.md §7:
+ * "Marketing site (/): Dark hero — always, independent of viewer preference."
+ * So these are plain values, not swapped under prefers-color-scheme.
+ */
+@theme {
+  --color-ink-950: #0a0c16;
+  --color-ink-900: #12141f;
+  --color-ink-800: #1c1f2e;
+  --color-ink-700: #2a2e42;
+
+  --color-lime-300: #c7f26b;
+  --color-lime-400: #a6e635;
+  --color-lime-500: #8fc91e;
+  --color-lime-950: #12190a;
+
+  --color-indigo-300: #9ea3f2;
+  --color-indigo-400: #6e74e8;
+  --color-indigo-500: #5a5fd1;
+  --color-indigo-950: #171a33;
+
+  --color-lavender-50: #f4f4fc;
+  --color-lavender-100: #e4e5f8;
+  --color-lavender-200: #d2d3f0;
+
+  --color-gray-300: #b6b9c9;
+  --color-gray-500: #6c6f82;
+  --color-gray-900: #15161f;
+
+  --color-success: #3fcf7f;
+  --color-danger: #f1503d;
+  --color-warning: #f5b84a;
+
+  --font-display: "Sora", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+
+  --radius-sm: 8px;
+  --radius-md: 16px;
+  --radius-lg: 28px;
+}
+
+body {
+  background: var(--color-ink-950);
+  color: var(--color-lavender-50);
+  font-family: var(--font-sans);
+}
+
+::selection {
+  background: var(--color-lime-400);
+  color: var(--color-ink-950);
+}
+
+/* Decorative motion — every animated element below respects this. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@keyframes dg-pulse-ring {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--color-indigo-400) 55%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 8px color-mix(in srgb, var(--color-indigo-400) 0%, transparent);
+  }
+}
+
+@keyframes dg-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@keyframes dg-wave {
+  0%,
+  100% {
+    transform: scaleY(0.35);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+.dg-pulse-ring {
+  animation: dg-pulse-ring 2.4s ease-out infinite;
+}
+
+.dg-blink {
+  animation: dg-blink 1.6s ease-in-out infinite;
+}
+
+.dg-wave-bar {
+  animation: dg-wave 1s ease-in-out infinite;
+  transform-origin: bottom;
+}
