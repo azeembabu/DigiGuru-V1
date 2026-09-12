@@ -19,15 +19,17 @@ import type { Course, Program, Semester } from "@/lib/admin/types";
 type Loaded = { semester: Semester; program: Program; courses: Course[] };
 
 /**
- * Courses in one semester — a deep link, not the main path.
+ * Courses in one semester.
  *
- * The program page now lists every course in the program with semester as a
- * column, so this screen exists for links that already point at a semester.
- * Creating a course happens there, where the semester is a field rather than
- * the route.
+ * The program page lists every course in the program with semester as a
+ * column; this screen is the same data narrowed to one semester. It creates
+ * courses too: the semester is already decided by the route, so sending an
+ * admin to the program page to re-pick it from a dropdown would be a dead end
+ * with an extra chance to pick the wrong one — and a course's semester cannot
+ * be changed afterwards.
  */
 export function SemesterCourses({ semesterId }: { semesterId: string }) {
-  const [form, setForm] = useState<{ course: Course } | null>(null);
+  const [form, setForm] = useState<{ course: Course | null } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
   // `getSemester` gives this screen its own program, so it is correct from its
@@ -104,9 +106,14 @@ export function SemesterCourses({ semesterId }: { semesterId: string }) {
         description="Courses in this semester. Open one to manage its blocks and units."
         action={
           data ? (
-            <RowLink href={`/admin/programs/${data.semester.program_id}`}>
-              All courses in this program
-            </RowLink>
+            <div className="flex items-center gap-4">
+              <RowLink href={`/admin/programs/${data.semester.program_id}`}>
+                All courses in this program
+              </RowLink>
+              <AdminButton type="button" onClick={() => setForm({ course: null })}>
+                Add course
+              </AdminButton>
+            </div>
           ) : null
         }
       />
@@ -126,26 +133,25 @@ export function SemesterCourses({ semesterId }: { semesterId: string }) {
         </Banner>
       ) : null}
 
-      <Banner tone="info">
-        Courses are added from the program page, where every semester&rsquo;s courses are listed
-        together.
-      </Banner>
-
       <DataTable
         columns={columns}
         rows={data?.courses ?? []}
         rowKey={(row) => row.id}
         loading={loading}
         empty="No courses in this semester yet."
+        emptyHint="Add the first one with “Add course”."
       />
 
-      {/* Edit only: `UpdateCourseRequest` has no semester field, so the form's
-          semester select is not rendered and no semester list is needed. */}
+      {/* On create, the only semester offered is this one — the route already
+          chose it, and a course cannot be moved between semesters afterwards.
+          On edit the select is not rendered at all, because
+          `UpdateCourseRequest` carries no semester field. */}
       {form && data ? (
         <CourseForm
           programId={data.semester.program_id}
-          semesters={[]}
+          semesters={form.course ? [] : [data.semester]}
           course={form.course}
+          defaultSemesterId={data.semester.id}
           onClose={() => setForm(null)}
           onSaved={handleSaved}
         />

@@ -110,8 +110,102 @@ async function readBody(response: Response): Promise<unknown> {
   return body;
 }
 
-export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+/**
+ * Endpoints that must never trigger a refresh-and-retry.
+ *
+ * A 401 from any of these is the answer, not a stale token — retrying
+ * `/auth/refresh` after it 401s would recurse, and retrying a failed login
+ * would double-count against the rate limiter on `/auth/*`.
+ */
+const NO_REFRESH = [
+  "/auth/refresh",
+  "/auth/login",
+  "/auth/signup",
+  "/auth/logout",
+  "/auth/forgot-password",
+  "/auth/reset-password",
+];
+
+/**
+ * In-flight refresh, shared by every caller.
+ *
+ * A screen typically fires several requests at once, so without this a single
+ * expiry would send N parallel refreshes. That is not just wasteful: the
+ * gateway ROTATES the refresh token and revokes the presented one
+ * (`apps/gateway/src/auth/refresh.rs`), so the second request would arrive
+ * with a token the first had already revoked and be treated as a replay.
+ */
+let refreshInFlight: Promise<boolean> | null = null;
+
+function refreshAccessToken(): Promise<boolean> {
+  refreshInFlight ??= (async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
+        method: "POST",
+        credentials: "include",
+      });
+      return response.ok;
+    } catch {
+      return false;
+    } finally {
+      // Cleared on the microtask after resolution so concurrent callers that
+      // are already awaiting share this result, while the next expiry starts
+      // a fresh attempt.
+      queueMicrotask(() => {
+        refreshInFlight = null;
+      });
+    }
+  })();
+
+  return refreshInFlight;
+}
+
+/**
+ * Send the request, and if it comes back 401, silently rotate the session and
+ * send it once more.
+ *
+ * The access JWT lives 15 minutes (`.claude/rules/api-conventions.md`) while
+ * the refresh token lives days, so without this every screen breaks a quarter
+ * of an hour into a session and the admin is told "Authentication is
+ * required" for work they are in the middle of. Both tokens are httpOnly
+ * cookies, so the browser cannot check expiry in advance — a 401 is the only
+ * signal available, which makes retry-on-401 the mechanism rather than a
+ * timer.
+ */
+async function apiFetchWithRetry(path: string, init?: RequestInit): Promise<Response> {
   const response = await apiFetchRaw(path, init);
+
+  if (response.status !== 401 || NO_REFRESH.some((prefix) => path.startsWith(prefix))) {
+    return response;
+  }
+
+  // A retried body must be re-readable. A `File`/`Blob` (the PDF upload) is;
+  // a stream is not, so those are left to fail rather than silently sending a
+  // truncated body.
+  if (init?.body instanceof ReadableStream) return response;
+
+  const refreshed = await refreshAccessToken();
+  if (!refreshed) {
+    // The session is genuinely over, not merely stale. Send them to sign in
+    // rather than leaving a half-usable screen telling them "Authentication
+    // is required" with no way to act on it. `next` brings them back.
+    if (typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
+      const next = window.location.pathname + window.location.search;
+      // A hard navigation, deliberately, not `router.push`: this module is
+      // not a component and has no router, and a full document load is what
+      // we want anyway — it discards every screen's cached state along with
+      // the dead session, so nothing survives to render stale admin data.
+      // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+      window.location.assign(`/login?next=${encodeURIComponent(next)}`);
+    }
+    return response;
+  }
+
+  return apiFetchRaw(path, init);
+}
+
+export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await apiFetchWithRetry(path, init);
   return (await readBody(response)) as T;
 }
 
@@ -130,7 +224,7 @@ export async function apiFetchPage<T>(
   path: string,
   init?: RequestInit,
 ): Promise<{ items: T[]; total: number }> {
-  const response = await apiFetchRaw(path, init);
+  const response = await apiFetchWithRetry(path, init);
   const body = (await readBody(response)) as T[];
   const header = response.headers.get("X-Total-Count");
   const parsed = header === null ? Number.NaN : Number.parseInt(header, 10);

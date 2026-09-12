@@ -21,7 +21,6 @@
 //! button can just `fetch` the raw file. `title` is a query parameter.
 
 use axum::{
-    body::Bytes,
     extract::{Path, Query, State},
     Json,
 };
@@ -33,7 +32,7 @@ use uuid::Uuid;
 use dg_core::{BlockId, Capability, DocumentId, PublicError};
 use dg_db::models::{documents, uploads};
 
-use crate::extractors::AuthenticatedActor;
+use crate::extractors::{AuthenticatedActor, UploadBody};
 use crate::state::AppState;
 
 /// Where uploaded PDFs land in this pass.
@@ -44,6 +43,19 @@ use crate::state::AppState;
 /// scale past one gateway instance. Local-disk storage is a deliberate
 /// stopgap for this pass, not a silent shortcut.
 const UPLOAD_DIR: &str = "./data/uploads";
+
+/// Every PDF begins with this signature (`%PDF-` then a version, e.g.
+/// `%PDF-1.7`). `.claude/rules/security.md` requires "type sniffing (not
+/// extension trust)" on uploads — and this endpoint has no filename to trust
+/// anyway, only a `Content-Type` header the client chooses freely. Checking
+/// the bytes is the only statement about the content that the client cannot
+/// simply assert.
+const PDF_MAGIC: &[u8] = b"%PDF-";
+
+/// Whether these bytes actually are a PDF, by signature.
+fn is_pdf(body: &[u8]) -> bool {
+    body.starts_with(PDF_MAGIC)
+}
 
 #[derive(Debug, Deserialize)]
 pub struct UploadQuery {
@@ -61,7 +73,10 @@ pub async fn upload(
     State(state): State<AppState>,
     Path(block_id): Path<Uuid>,
     Query(query): Query<UploadQuery>,
-    body: Bytes,
+    // `UploadBody`, not `Bytes`: an oversize body must come back as the
+    // error envelope, not as axum's plaintext 413. The cap itself is the
+    // `DefaultBodyLimit` layer on this route (`admin/mod.rs`).
+    UploadBody(body): UploadBody,
 ) -> Result<Json<UploadResponse>, PublicError> {
     let block_id = BlockId::from(block_id);
 
@@ -81,6 +96,20 @@ pub async fn upload(
 
     if query.title.trim().is_empty() {
         return Err(PublicError::validation("title", "Title is required."));
+    }
+
+    // Sniff the content, do not trust the declared `Content-Type`.
+    //
+    // TODO(phase2-virus-scan): `.claude/rules/security.md` also requires a
+    // virus scan before an upload is accepted. That needs a scanner service
+    // (ClamAV or equivalent) in `infra/` and a quarantine path for an
+    // infected file — a larger piece of work than this handler, and
+    // deliberately not attempted here. Flagged as an open gap.
+    if !is_pdf(&body) {
+        return Err(PublicError::validation(
+            "file",
+            "The uploaded file is not a PDF.",
+        ));
     }
 
     let mut hasher = Sha256::new();
@@ -236,7 +265,35 @@ pub async fn get_document(
 
 #[cfg(test)]
 mod tests {
+    use super::is_pdf;
     use dg_core::{Actor, Capability, ProgramId, Role, UserId};
+
+    #[test]
+    fn accepts_a_real_pdf_signature() {
+        assert!(is_pdf(b"%PDF-1.7\n1 0 obj"));
+        assert!(is_pdf(b"%PDF-1.4"));
+    }
+
+    #[test]
+    fn rejects_a_non_pdf_body_whatever_the_content_type_claims() {
+        // A JPEG, an HTML error page, and a ZIP — the three things that most
+        // often arrive when a browser upload has gone wrong, all of which a
+        // client could label `application/pdf`.
+        assert!(!is_pdf(&[0xFF, 0xD8, 0xFF, 0xE0]));
+        assert!(!is_pdf(b"<!DOCTYPE html>"));
+        assert!(!is_pdf(&[0x50, 0x4B, 0x03, 0x04]));
+    }
+
+    #[test]
+    fn rejects_a_body_shorter_than_the_signature() {
+        assert!(!is_pdf(b"%PD"));
+        assert!(!is_pdf(b""));
+    }
+
+    #[test]
+    fn rejects_a_pdf_signature_that_is_not_at_the_start() {
+        assert!(!is_pdf(b"junk%PDF-1.7"));
+    }
 
     /// The authorization rule shared by upload and both read routes, applied
     /// after the document's owning program has been resolved.

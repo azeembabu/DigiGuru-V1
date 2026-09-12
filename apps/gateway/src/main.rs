@@ -71,11 +71,13 @@ async fn main() {
 }
 
 fn build_router(state: AppState) -> Router {
+    let max_upload_bytes = state.config.max_upload_bytes;
+
     let api_v1 = Router::new()
         .nest("/auth", auth::router())
         .nest("/reference", reference::router())
         .nest("/me", me::router())
-        .nest("/admin", admin::router());
+        .nest("/admin", admin::router(max_upload_bytes));
 
     Router::new()
         .route("/health", axum::routing::get(health::health))

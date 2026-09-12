@@ -21,6 +21,7 @@ pub mod students;
 pub mod users;
 
 use axum::{
+    extract::DefaultBodyLimit,
     http::{header::HeaderName, HeaderMap, HeaderValue},
     routing::{get, patch, post},
     Router,
@@ -30,7 +31,11 @@ use dg_core::PublicError;
 
 use crate::state::AppState;
 
-pub fn router() -> Router<AppState> {
+/// `max_upload_bytes` is applied as a `DefaultBodyLimit` to the document
+/// upload route **only**. Raising axum's global 2 MiB default instead would
+/// let every JSON endpoint — `/auth/login` included — buffer a body that
+/// large, which is a DoS surface, not a fix.
+pub fn router(max_upload_bytes: usize) -> Router<AppState> {
     Router::new()
         .route("/programs", post(programs::create_program).get(programs::list_programs))
         .route("/programs/{id}", get(programs::get_program).patch(programs::update_program))
@@ -52,7 +57,10 @@ pub fn router() -> Router<AppState> {
         .route("/courses/{course_id}/blocks", get(blocks::list_blocks_for_course))
         .route(
             "/blocks/{block_id}/documents",
-            post(documents::upload).get(documents::list_documents_for_block),
+            post(documents::upload)
+                .get(documents::list_documents_for_block)
+                // Applies to the GET too, harmlessly: it has no body.
+                .layer(DefaultBodyLimit::max(max_upload_bytes)),
         )
         .route("/documents/{id}", get(documents::get_document))
         .route("/stats", get(stats::get_stats))

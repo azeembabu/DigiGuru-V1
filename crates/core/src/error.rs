@@ -107,6 +107,10 @@ pub enum PublicError {
     Validation(Vec<FieldError>),
     Conflict { code: &'static str, message: String },
     Unprocessable { code: &'static str, message: String },
+    /// The request body exceeded the route's configured size cap. Carries
+    /// the limit in its message so a client can tell the user what to do
+    /// about it rather than just that something failed.
+    PayloadTooLarge { message: String },
     RateLimited,
     Unavailable,
     Internal,
@@ -124,6 +128,15 @@ impl PublicError {
         }
     }
 
+    /// `413 PAYLOAD_TOO_LARGE`, naming the actual limit in MiB — a message
+    /// that says only "too large" leaves the user guessing how much to cut.
+    pub fn payload_too_large(max_bytes: usize) -> Self {
+        let max_mib = max_bytes / (1024 * 1024);
+        PublicError::PayloadTooLarge {
+            message: format!("The uploaded file is larger than the {max_mib} MB limit."),
+        }
+    }
+
     /// A single-field validation error, for the common case.
     pub fn validation(field: &'static str, message: impl Into<String>) -> Self {
         PublicError::Validation(vec![FieldError::new(field, message)])
@@ -137,6 +150,7 @@ impl PublicError {
             PublicError::Validation(_) => "VALIDATION_ERROR",
             PublicError::Conflict { code, .. } => code,
             PublicError::Unprocessable { code, .. } => code,
+            PublicError::PayloadTooLarge { .. } => "PAYLOAD_TOO_LARGE",
             PublicError::RateLimited => "RATE_LIMITED",
             PublicError::Unavailable => "UPSTREAM_UNAVAILABLE",
             PublicError::Internal => "INTERNAL_ERROR",
@@ -157,6 +171,7 @@ impl PublicError {
                 .join("; "),
             PublicError::Conflict { message, .. } => message.clone(),
             PublicError::Unprocessable { message, .. } => message.clone(),
+            PublicError::PayloadTooLarge { message } => message.clone(),
             PublicError::RateLimited => "Too many requests. Please try again later.".to_string(),
             PublicError::Unavailable => {
                 "The service is temporarily unavailable. Please try again shortly.".to_string()
@@ -173,6 +188,7 @@ impl PublicError {
             PublicError::Validation(_) => StatusCode::BAD_REQUEST,
             PublicError::Conflict { .. } => StatusCode::CONFLICT,
             PublicError::Unprocessable { .. } => StatusCode::UNPROCESSABLE_ENTITY,
+            PublicError::PayloadTooLarge { .. } => StatusCode::PAYLOAD_TOO_LARGE,
             PublicError::RateLimited => StatusCode::TOO_MANY_REQUESTS,
             PublicError::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
             PublicError::Internal => StatusCode::INTERNAL_SERVER_ERROR,
@@ -228,6 +244,16 @@ mod tests {
     fn session_active_matches_documented_contract() {
         let err = PublicError::session_active();
         assert_eq!(err.code(), "SESSION_ACTIVE");
+    }
+
+    #[test]
+    fn payload_too_large_is_413_and_names_the_limit() {
+        let err = PublicError::payload_too_large(64 * 1024 * 1024);
+        assert_eq!(err.code(), "PAYLOAD_TOO_LARGE");
+        assert_eq!(err.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        // The number is the point: "too large" alone tells an admin nothing
+        // about how much to cut.
+        assert!(err.public_message().contains("64 MB"));
     }
 
     #[test]

@@ -145,7 +145,29 @@ export function validateUnit(title: string, file: File | null): Record<string, s
   const looksPdf = file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf");
   if (!looksPdf) errors.file = "Only PDF files can be ingested.";
   else if (file.size === 0) errors.file = "That file is empty.";
+  else if (file.size > MAX_UNIT_BYTES) {
+    // Caught here rather than after a long upload that the gateway will reject
+    // at the body limit anyway — the admin finds out before waiting, not after.
+    errors.file = `That PDF is ${formatBytes(file.size)}. The limit is ${MAX_UNIT_LABEL}.`;
+  }
   return errors;
+}
+
+/**
+ * Largest PDF the gateway will accept, mirroring its upload body limit
+ * (`apps/gateway/src/admin/documents.rs`). Keep the two in step: this is a
+ * courtesy check so a large file fails instantly instead of after a long
+ * upload, never the enforcement.
+ */
+export const MAX_UNIT_BYTES = 64 * 1024 * 1024;
+export const MAX_UNIT_LABEL = "64 MB";
+
+/** The gateway rejects anything over its upload body limit with this code. */
+export const TOO_LARGE_CODE = "PAYLOAD_TOO_LARGE";
+
+function formatBytes(bytes: number): string {
+  const mb = bytes / (1024 * 1024);
+  return mb >= 1 ? `${mb.toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
 
 /** The gateway dedupes by SHA-256, so the same PDF twice is a conflict. */

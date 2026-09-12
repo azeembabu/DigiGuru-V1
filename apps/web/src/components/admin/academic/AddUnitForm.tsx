@@ -5,7 +5,13 @@ import { useId, useRef, useState, type FormEvent } from "react";
 import { AdminButton, AdminField, AdminInput } from "@/components/admin/controls";
 import { Banner, adminControlBorder, adminControlClass } from "@/components/admin/primitives";
 import { codeFor, fieldErrorsFor, messageFor } from "@/components/admin/academic/shared";
-import { DUPLICATE_CODE, DUPLICATE_MESSAGE, validateUnit } from "@/components/admin/academic/units";
+import {
+  DUPLICATE_CODE,
+  DUPLICATE_MESSAGE,
+  MAX_UNIT_LABEL,
+  TOO_LARGE_CODE,
+  validateUnit,
+} from "@/components/admin/academic/units";
 import { uploadDocument } from "@/lib/admin/client";
 
 /**
@@ -53,9 +59,16 @@ export function AddUnitForm({
       onUploaded(`Unit “${title.trim()}” uploaded. Ingestion has been queued.`);
     } catch (caught: unknown) {
       // A raw `DOCUMENT_ALREADY_EXISTS` tells an admin nothing actionable.
-      if (codeFor(caught) === DUPLICATE_CODE) {
+      const code = codeFor(caught);
+      if (code === DUPLICATE_CODE) {
         setErrors({ file: DUPLICATE_MESSAGE });
         setFormError(DUPLICATE_MESSAGE);
+      } else if (code === TOO_LARGE_CODE) {
+        // The client check above should catch this first; this covers the
+        // case where the two limits have drifted apart.
+        const tooLarge = `That PDF is larger than the ${MAX_UNIT_LABEL} limit.`;
+        setErrors({ file: tooLarge });
+        setFormError(tooLarge);
       } else {
         setErrors(fieldErrorsFor(caught));
         setFormError(messageFor(caught, "Could not upload the unit."));
@@ -83,7 +96,7 @@ export function AddUnitForm({
           />
         </AdminField>
 
-        <AdminField id={fileId} label="PDF" required error={errors.file}>
+        <AdminField id={fileId} label="PDF" required error={errors.file} hint={`PDF only, up to ${MAX_UNIT_LABEL}.`}>
           <input
             id={fileId}
             name={fileId}

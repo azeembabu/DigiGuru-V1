@@ -19,8 +19,16 @@
 ### Status codes
 
 `200` ok · `201` created · `400` validation · `401` unauthenticated · `403` capability denied ·
-`409` state conflict (e.g. `SESSION_ACTIVE`) · `422` semantically invalid · `429` rate limited ·
+`409` state conflict (e.g. `SESSION_ACTIVE`) · `413` body over the route's size cap
+(`PAYLOAD_TOO_LARGE`) · `422` semantically invalid · `429` rate limited ·
 `503` upstream (Gemini/Qdrant) unavailable.
+
+A framework rejection must never reach a client as-is. axum answers its own
+extractor rejections with a plaintext body, which is not the envelope and which an
+envelope-parsing client can only render as a generic failure — so any route whose
+extractor can be rejected (notably a body-limit rejection on an upload) wraps it and
+returns a `PublicError` instead. Map by status code, not by matching the rejection
+enum: those enums are `#[non_exhaustive]`.
 
 ### Pagination and `X-Total-Count`
 
@@ -80,6 +88,24 @@ past the scope check it was authorized under). Block responses:
 { "id": "uuid", "course_id": "uuid", "block_no": 1, "title": "string",
   "description": "string|null", "status": "active|inactive" }
 ```
+
+### Document upload limits
+
+`POST /api/v1/admin/blocks/{block_id}/documents` takes the raw PDF bytes and caps the
+body at **64 MiB**, set per route (`MAX_UPLOAD_BYTES` overrides it). The cap is *not*
+global: axum's 2 MiB default stays in force on every JSON endpoint, because raising it
+everywhere would widen the DoS surface on `/auth/*` for no benefit.
+
+Over the cap returns `413`:
+
+```json
+{ "error": { "code": "PAYLOAD_TOO_LARGE",
+             "message": "The uploaded file is larger than the 64 MB limit." } }
+```
+
+The message names the limit so a console can tell the admin how much to cut. The body
+is also sniffed: it must begin with the `%PDF-` signature, or the request is rejected
+`400 VALIDATION_ERROR` on field `file` — the declared `Content-Type` is not trusted.
 
 Document responses carry the `documents` row plus the status and error of its most
 recent `ingestion_jobs` attempt (`documents` has no error column of its own).
