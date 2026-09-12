@@ -19,7 +19,7 @@ Fixed order, no shortcuts:
 ```
 normalise + detect language
   -> hybrid search (dense + BM25, RRF fusion), top_k = 20
-     MANDATORY filter: program_id AND semester AND block_no
+     MANDATORY filter: program_id AND semester_no AND course_id AND block_no
   -> cross-encoder rerank -> top 2..3
   -> if best score < ABSTAIN_THRESHOLD -> Abstain
   -> prompt = [cached preamble] + [2..3 chunks] + [turn state]

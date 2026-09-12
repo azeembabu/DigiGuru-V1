@@ -12,7 +12,8 @@ Check, in priority order:
 1. **Non-negotiables.** Does anything weaken NN-1 (whiteboard-first), NN-2 (first-login flag),
    NN-3 (server-side 20-minute cap), NN-4 (RAG-only abstention), or NN-5 (jailbreak termination)?
    Any weakening is a blocking finding regardless of how small the diff is.
-2. **Metadata filtering.** Every Qdrant query carries `program_id`, `semester`, and `block_no`.
+2. **Metadata filtering.** Every Qdrant query carries `program_id`, `semester_no`, `course_id`,
+   and `block_no`.
 3. **Authorization.** Every new endpoint declares a capability. No implicit allow.
 4. **Error exposure.** Nothing but `PublicError` reaches a client.
 5. **Audio path hygiene.** No `unwrap()`, no blocking calls, no unbounded buffers.

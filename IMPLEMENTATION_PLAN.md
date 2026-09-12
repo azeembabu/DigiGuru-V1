@@ -134,45 +134,99 @@ Project-Vertion01/
 ### 3.1 PostgreSQL (core tables)
 
 ```sql
-CREATE TYPE user_role AS ENUM ('super_admin', 'sub_admin', 'student');
+-- Academic hierarchy: Program > Semester > Course > Block
+-- (carried over from the validated prototype model on origin/master; see §13)
+
+CREATE TYPE user_role     AS ENUM ('super_admin', 'sub_admin', 'student');
+CREATE TYPE user_status   AS ENUM ('active', 'inactive', 'suspended');
+CREATE TYPE entity_status AS ENUM ('active', 'inactive');
 
 CREATE TABLE users (
   id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   role           user_role   NOT NULL,
+  status         user_status NOT NULL DEFAULT 'active',
   email          CITEXT      NOT NULL UNIQUE,
-  phone          TEXT        NOT NULL,
-  full_name      TEXT        NOT NULL,
   password_hash  TEXT        NOT NULL,          -- argon2id
-  is_active      BOOLEAN     NOT NULL DEFAULT TRUE,
+  last_login_at  TIMESTAMPTZ,
   created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE programs (                          -- e.g. "BA Malayalam"
-  id   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  code TEXT NOT NULL UNIQUE,
-  name TEXT NOT NULL
+CREATE TABLE admins (                            -- super_admin and sub_admin profile
+  id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id   UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  full_name TEXT NOT NULL
 );
 
-CREATE TABLE blocks (                            -- a teaching unit inside a semester
+CREATE TABLE lscs (                              -- Learner Support Centre (an entity, not a string)
+  id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  code     TEXT NOT NULL UNIQUE,
+  name     TEXT NOT NULL,
+  location TEXT,
+  status   entity_status NOT NULL DEFAULT 'active'
+);
+
+CREATE TABLE programs (                          -- e.g. "BA Malayalam"
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  program_id  UUID NOT NULL REFERENCES programs(id),
-  semester    SMALLINT NOT NULL CHECK (semester BETWEEN 1 AND 12),
-  block_no    SMALLINT NOT NULL,
-  title       TEXT NOT NULL,
-  UNIQUE (program_id, semester, block_no)
+  code        TEXT NOT NULL UNIQUE,
+  name        TEXT NOT NULL,
+  description TEXT,
+  status      entity_status NOT NULL DEFAULT 'active'
+);
+
+CREATE TABLE semesters (
+  id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  program_id      UUID NOT NULL REFERENCES programs(id) ON DELETE CASCADE,
+  semester_number SMALLINT NOT NULL CHECK (semester_number BETWEEN 1 AND 12),
+  name            TEXT NOT NULL,
+  status          entity_status NOT NULL DEFAULT 'active',
+  UNIQUE (program_id, semester_number)
+);
+
+CREATE TABLE courses (
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  program_id  UUID NOT NULL REFERENCES programs(id)  ON DELETE CASCADE,
+  semester_id UUID NOT NULL REFERENCES semesters(id) ON DELETE CASCADE,
+  code        TEXT NOT NULL,
+  name        TEXT NOT NULL,
+  description TEXT,
+  UNIQUE (program_id, semester_id, code)
+);
+
+CREATE TABLE blocks (                            -- a teaching unit inside a course
+  id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  course_id UUID NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+  block_no  SMALLINT NOT NULL,
+  title     TEXT NOT NULL,
+  UNIQUE (course_id, block_no)
 );
 
 CREATE TABLE students (
-  user_id          UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-  roll_number      TEXT     NOT NULL UNIQUE,
-  program_id       UUID     NOT NULL REFERENCES programs(id),
-  semester         SMALLINT NOT NULL,
-  lssc             TEXT     NOT NULL,              -- Learner Support Service Centre
-  current_block_id UUID     REFERENCES blocks(id), -- context persistence target
-  is_first_login   BOOLEAN  NOT NULL DEFAULT TRUE, -- NN-2
-  locale           TEXT     NOT NULL DEFAULT 'ml-IN',
-  timezone         TEXT     NOT NULL DEFAULT 'Asia/Kolkata'
+  id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id          UUID NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  full_name        TEXT NOT NULL,
+  roll_number      TEXT NOT NULL UNIQUE,
+  phone_number     TEXT NOT NULL,
+  program_id       UUID NOT NULL REFERENCES programs(id)  ON DELETE RESTRICT,
+  semester_id      UUID NOT NULL REFERENCES semesters(id) ON DELETE RESTRICT,
+  lsc_id           UUID NOT NULL REFERENCES lscs(id)      ON DELETE RESTRICT,
+  current_block_id UUID REFERENCES blocks(id),              -- context persistence target
+  is_first_login   BOOLEAN NOT NULL DEFAULT TRUE,           -- NN-2
+  locale           TEXT NOT NULL DEFAULT 'ml-IN',
+  timezone         TEXT NOT NULL DEFAULT 'Asia/Kolkata',
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TYPE enrollment_status AS ENUM ('active', 'completed', 'dropped');
+
+CREATE TABLE student_courses (                   -- which courses a student may actually study
+  id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  student_id  UUID NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+  course_id   UUID NOT NULL REFERENCES courses(id)  ON DELETE CASCADE,
+  status      enrollment_status NOT NULL DEFAULT 'active',
+  assigned_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (student_id, course_id)
 );
 
 CREATE TABLE sub_admin_scopes (                  -- which programs a sub-admin may touch
@@ -182,49 +236,92 @@ CREATE TABLE sub_admin_scopes (                  -- which programs a sub-admin m
 );
 
 CREATE TABLE documents (
-  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  block_id     UUID NOT NULL REFERENCES blocks(id),
-  uploaded_by  UUID NOT NULL REFERENCES users(id),
-  title        TEXT NOT NULL,
-  storage_key  TEXT NOT NULL,
-  sha256       TEXT NOT NULL UNIQUE,             -- dedupe re-uploads
-  page_count   INT  NOT NULL,
-  status       TEXT NOT NULL DEFAULT 'pending',  -- pending|parsing|embedded|failed
-  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  block_id       UUID NOT NULL REFERENCES blocks(id),
+  uploaded_by    UUID NOT NULL REFERENCES users(id),
+  title          TEXT NOT NULL,
+  storage_key    TEXT NOT NULL,
+  sha256         TEXT NOT NULL UNIQUE,           -- dedupe re-uploads
+  page_count     INT  NOT NULL,
+  ocr_confidence REAL,                           -- NULL = born-digital, no OCR needed
+  status         TEXT NOT NULL DEFAULT 'pending',
+                 -- pending|parsing|pending_review|embedded|failed
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE TABLE sessions (
+CREATE TYPE session_status AS ENUM ('in_progress', 'completed', 'abandoned');
+
+-- The classroom session. Named `learning_sessions` to keep it distinct from
+-- `auth_sessions` (refresh tokens) — the prototype's naming, and worth keeping.
+CREATE TABLE learning_sessions (
   id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  student_id      UUID NOT NULL REFERENCES users(id),
+  student_id      UUID NOT NULL REFERENCES students(id),
+  course_id       UUID NOT NULL REFERENCES courses(id),
   block_id        UUID NOT NULL REFERENCES blocks(id),
   started_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
   ended_at        TIMESTAMPTZ,
   active_voice_ms BIGINT NOT NULL DEFAULT 0,     -- NN-3, server-authoritative
+  status          session_status NOT NULL DEFAULT 'in_progress',
   end_reason      TEXT,                          -- quota|idle|user|jailbreak|error
   resume_summary  TEXT,                          -- feeds the next session recap
   last_topic      TEXT,
   last_page       INT
 );
 
+CREATE TABLE auth_sessions (                     -- refresh-token / device sessions
+  id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id            UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  refresh_token_hash TEXT NOT NULL UNIQUE,
+  device_info        TEXT,
+  ip_address         INET,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at         TIMESTAMPTZ NOT NULL,
+  revoked_at         TIMESTAMPTZ
+);
+
+CREATE TABLE password_resets (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash TEXT NOT NULL UNIQUE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  used_at    TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE audit_logs (
+  id          BIGSERIAL PRIMARY KEY,
+  user_id     UUID REFERENCES users(id) ON DELETE SET NULL,
+  action      TEXT NOT NULL,
+  ip_address  INET,
+  device_info TEXT,
+  metadata    JSONB,                             -- must be PII-free (H-43)
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 CREATE TABLE safety_incidents (
   id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  session_id  UUID REFERENCES sessions(id),
-  student_id  UUID NOT NULL REFERENCES users(id),
+  session_id  UUID REFERENCES learning_sessions(id),
+  student_id  UUID NOT NULL REFERENCES students(id),
   kind        TEXT NOT NULL,                     -- jailbreak|toxicity|out_of_scope
-  tier        SMALLINT NOT NULL,                 -- 0 = pre-LLM tap, 1 = transcript
+  tier        SMALLINT NOT NULL,                 -- 0 = pre-LLM tap, 1 = transcript, 2 = output
   excerpt     TEXT NOT NULL,                     -- PII-redacted
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE TABLE board_events (                      -- whiteboard audit / replay
   id         BIGSERIAL PRIMARY KEY,
-  session_id UUID NOT NULL REFERENCES sessions(id),
+  session_id UUID NOT NULL REFERENCES learning_sessions(id),
   turn_seq   INT  NOT NULL,
   op         JSONB NOT NULL,
   emitted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   acked_ms   INT                                 -- client ACK latency; NULL = never acked
 );
 ```
+
+**Indexes.** Every foreign key above is indexed, plus the filter columns used on hot paths:
+`users(email, role, status)`, `students(roll_number, program_id, semester_id, lsc_id, phone_number)`,
+`student_courses(student_id, course_id, status)`, `learning_sessions(student_id, started_at)`,
+`auth_sessions(refresh_token_hash, expires_at, revoked_at)`, `audit_logs(user_id, action, created_at)`.
 
 ### 3.2 Qdrant collection — `curriculum`
 
@@ -233,9 +330,10 @@ CREATE TABLE board_events (                      -- whiteboard audit / replay
   "vectors": { "dense": { "size": 3072, "distance": "Cosine" } },
   "sparse_vectors": { "bm25": {} },
   "payload_schema": {
-    "program_id":  "keyword",   // filter: student program   (indexed)
-    "semester":    "integer",   // filter: student semester  (indexed)
-    "block_no":    "integer",   // filter: current block     (indexed)
+    "program_id":  "keyword",   // filter: student program        (indexed)
+    "semester_no": "integer",   // filter: student semester       (indexed)
+    "course_id":   "keyword",   // filter: enrolled course        (indexed)
+    "block_no":    "integer",   // filter: current block          (indexed)
     "document_id": "keyword",
     "chapter":     "keyword",
     "topic":       "text",
@@ -247,8 +345,11 @@ CREATE TABLE board_events (                      -- whiteboard audit / replay
 }
 ```
 
-Payload indexes on `program_id`, `semester`, `block_no` are **mandatory** — they are the mechanism
-that prevents cross-course context leakage (checklist item E-25).
+Payload indexes on `program_id`, `semester_no`, `course_id`, and `block_no` are **mandatory** —
+they are the mechanism that prevents cross-course context leakage (checklist item E-25). The
+`course_id` filter is what makes "strictly this student's syllabus" enforceable: a student who is
+enrolled in three courses this semester must not retrieve from a fourth they are not enrolled in,
+which a program+semester filter alone would allow.
 
 ### 3.3 Redis key map
 
@@ -271,16 +372,23 @@ that prevents cross-course context leakage (checklist item E-25).
 ### 4.1 Scope
 
 1. **Schema + migrations.** All tables in §3.1, `sqlx migrate`, seed script for one program
-   (BA Malayalam, semesters 1–6, blocks 1–4 each).
-2. **RBAC.** Three roles. Authorization is a middleware extractor in axum returning a typed
-   `Actor` enum; every handler declares its required capability. Sub-admins are additionally
-   scoped by `sub_admin_scopes` — a sub-admin for BA Malayalam cannot touch BCom content.
-3. **Student registration pipeline.** Captures Name, Roll Number, Program, Semester, LSSC,
+   (BA Malayalam, semesters 1–6, courses per semester, blocks 1–4 per course). The reference
+   prototype's two Prisma migrations (§13) are the starting point for the seed data.
+2. **RBAC.** Three roles — and note this is where the prototype diverges: it has only
+   `STUDENT | ADMIN`, so the super-admin / sub-admin split is net-new work, not a port.
+   Authorization is a middleware extractor in axum returning a typed `Actor` enum; every handler
+   declares its required capability. Sub-admins are additionally scoped by `sub_admin_scopes` —
+   a sub-admin for BA Malayalam cannot touch BCom content.
+3. **Student registration pipeline.** Captures Name, Roll Number, Program, Semester, LSC,
    Phone, Email. Server-side validation via `garde`/`validator` schemas (C-14):
    - roll number: regex per program, unique
    - phone: E.164 after normalising the Indian 10-digit form
    - email: RFC-validated + verification link
-   - program/semester: must resolve to an existing `blocks` row
+   - program / semester / LSC: must resolve to existing rows, not free text
+   - **allow-list on update.** Student self-service PATCH accepts only `full_name` and
+     `phone_number`; any other key is a validation error, never silently ignored. Academic fields
+     (`program_id`, `semester_id`, `lsc_id`) are admin-only. This pattern is proven in the
+     prototype's `student.validator.ts` and should be carried over verbatim in spirit.
 4. **Auth.** Argon2id password hashing, short-lived access JWT (15 min) + rotating refresh token
    stored hashed in Postgres, httpOnly SameSite=Strict cookies (C-16).
 5. **Context persistence ("Remember Me").** On successful login the gateway hydrates `ctx:{id}`
@@ -295,9 +403,13 @@ that prevents cross-course context leakage (checklist item E-25).
 
 - `migrations/0001_init.sql` … `0006_indexes.sql`
 - `crates/db` models, `crates/core::auth` with `Actor`, `Capability`
-- `apps/gateway` REST: `/auth/*`, `/admin/users`, `/admin/programs`, `/me/context`
-- `apps/web`: signup, login, role-routed dashboards
-- Integration test suite: role matrix (3 roles × 12 endpoints = every forbidden combination asserted 403)
+- `apps/gateway` REST: `/auth/*` (login, signup, refresh, forgot/reset password, session list and
+  revoke), `/admin/users`, `/admin/programs`, `/admin/semesters`, `/admin/courses`, `/admin/lscs`,
+  `/admin/students`, `/me/context`, `/me/profile`
+- `apps/web`: signup, login, forgot/reset password, role-routed dashboards, admin CRUD for
+  programs / semesters / courses / LSCs / students
+- Audit logging on every admin mutation and every auth event (metadata must be PII-free)
+- Integration test suite: role matrix (3 roles × every endpoint; each forbidden combination asserts 403)
 
 ### 4.3 Acceptance criteria
 
@@ -341,7 +453,7 @@ shorter than 80 tokens merges forward. Tables and verse/poetry blocks are kept a
 question
   -> normalise + language detect (ml/en)
   -> HYBRID SEARCH in Qdrant: dense + BM25, RRF fusion, top_k = 20      [E-26]
-     with hard filter: program_id AND semester AND block_no             [E-25]
+     with hard filter: program_id AND semester_no AND course_id AND block_no  [E-25]
   -> CROSS-ENCODER RERANK -> top 2..3                                   [E-27]
   -> SIMILARITY FLOOR CHECK
        if best_rerank_score < ABSTAIN_THRESHOLD -> return Abstain       [NN-4 / E-30]
@@ -672,3 +784,44 @@ CLAUDE.local.md        personal overrides, gitignored
     ├── rag-evaluator.md
     └── realtime-debugger.md
 ```
+
+---
+
+## 13. Reference Prototype (`origin/master`)
+
+The `master` branch holds a working Phase-1 prototype of Digi Guru on a **different stack**
+(Node/Express + Prisma + Vite React). The decision is to build this plan on the specified stack
+(Rust + Next.js + Qdrant) and treat `master` as a **reference prototype, not a codebase to extend**.
+
+It is not dead weight — it is a validated requirements artefact. Mine it, do not port it.
+
+### 13.1 What to carry over
+
+| Asset on `master` | Why it matters |
+|---|---|
+| `backend/prisma/schema.prisma` | A data model already validated against the requirements. Its hierarchy (Program > Semester > Course > Block), `lscs` as an entity, and the `learning_sessions` / `auth_sessions` split are all reflected in §3.1. |
+| `backend/prisma/migrations/` | Seed and reference data; the shape of the initial and Phase-3 migrations |
+| `backend/src/validators/*.ts` | Zod schemas encoding the real field rules. The `.strict()` allow-list on student self-service PATCH is the pattern to reproduce in the Rust validators. |
+| `backend/src/utils/` | `loginThrottle`, `tokens`, `cookies`, `audit`, `password` — the auth decisions are already made and reviewed; re-implement the same semantics. |
+| `admin-app/src/pages/` | Working admin UX for Programs, Semesters, LSCs, Students, Settings — use as the spec for the Next.js admin console. |
+| `student-app/src/pages/` | Signup, login, forgot/reset password, dashboard, courses, profile — the student flows, already designed. |
+| `REQUIREMENT.md`, `ROADMAP.md` | Original requirement capture; cross-check against this plan before Phase 1 starts. |
+
+### 13.2 Where the prototype falls short
+
+These are gaps to close, not regressions to preserve:
+
+- **Roles.** `Role` is only `STUDENT | ADMIN`. The required super-admin / sub-admin split, and
+  `sub_admin_scopes` program scoping, do not exist yet.
+- **Authorization granularity.** `requireRole(...roles)` is a role check, not a capability check,
+  and carries no scope join — a sub-admin would be able to touch any program.
+- **No RAG layer.** No vector store, no ingestion, no documents table.
+- **No realtime layer.** No WebSocket gateway, no Gemini Live, no whiteboard, no SyncGate.
+- **No quota or guardrails.** `learning_sessions.duration_seconds` exists, but nothing enforces
+  NN-3, and there is no safety pipeline at all.
+
+### 13.3 Branch policy
+
+- `main` — this plan and the new implementation. The branch that ships.
+- `master` — frozen reference. Do not merge it into `main`; do not delete it until Phase 1 is
+  complete and the requirements it encodes have been fully transferred.

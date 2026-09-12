@@ -44,6 +44,16 @@ evals/          golden question sets + RAGAs harness
 infra/          docker-compose, k8s, terraform
 ```
 
+## The `master` branch
+
+`master` holds a Node/Express + Prisma + Vite React prototype of Phase 1. It is a **frozen
+reference, not a codebase to extend** — read it for requirements, validated field rules, and admin
+UX, then implement on this stack. See `IMPLEMENTATION_PLAN.md` §13 for what to mine and what it is
+missing. Never merge `master` into `main`.
+
+The academic hierarchy is **Program > Semester > Course > Block**. LSC is an entity with its own
+table, not a text field on the student. A student reaches content only through `student_courses`.
+
 ## Modular rules
 
 Detailed conventions live in `.claude/rules/` — read the one that matches what you are touching:
@@ -75,7 +85,8 @@ rule set is worse than no rule set, since it silently changes agent behavior for
 
 - Do not add a dependency without noting why in the PR description.
 - Every new endpoint declares its required capability; there is no implicit authorization.
-- Every Qdrant query carries `program_id`, `semester`, and `block_no` filters. No exceptions.
+- Every Qdrant query carries `program_id`, `semester_no`, `course_id`, and `block_no` filters.
+  No exceptions.
 - No `unwrap()` or `expect()` in the audio or request path — propagate typed errors.
 - Errors returned to a client are `PublicError` only. Never leak SQL, stack traces, or prompts.
 - Migrations are forward-only and reviewed; never edit an applied migration.

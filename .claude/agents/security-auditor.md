@@ -18,8 +18,9 @@ refactor that reorders these is critical severity even if nothing visibly breaks
 for endpoints that read an id from the body instead of the token, sub-admin queries missing the
 scope join, and admin routes reachable without the extractor.
 
-**Context isolation.** Any Qdrant query without `program_id`, `semester`, and `block_no` filters is
-a data-leak finding, not a relevance bug.
+**Context isolation.** Any Qdrant query without `program_id`, `semester_no`, `course_id`, and
+`block_no` filters is a data-leak finding, not a relevance bug. Check `course_id` specifically —
+it is the filter that stops a student retrieving from a course they are not enrolled in.
 
 **PII.** Grep the logging, tracing, and metrics paths for `email`, `phone`, `full_name`,
 `roll_number`. Anything reaching an external endpoint unredacted is a finding.
