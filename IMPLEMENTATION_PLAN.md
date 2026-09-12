@@ -316,6 +316,20 @@ CREATE TABLE board_events (                      -- whiteboard audit / replay
   emitted_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   acked_ms   INT                                 -- client ACK latency; NULL = never acked
 );
+
+-- Reminder ledger for exported notes (see .claude/rules/pedagogy.md).
+-- Deliberately NOT a content store: it points at a board_events range and a date.
+CREATE TABLE note_reminders (
+  id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  student_id     UUID NOT NULL REFERENCES students(id) ON DELETE CASCADE,
+  session_id     UUID NOT NULL REFERENCES learning_sessions(id) ON DELETE CASCADE,
+  event_from_id  BIGINT NOT NULL REFERENCES board_events(id),
+  event_to_id    BIGINT NOT NULL REFERENCES board_events(id),
+  remind_at      DATE NOT NULL,
+  surfaced_at    TIMESTAMPTZ,                    -- set when shown on login
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CHECK (event_to_id >= event_from_id)
+);
 ```
 
 **Indexes.** Every foreign key above is indexed, plus the filter columns used on hot paths:
@@ -355,7 +369,7 @@ which a program+semester filter alone would allow.
 
 | Key | Type | TTL | Purpose |
 |-----|------|-----|---------|
-| `sess:{session_id}` | Hash | 6 h | Session FSM state — enables gateway failover (A-8) |
+| `sess:{session_id}` | Hash | 6 h | Session FSM state — enables gateway failover (A-8). Also holds the pedagogy flags: `current_tier` per `(block_id, para_index)` and the session `tone` flag (see `.claude/rules/pedagogy.md`). Both are session-scoped by design and are not persisted to Postgres. |
 | `quota:{student_id}:{yyyymmdd}` | String (ms) | until local midnight | NN-3 cumulative voice ledger |
 | `ctx:{student_id}` | Hash | 30 d | Persisted program/semester/block ("Remember Me") |
 | `pcache:{block_id}` | String | 1 h | Gemini prompt-cache handle for the block static preamble |
@@ -772,7 +786,8 @@ CLAUDE.local.md        personal overrides, gitignored
 │   ├── rag-pipeline.md
 │   ├── realtime-audio.md
 │   ├── whiteboard-sync.md
-│   └── security.md
+│   ├── security.md
+│   └── pedagogy.md
 ├── skills/              auto-invoked workflows
 │   ├── rag-ingest/SKILL.md
 │   ├── whiteboard-sync/SKILL.md
