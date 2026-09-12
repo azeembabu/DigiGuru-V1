@@ -11,11 +11,20 @@ import emblem from "@/../public/brand/digi-guru-emblem.png";
 export function Logo({
   size = "md",
   stacked = false,
+  tone = "dark",
   className = "",
 }: {
   size?: "sm" | "md" | "lg";
   /** Emblem above the wordmark, as in the hero lockup. */
   stacked?: boolean;
+  /**
+   * Which surface the lockup sits on. `"dark"` is the approved
+   * dark-background lockup (white "Digi"); `"light"` swaps that half to the
+   * artwork's own navy for the admin console, the product's one light surface
+   * (DESIGN.md §7) — white on `lavender-50` is unreadable. "Guru" stays
+   * brand-gold in both, as the approved mark requires.
+   */
+  tone?: "dark" | "light";
   className?: string;
 }) {
   const emblemPx = size === "lg" ? 72 : size === "md" ? 36 : 28;
@@ -41,7 +50,7 @@ export function Logo({
         style={{ width: emblemPx, height: "auto" }}
       />
       <span className={`font-display font-bold tracking-tight ${wordClass}`}>
-        <span className="text-lavender-50">Digi</span>{" "}
+        <span className={tone === "light" ? "text-brand-navy" : "text-lavender-50"}>Digi</span>{" "}
         <span className="text-brand-gold">Guru</span>
       </span>
     </span>

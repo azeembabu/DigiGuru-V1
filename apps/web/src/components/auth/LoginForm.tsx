@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useState, type FormEvent } from "react";
 
 import { ApiError, apiFetch } from "@/lib/api";
@@ -20,8 +20,27 @@ type LoginResponse = {
   is_first_login: boolean | null;
 };
 
+/**
+ * Where a successful login lands.
+ *
+ * Admins get the console, students the dashboard — the gateway would reject
+ * the wrong one anyway, so this is about not showing anyone a screen they
+ * cannot use. A `?next=` is honoured only when it is a same-site absolute
+ * path: anything else is an open-redirect waiting to happen.
+ */
+function destinationFor(role: string, next: string | null): string {
+  const isAdminRole = role === "super_admin" || role === "sub_admin";
+  const home = isAdminRole ? "/admin" : "/dashboard";
+
+  if (!next || !next.startsWith("/") || next.startsWith("//")) return home;
+  // Never bounce a student into the console just because the link said so.
+  if (next.startsWith("/admin") && !isAdminRole) return home;
+  return next;
+}
+
 export function LoginForm() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [errors, setErrors] = useState<FieldErrors>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -48,14 +67,18 @@ export function LoginForm() {
 
     setPending(true);
     try {
-      const result = await apiFetch<LoginResponse>("/auth/login", {
+      const session = await apiFetch<LoginResponse>("/auth/login", {
         method: "POST",
         body: JSON.stringify({ email, password }),
       });
 
-      // NN-2: the greeting is driven by `is_first_login`, which the gateway
-      // owns and flips server-side. The client only forwards where to land.
-      router.push(result.is_first_login ? "/classroom?welcome=1" : "/dashboard");
+      // Everyone lands on the dashboard. NN-2's greeting is driven by
+      // `is_first_login`, which the gateway owns and flips server-side — the
+      // dashboard reads the same flag from `/me/context`, so there is nothing
+      // for this redirect to carry. It deliberately does NOT branch into the
+      // classroom: that route is Phase 3, and sending a first-time student
+      // straight into a 404 is the worst possible first impression.
+      router.push(destinationFor(session.role, searchParams.get("next")));
       router.refresh();
     } catch (error) {
       if (error instanceof ApiError) {

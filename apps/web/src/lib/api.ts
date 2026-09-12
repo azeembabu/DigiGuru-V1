@@ -61,7 +61,13 @@ function isErrorEnvelope(value: unknown): value is { error: { code: string; mess
   );
 }
 
-export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+/**
+ * The one place a request actually leaves the browser. Split out from
+ * `apiFetch` so `apiFetchPage` can read response headers before the body is
+ * consumed — both share identical credential, error-envelope, and
+ * network-failure handling.
+ */
+async function apiFetchRaw(path: string, init?: RequestInit): Promise<Response> {
   let response: Response;
   try {
     response = await fetch(`${API_BASE_URL}${path}`, {
@@ -83,7 +89,11 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
       0,
     );
   }
+  return response;
+}
 
+/** Parse the body, converting any non-2xx into the `ApiError` envelope. */
+async function readBody(response: Response): Promise<unknown> {
   const body: unknown = await response.json().catch(() => null);
 
   if (!response.ok) {
@@ -97,5 +107,48 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
     );
   }
 
-  return body as T;
+  return body;
+}
+
+export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const response = await apiFetchRaw(path, init);
+  return (await readBody(response)) as T;
+}
+
+/**
+ * Like `apiFetch`, but also surfaces the total-row count the gateway puts in
+ * `X-Total-Count` on every paginated admin list
+ * (`.claude/rules/api-conventions.md`). The body stays a plain array — the
+ * count rides in the header precisely so the shipped array shapes did not have
+ * to be wrapped in an envelope.
+ *
+ * `total` falls back to the page length when the header is absent or
+ * unparseable, so a list still renders (just without a true page count)
+ * against a gateway build that predates the header.
+ */
+export async function apiFetchPage<T>(
+  path: string,
+  init?: RequestInit,
+): Promise<{ items: T[]; total: number }> {
+  const response = await apiFetchRaw(path, init);
+  const body = (await readBody(response)) as T[];
+  const header = response.headers.get("X-Total-Count");
+  const parsed = header === null ? Number.NaN : Number.parseInt(header, 10);
+
+  return {
+    items: body,
+    total: Number.isFinite(parsed) && parsed >= 0 ? parsed : body.length,
+  };
+}
+
+/** Build a query string, dropping empty/undefined values so a cleared filter
+ *  disappears from the URL instead of being sent as `q=`. */
+export function query(params: Record<string, string | number | undefined | null>): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined || value === null || value === "") continue;
+    search.set(key, String(value));
+  }
+  const out = search.toString();
+  return out ? `?${out}` : "";
 }

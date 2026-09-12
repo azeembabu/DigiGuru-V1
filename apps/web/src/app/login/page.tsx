@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { Suspense } from "react";
 
 import { AuthCard, AuthShell, type AuthFeature } from "@/components/auth/AuthShell";
 import { LoginForm } from "@/components/auth/LoginForm";
@@ -54,7 +55,13 @@ export default function LoginPage() {
           </>
         }
       >
-        <LoginForm />
+        {/* `LoginForm` reads `?next=` to send an admin back to the page that
+            bounced them, and `useSearchParams` opts its subtree out of static
+            rendering — the boundary keeps that scoped to the form instead of
+            the whole page. */}
+        <Suspense fallback={null}>
+          <LoginForm />
+        </Suspense>
       </AuthCard>
     </AuthShell>
   );

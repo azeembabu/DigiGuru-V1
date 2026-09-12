@@ -100,3 +100,39 @@ export function IconTarget({ className }: IconProps) {
     </svg>
   );
 }
+
+export function IconLogout({ className }: IconProps) {
+  return (
+    <svg {...base} className={className} aria-hidden="true">
+      <path d="M15 8.5V6a1.5 1.5 0 0 0-1.5-1.5h-7A1.5 1.5 0 0 0 5 6v12a1.5 1.5 0 0 0 1.5 1.5h7A1.5 1.5 0 0 0 15 18v-2.5" />
+      <path d="M10.5 12h9m0 0-3-3m3 3-3 3" />
+    </svg>
+  );
+}
+
+export function IconDevice({ className }: IconProps) {
+  return (
+    <svg {...base} className={className} aria-hidden="true">
+      <rect x="3" y="5" width="18" height="11.5" rx="2" />
+      <path d="M9 20h6" />
+    </svg>
+  );
+}
+
+export function IconShield({ className }: IconProps) {
+  return (
+    <svg {...base} className={className} aria-hidden="true">
+      <path d="M12 3.5 5.5 6v6c0 4 2.8 7.2 6.5 8.5 3.7-1.3 6.5-4.5 6.5-8.5V6L12 3.5Z" />
+      <path d="m9.5 12 1.8 1.8L15 10" />
+    </svg>
+  );
+}
+
+export function IconPlay({ className }: IconProps) {
+  return (
+    <svg {...base} className={className} aria-hidden="true">
+      <circle cx="12" cy="12" r="8.25" />
+      <path d="M10.5 9.2v5.6l4.3-2.8-4.3-2.8Z" />
+    </svg>
+  );
+}
