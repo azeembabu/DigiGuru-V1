@@ -32,6 +32,22 @@ if ((Test-Path $cargoBin) -and ($env:PATH -notlike "*$cargoBin*")) { $env:PATH =
 
 $have = { param($exe) [bool](Get-Command $exe -ErrorAction SilentlyContinue) }
 
+# `docker info` writes to stderr when the engine is down, which PowerShell turns
+# into a terminating NativeCommandError under $ErrorActionPreference='Stop'.
+# Probing the engine is expected to fail, so silence the stream and read the code.
+function Test-DockerEngine {
+  $prev = $ErrorActionPreference
+  $ErrorActionPreference = 'Continue'
+  try {
+    & docker info *> $null
+    return ($LASTEXITCODE -eq 0)
+  } catch {
+    return $false
+  } finally {
+    $ErrorActionPreference = $prev
+  }
+}
+
 # --- 1. local dependencies -------------------------------------------------
 # Fail loudly and specifically here. A missing Docker used to surface much later
 # as an opaque gateway panic on connect, which cost real debugging time -- the
@@ -54,19 +70,17 @@ Run ./dev.ps1 -WebOnly to work on the frontend alone in the meantime.
 
   # Docker Desktop does not auto-start on login here, so the CLI can exist while
   # the engine is down. Start it and wait rather than letting compose fail.
-  docker info 2>&1 | Out-Null
-  if ($LASTEXITCODE -ne 0) {
+  if (-not (Test-DockerEngine)) {
     $desktop = 'C:\Program Files\Docker\Docker\Docker Desktop.exe'
     if (Test-Path $desktop) {
       Info 'Docker engine is down -- starting Docker Desktop'
       Start-Process -FilePath $desktop | Out-Null
     }
     Info 'waiting for the Docker engine'
-    $deadline = (Get-Date).AddMinutes(3)
-    while ($true) {
-      docker info 2>&1 | Out-Null
-      if ($LASTEXITCODE -eq 0) { break }
-      if ((Get-Date) -gt $deadline) { throw 'Docker engine did not come up within 3 minutes' }
+    # First launch after an install provisions the WSL distro, which is slow.
+    $deadline = (Get-Date).AddMinutes(5)
+    while (-not (Test-DockerEngine)) {
+      if ((Get-Date) -gt $deadline) { throw 'Docker engine did not come up within 5 minutes -- open Docker Desktop and check for a first-run prompt' }
       Start-Sleep -Seconds 3
     }
   }
