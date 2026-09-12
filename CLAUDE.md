@@ -104,28 +104,25 @@ conflicting agent behavior — treat every `.claude/`/`CLAUDE.md` edit as incomp
 
 ## Machine ownership (2-developer split)
 
-To avoid both developers editing the same files, each computer owns a fixed half of the repo.
-This assignment is fixed per machine — it does not rotate per task. If the split needs to change,
-edit this section (which pushes live to both machines via the sync hooks above) and both developers
-switch together, not unilaterally.
+**This machine owns the whole repo, frontend included** (changed 2026-09-13 by the backend
+developer, deliberately, so one machine can ship a vertical slice end to end without waiting on
+a contract hand-off). The split below is therefore currently *inactive*. Restoring it is a
+two-person decision: edit this section, push, and both developers switch together.
 
 | Machine | Owns | Must not touch |
 |---|---|---|
-| **This machine (backend)** | `apps/gateway/`, `crates/*`, `migrations/`, `infra/` | `apps/web/` |
-| **Other machine (frontend)** | `apps/web/` (Next.js) | `apps/gateway/`, `crates/*`, `migrations/`, `infra/` |
+| **This machine (backend + frontend)** | everything: `apps/gateway/`, `apps/web/`, `crates/*`, `migrations/`, `infra/` | — |
+| **Other machine (frontend)** | coordinate before editing `apps/web/` — pull first, and say what you are taking | — |
 
-- The contract between the two halves is `.claude/rules/api-conventions.md` — the frontend builds
-  against that documented REST/WebSocket contract; it does not need the backend to be running or
-  even implemented yet to start.
-- If a task genuinely requires touching the other side (e.g. a schema change that shifts an API
-  response shape), change `api-conventions.md` first, push it (per the mandatory sync rule above),
-  and let the other machine pick it up on its next pull — don't reach across and edit their files
-  directly.
-- Each machine should add a local, non-synced guard for its own boundary in
-  `.claude/settings.local.json` (gitignored, so this doesn't get pushed and doesn't affect the other
-  machine): a `permissions.deny` rule blocking `Edit`/`Write` on the other side's paths, so an
-  accidental cross-boundary edit is caught immediately rather than surfacing later as a merge
-  conflict.
+Because both halves now land from one machine, the coordination cost moves to the merge:
+
+- `.claude/rules/api-conventions.md` is still the contract of record. Update it in the **same
+  commit** as the change it describes — it is now documentation of what shipped rather than a
+  hand-off artifact, and a stale contract is worse than none.
+- The other developer must `git pull origin main --rebase` before touching `apps/web/`, since
+  frontend commits can now arrive from either machine.
+- If a `.claude/settings.local.json` `permissions.deny` guard on `apps/web/` was added on this
+  machine under the old split, remove it — it will block legitimate edits now.
 
 ## Working agreements
 
