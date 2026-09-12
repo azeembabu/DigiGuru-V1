@@ -6,7 +6,7 @@ license.workspace = true
 publish.workspace = true
 
 [lib]
-name = "core"
+name = "dg_core"
 path = "src/lib.rs"
 
 [dependencies]

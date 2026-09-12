@@ -33,10 +33,10 @@ pub async fn create(
         User,
         r#"
         INSERT INTO users (role, email, password_hash)
-        VALUES ($1, $2, $3)
-        RETURNING id, role, status, email, password_hash, last_login_at, created_at, updated_at
+        VALUES ($1::text::user_role, $2, $3)
+        RETURNING id, role as "role: Role", status as "status: UserStatus", email, password_hash, last_login_at, created_at, updated_at
         "#,
-        role,
+        role.as_db_str(),
         email,
         password_hash
     )
@@ -49,7 +49,7 @@ pub async fn find_by_email(pool: &PgPool, email: &str) -> Result<Option<User>> {
     sqlx::query_as!(
         User,
         r#"
-        SELECT id, role, status, email, password_hash, last_login_at, created_at, updated_at
+        SELECT id, role as "role: Role", status as "status: UserStatus", email, password_hash, last_login_at, created_at, updated_at
         FROM users
         WHERE email = $1
         "#,
@@ -64,11 +64,11 @@ pub async fn find_by_id(pool: &PgPool, id: UserId) -> Result<Option<User>> {
     sqlx::query_as!(
         User,
         r#"
-        SELECT id, role, status, email, password_hash, last_login_at, created_at, updated_at
+        SELECT id, role as "role: Role", status as "status: UserStatus", email, password_hash, last_login_at, created_at, updated_at
         FROM users
         WHERE id = $1
         "#,
-        id
+        id.into_uuid()
     )
     .fetch_optional(pool)
     .await
@@ -82,7 +82,7 @@ pub async fn list(pool: &PgPool, limit: i64, offset: i64) -> Result<Vec<User>> {
     sqlx::query_as!(
         User,
         r#"
-        SELECT id, role, status, email, password_hash, last_login_at, created_at, updated_at
+        SELECT id, role as "role: Role", status as "status: UserStatus", email, password_hash, last_login_at, created_at, updated_at
         FROM users
         ORDER BY created_at DESC
         LIMIT $1 OFFSET $2
@@ -98,7 +98,7 @@ pub async fn list(pool: &PgPool, limit: i64, offset: i64) -> Result<Vec<User>> {
 pub async fn touch_last_login(pool: &PgPool, id: UserId) -> Result<()> {
     sqlx::query!(
         r#"UPDATE users SET last_login_at = now(), updated_at = now() WHERE id = $1"#,
-        id
+        id.into_uuid()
     )
     .execute(pool)
     .await
@@ -109,7 +109,7 @@ pub async fn touch_last_login(pool: &PgPool, id: UserId) -> Result<()> {
 pub async fn update_password_hash(pool: &PgPool, id: UserId, password_hash: &str) -> Result<()> {
     sqlx::query!(
         r#"UPDATE users SET password_hash = $2, updated_at = now() WHERE id = $1"#,
-        id,
+        id.into_uuid(),
         password_hash
     )
     .execute(pool)
@@ -120,9 +120,9 @@ pub async fn update_password_hash(pool: &PgPool, id: UserId, password_hash: &str
 
 pub async fn set_status(pool: &PgPool, id: UserId, status: UserStatus) -> Result<()> {
     sqlx::query!(
-        r#"UPDATE users SET status = $2, updated_at = now() WHERE id = $1"#,
-        id,
-        status
+        r#"UPDATE users SET status = $2::text::user_status, updated_at = now() WHERE id = $1"#,
+        id.into_uuid(),
+        status.as_db_str()
     )
     .execute(pool)
     .await

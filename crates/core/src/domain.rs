@@ -44,3 +44,35 @@ pub enum SessionStatus {
     Completed,
     Abandoned,
 }
+
+impl UserStatus {
+    /// The `user_status` label this maps to in Postgres.
+    pub const fn as_db_str(self) -> &'static str {
+        match self {
+            UserStatus::Active => "active",
+            UserStatus::Inactive => "inactive",
+            UserStatus::Suspended => "suspended",
+        }
+    }
+}
+
+impl EntityStatus {
+    /// The `entity_status` label this maps to in Postgres.
+    pub const fn as_db_str(self) -> &'static str {
+        match self {
+            EntityStatus::Active => "active",
+            EntityStatus::Inactive => "inactive",
+        }
+    }
+}
+
+impl EnrollmentStatus {
+    /// The `enrollment_status` label this maps to in Postgres.
+    pub const fn as_db_str(self) -> &'static str {
+        match self {
+            EnrollmentStatus::Active => "active",
+            EnrollmentStatus::Completed => "completed",
+            EnrollmentStatus::Dropped => "dropped",
+        }
+    }
+}

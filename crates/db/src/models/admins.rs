@@ -21,7 +21,7 @@ pub async fn create(pool: &PgPool, user_id: UserId, full_name: &str) -> Result<A
         VALUES ($1, $2)
         RETURNING id, user_id, full_name
         "#,
-        user_id,
+        user_id.into_uuid(),
         full_name
     )
     .fetch_one(pool)
@@ -33,7 +33,7 @@ pub async fn find_by_user_id(pool: &PgPool, user_id: UserId) -> Result<Option<Ad
     sqlx::query_as!(
         Admin,
         r#"SELECT id, user_id, full_name FROM admins WHERE user_id = $1"#,
-        user_id
+        user_id.into_uuid()
     )
     .fetch_optional(pool)
     .await
@@ -43,7 +43,7 @@ pub async fn find_by_user_id(pool: &PgPool, user_id: UserId) -> Result<Option<Ad
 pub async fn update_full_name(pool: &PgPool, user_id: UserId, full_name: &str) -> Result<()> {
     sqlx::query!(
         r#"UPDATE admins SET full_name = $2 WHERE user_id = $1"#,
-        user_id,
+        user_id.into_uuid(),
         full_name
     )
     .execute(pool)

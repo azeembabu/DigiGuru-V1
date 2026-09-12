@@ -19,7 +19,7 @@ pub async fn find_by_id(pool: &PgPool, id: DocumentId) -> Result<Option<Document
                ocr_confidence, status, created_at
         FROM documents WHERE id = $1
         "#,
-        id
+        id.into_uuid()
     )
     .fetch_optional(pool)
     .await
@@ -32,7 +32,7 @@ pub async fn find_by_id(pool: &PgPool, id: DocumentId) -> Result<Option<Document
 pub async fn set_status(pool: &PgPool, id: DocumentId, status: &str) -> Result<()> {
     sqlx::query!(
         r#"UPDATE documents SET status = $2 WHERE id = $1"#,
-        id,
+        id.into_uuid(),
         status
     )
     .execute(pool)
@@ -67,7 +67,7 @@ pub async fn complete_latest_job(pool: &PgPool, document_id: DocumentId) -> Resu
             LIMIT 1
         )
         "#,
-        document_id
+        document_id.into_uuid()
     )
     .execute(pool)
     .await
@@ -90,7 +90,7 @@ pub async fn fail_latest_job(pool: &PgPool, document_id: DocumentId, error: &str
             LIMIT 1
         )
         "#,
-        document_id,
+        document_id.into_uuid(),
         error,
         now
     )

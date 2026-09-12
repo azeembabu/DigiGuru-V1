@@ -24,10 +24,10 @@ pub async fn assign(pool: &PgPool, student_id: StudentId, course_id: CourseId) -
         r#"
         INSERT INTO student_courses (student_id, course_id)
         VALUES ($1, $2)
-        RETURNING id, student_id, course_id, status, assigned_at
+        RETURNING id, student_id, course_id, status as "status: EnrollmentStatus", assigned_at
         "#,
-        student_id,
-        course_id
+        student_id.into_uuid(),
+        course_id.into_uuid()
     )
     .fetch_one(pool)
     .await
@@ -38,10 +38,10 @@ pub async fn list_by_student(pool: &PgPool, student_id: StudentId) -> Result<Vec
     sqlx::query_as!(
         StudentCourse,
         r#"
-        SELECT id, student_id, course_id, status, assigned_at
+        SELECT id, student_id, course_id, status as "status: EnrollmentStatus", assigned_at
         FROM student_courses WHERE student_id = $1
         "#,
-        student_id
+        student_id.into_uuid()
     )
     .fetch_all(pool)
     .await
@@ -56,8 +56,8 @@ pub async fn is_enrolled(pool: &PgPool, student_id: StudentId, course_id: Course
         SELECT 1 as present FROM student_courses
         WHERE student_id = $1 AND course_id = $2 AND status = 'active'
         "#,
-        student_id,
-        course_id
+        student_id.into_uuid(),
+        course_id.into_uuid()
     )
     .fetch_optional(pool)
     .await
@@ -72,10 +72,10 @@ pub async fn update_status(
     status: EnrollmentStatus,
 ) -> Result<()> {
     sqlx::query!(
-        r#"UPDATE student_courses SET status = $3 WHERE student_id = $1 AND course_id = $2"#,
-        student_id,
-        course_id,
-        status
+        r#"UPDATE student_courses SET status = $3::text::enrollment_status WHERE student_id = $1 AND course_id = $2"#,
+        student_id.into_uuid(),
+        course_id.into_uuid(),
+        status.as_db_str()
     )
     .execute(pool)
     .await

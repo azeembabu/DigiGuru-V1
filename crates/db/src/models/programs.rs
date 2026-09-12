@@ -25,7 +25,7 @@ pub async fn create(
         r#"
         INSERT INTO programs (code, name, description)
         VALUES ($1, $2, $3)
-        RETURNING id, code, name, description, status
+        RETURNING id, code, name, description, status as "status: EntityStatus"
         "#,
         code,
         name,
@@ -39,8 +39,8 @@ pub async fn create(
 pub async fn find_by_id(pool: &PgPool, id: ProgramId) -> Result<Option<Program>> {
     sqlx::query_as!(
         Program,
-        r#"SELECT id, code, name, description, status FROM programs WHERE id = $1"#,
-        id
+        r#"SELECT id, code, name, description, status as "status: EntityStatus" FROM programs WHERE id = $1"#,
+        id.into_uuid()
     )
     .fetch_optional(pool)
     .await
@@ -51,7 +51,7 @@ pub async fn find_by_id(pool: &PgPool, id: ProgramId) -> Result<Option<Program>>
 /// it is trusted (`IMPLEMENTATION_PLAN.md` §4.1 item 3: "must resolve to
 /// existing rows, not free text").
 pub async fn exists(pool: &PgPool, id: ProgramId) -> Result<bool> {
-    let row = sqlx::query!(r#"SELECT 1 as present FROM programs WHERE id = $1 AND status = 'active'"#, id)
+    let row = sqlx::query!(r#"SELECT 1 as present FROM programs WHERE id = $1 AND status = 'active'"#, id.into_uuid())
         .fetch_optional(pool)
         .await
         .map_err(Error::from_sqlx)?;
@@ -61,7 +61,7 @@ pub async fn exists(pool: &PgPool, id: ProgramId) -> Result<bool> {
 pub async fn list(pool: &PgPool) -> Result<Vec<Program>> {
     sqlx::query_as!(
         Program,
-        r#"SELECT id, code, name, description, status FROM programs ORDER BY name"#
+        r#"SELECT id, code, name, description, status as "status: EntityStatus" FROM programs ORDER BY name"#
     )
     .fetch_all(pool)
     .await
@@ -76,11 +76,11 @@ pub async fn update(
     status: EntityStatus,
 ) -> Result<()> {
     sqlx::query!(
-        r#"UPDATE programs SET name = $2, description = $3, status = $4 WHERE id = $1"#,
-        id,
+        r#"UPDATE programs SET name = $2, description = $3, status = $4::text::entity_status WHERE id = $1"#,
+        id.into_uuid(),
         name,
         description,
-        status
+        status.as_db_str()
     )
     .execute(pool)
     .await

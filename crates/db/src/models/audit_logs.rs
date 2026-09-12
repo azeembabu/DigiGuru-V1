@@ -36,11 +36,11 @@ pub async fn insert(
     sqlx::query!(
         r#"
         INSERT INTO audit_logs (user_id, action, ip_address, device_info, metadata)
-        VALUES ($1, $2, $3, $4, $5)
+        VALUES ($1, $2, $3::text::inet, $4, $5)
         "#,
         user_id.map(Uuid::from),
         action,
-        ip_address as Option<std::net::IpAddr>,
+        ip_address.map(|ip| ip.to_string()),
         device_info,
         metadata
     )

@@ -38,14 +38,14 @@ pub async fn create(
         AuthSession,
         r#"
         INSERT INTO auth_sessions (user_id, refresh_token_hash, device_info, ip_address, expires_at)
-        VALUES ($1, $2, $3, $4, $5)
+        VALUES ($1, $2, $3, $4::text::inet, $5)
         RETURNING id, user_id, refresh_token_hash, device_info,
                   ip_address::text as ip_address, created_at, expires_at, revoked_at
         "#,
-        user_id,
+        user_id.into_uuid(),
         refresh_token_hash,
         device_info,
-        ip_address as Option<std::net::IpAddr>,
+        ip_address.map(|ip| ip.to_string()),
         expires_at
     )
     .fetch_one(pool)
@@ -82,7 +82,7 @@ pub async fn list_active_for_user(pool: &PgPool, user_id: UserId) -> Result<Vec<
         WHERE user_id = $1 AND revoked_at IS NULL AND expires_at > now()
         ORDER BY created_at DESC
         "#,
-        user_id
+        user_id.into_uuid()
     )
     .fetch_all(pool)
     .await
@@ -107,7 +107,7 @@ pub async fn revoke_for_user(pool: &PgPool, id: Uuid, user_id: UserId) -> Result
         WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
         "#,
         id,
-        user_id
+        user_id.into_uuid()
     )
     .execute(pool)
     .await
@@ -118,7 +118,7 @@ pub async fn revoke_for_user(pool: &PgPool, id: Uuid, user_id: UserId) -> Result
 pub async fn revoke_all_for_user(pool: &PgPool, user_id: UserId) -> Result<()> {
     sqlx::query!(
         r#"UPDATE auth_sessions SET revoked_at = now() WHERE user_id = $1 AND revoked_at IS NULL"#,
-        user_id
+        user_id.into_uuid()
     )
     .execute(pool)
     .await

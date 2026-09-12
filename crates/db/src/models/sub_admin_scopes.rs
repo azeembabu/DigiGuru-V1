@@ -12,7 +12,7 @@ use crate::error::{Error, Result};
 pub async fn list_for_user(pool: &PgPool, user_id: UserId) -> Result<Vec<ProgramId>> {
     let rows = sqlx::query!(
         r#"SELECT program_id FROM sub_admin_scopes WHERE user_id = $1"#,
-        user_id
+        user_id.into_uuid()
     )
     .fetch_all(pool)
     .await
@@ -27,8 +27,8 @@ pub async fn add_scope(pool: &PgPool, user_id: UserId, program_id: ProgramId) ->
         VALUES ($1, $2)
         ON CONFLICT (user_id, program_id) DO NOTHING
         "#,
-        user_id,
-        program_id
+        user_id.into_uuid(),
+        program_id.into_uuid()
     )
     .execute(pool)
     .await
@@ -39,8 +39,8 @@ pub async fn add_scope(pool: &PgPool, user_id: UserId, program_id: ProgramId) ->
 pub async fn remove_scope(pool: &PgPool, user_id: UserId, program_id: ProgramId) -> Result<()> {
     sqlx::query!(
         r#"DELETE FROM sub_admin_scopes WHERE user_id = $1 AND program_id = $2"#,
-        user_id,
-        program_id
+        user_id.into_uuid(),
+        program_id.into_uuid()
     )
     .execute(pool)
     .await
@@ -51,8 +51,8 @@ pub async fn remove_scope(pool: &PgPool, user_id: UserId, program_id: ProgramId)
 pub async fn is_in_scope(pool: &PgPool, user_id: UserId, program_id: ProgramId) -> Result<bool> {
     let row = sqlx::query!(
         r#"SELECT 1 as present FROM sub_admin_scopes WHERE user_id = $1 AND program_id = $2"#,
-        user_id,
-        program_id
+        user_id.into_uuid(),
+        program_id.into_uuid()
     )
     .fetch_optional(pool)
     .await

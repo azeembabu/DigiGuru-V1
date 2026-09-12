@@ -22,7 +22,7 @@ pub async fn create(pool: &PgPool, course_id: CourseId, block_no: i16, title: &s
         VALUES ($1, $2, $3)
         RETURNING id, course_id, block_no, title
         "#,
-        course_id,
+        course_id.into_uuid(),
         block_no,
         title
     )
@@ -35,7 +35,7 @@ pub async fn find_by_id(pool: &PgPool, id: BlockId) -> Result<Option<Block>> {
     sqlx::query_as!(
         Block,
         r#"SELECT id, course_id, block_no, title FROM blocks WHERE id = $1"#,
-        id
+        id.into_uuid()
     )
     .fetch_optional(pool)
     .await
@@ -46,7 +46,7 @@ pub async fn list_by_course(pool: &PgPool, course_id: CourseId) -> Result<Vec<Bl
     sqlx::query_as!(
         Block,
         r#"SELECT id, course_id, block_no, title FROM blocks WHERE course_id = $1 ORDER BY block_no"#,
-        course_id
+        course_id.into_uuid()
     )
     .fetch_all(pool)
     .await
@@ -64,7 +64,7 @@ pub async fn find_first_in_course(pool: &PgPool, course_id: CourseId) -> Result<
         ORDER BY block_no ASC
         LIMIT 1
         "#,
-        course_id
+        course_id.into_uuid()
     )
     .fetch_optional(pool)
     .await
@@ -72,7 +72,7 @@ pub async fn find_first_in_course(pool: &PgPool, course_id: CourseId) -> Result<
 }
 
 pub async fn update(pool: &PgPool, id: BlockId, title: &str) -> Result<()> {
-    sqlx::query!(r#"UPDATE blocks SET title = $2 WHERE id = $1"#, id, title)
+    sqlx::query!(r#"UPDATE blocks SET title = $2 WHERE id = $1"#, id.into_uuid(), title)
         .execute(pool)
         .await
         .map_err(Error::from_sqlx)?;

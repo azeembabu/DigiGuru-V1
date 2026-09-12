@@ -32,7 +32,7 @@ pub async fn program_id_for_block(pool: &PgPool, block_id: BlockId) -> Result<Op
         JOIN courses c ON c.id = b.course_id
         WHERE b.id = $1
         "#,
-        block_id
+        block_id.into_uuid()
     )
     .fetch_optional(pool)
     .await
@@ -74,8 +74,8 @@ pub async fn insert_document(
         VALUES ($1, $2, $3, $4, $5, $6, 'pending')
         RETURNING id as "id: DocumentId"
         "#,
-        block_id,
-        uploaded_by,
+        block_id.into_uuid(),
+        uploaded_by.into_uuid(),
         title,
         storage_key,
         sha256,
@@ -97,7 +97,7 @@ pub async fn insert_ingestion_job(pool: &PgPool, document_id: DocumentId) -> Res
         VALUES ($1, 'pending', 0)
         RETURNING id
         "#,
-        document_id,
+        document_id.into_uuid(),
     )
     .fetch_one(pool)
     .await

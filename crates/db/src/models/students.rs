@@ -49,15 +49,15 @@ pub async fn create(
             (user_id, full_name, roll_number, phone_number, program_id, semester_id, lsc_id)
         VALUES ($1, $2, $3, $4, $5, $6, $7)
         RETURNING id, user_id, full_name, roll_number, phone_number, program_id, semester_id,
-                  lsc_id, current_block_id, is_first_login, locale, timezone, created_at, updated_at
+                  lsc_id, current_block_id as "current_block_id: BlockId", is_first_login, locale, timezone, created_at, updated_at
         "#,
-        user_id,
+        user_id.into_uuid(),
         full_name,
         roll_number,
         phone_number,
-        program_id,
-        semester_id,
-        lsc_id
+        program_id.into_uuid(),
+        semester_id.into_uuid(),
+        lsc_id.into_uuid()
     )
     .fetch_one(pool)
     .await
@@ -69,10 +69,10 @@ pub async fn find_by_id(pool: &PgPool, id: StudentId) -> Result<Option<Student>>
         Student,
         r#"
         SELECT id, user_id, full_name, roll_number, phone_number, program_id, semester_id,
-               lsc_id, current_block_id, is_first_login, locale, timezone, created_at, updated_at
+               lsc_id, current_block_id as "current_block_id: BlockId", is_first_login, locale, timezone, created_at, updated_at
         FROM students WHERE id = $1
         "#,
-        id
+        id.into_uuid()
     )
     .fetch_optional(pool)
     .await
@@ -84,10 +84,10 @@ pub async fn find_by_user_id(pool: &PgPool, user_id: UserId) -> Result<Option<St
         Student,
         r#"
         SELECT id, user_id, full_name, roll_number, phone_number, program_id, semester_id,
-               lsc_id, current_block_id, is_first_login, locale, timezone, created_at, updated_at
+               lsc_id, current_block_id as "current_block_id: BlockId", is_first_login, locale, timezone, created_at, updated_at
         FROM students WHERE user_id = $1
         "#,
-        user_id
+        user_id.into_uuid()
     )
     .fetch_optional(pool)
     .await
@@ -99,7 +99,7 @@ pub async fn find_by_roll_number(pool: &PgPool, roll_number: &str) -> Result<Opt
         Student,
         r#"
         SELECT id, user_id, full_name, roll_number, phone_number, program_id, semester_id,
-               lsc_id, current_block_id, is_first_login, locale, timezone, created_at, updated_at
+               lsc_id, current_block_id as "current_block_id: BlockId", is_first_login, locale, timezone, created_at, updated_at
         FROM students WHERE roll_number = $1
         "#,
         roll_number
@@ -135,7 +135,7 @@ pub async fn list(
                 Student,
                 r#"
                 SELECT id, user_id, full_name, roll_number, phone_number, program_id, semester_id,
-                       lsc_id, current_block_id, is_first_login, locale, timezone, created_at, updated_at
+                       lsc_id, current_block_id as "current_block_id: BlockId", is_first_login, locale, timezone, created_at, updated_at
                 FROM students
                 WHERE program_id = ANY($1)
                 ORDER BY created_at DESC
@@ -153,7 +153,7 @@ pub async fn list(
             Student,
             r#"
             SELECT id, user_id, full_name, roll_number, phone_number, program_id, semester_id,
-                   lsc_id, current_block_id, is_first_login, locale, timezone, created_at, updated_at
+                   lsc_id, current_block_id as "current_block_id: BlockId", is_first_login, locale, timezone, created_at, updated_at
             FROM students
             ORDER BY created_at DESC
             LIMIT $1 OFFSET $2
@@ -179,7 +179,7 @@ pub async fn update_self_service(
 ) -> Result<()> {
     sqlx::query!(
         r#"UPDATE students SET full_name = $2, phone_number = $3, updated_at = now() WHERE id = $1"#,
-        id,
+        id.into_uuid(),
         full_name,
         phone_number
     )
@@ -205,10 +205,10 @@ pub async fn update_academic(
         SET program_id = $2, semester_id = $3, lsc_id = $4, updated_at = now()
         WHERE id = $1
         "#,
-        id,
-        program_id,
-        semester_id,
-        lsc_id
+        id.into_uuid(),
+        program_id.into_uuid(),
+        semester_id.into_uuid(),
+        lsc_id.into_uuid()
     )
     .execute(pool)
     .await
@@ -219,8 +219,8 @@ pub async fn update_academic(
 pub async fn set_current_block(pool: &PgPool, id: StudentId, block_id: BlockId) -> Result<()> {
     sqlx::query!(
         r#"UPDATE students SET current_block_id = $2, updated_at = now() WHERE id = $1"#,
-        id,
-        block_id
+        id.into_uuid(),
+        block_id.into_uuid()
     )
     .execute(pool)
     .await
@@ -235,7 +235,7 @@ pub async fn set_current_block(pool: &PgPool, id: StudentId, block_id: BlockId) 
 pub async fn clear_first_login(pool: &PgPool, id: StudentId) -> Result<()> {
     sqlx::query!(
         r#"UPDATE students SET is_first_login = false, updated_at = now() WHERE id = $1"#,
-        id
+        id.into_uuid()
     )
     .execute(pool)
     .await

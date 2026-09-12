@@ -30,8 +30,8 @@ pub async fn create(
         VALUES ($1, $2, $3, $4, $5)
         RETURNING id, program_id, semester_id, code, name, description
         "#,
-        program_id,
-        semester_id,
+        program_id.into_uuid(),
+        semester_id.into_uuid(),
         code,
         name,
         description
@@ -48,7 +48,7 @@ pub async fn find_by_id(pool: &PgPool, id: CourseId) -> Result<Option<Course>> {
         SELECT id, program_id, semester_id, code, name, description
         FROM courses WHERE id = $1
         "#,
-        id
+        id.into_uuid()
     )
     .fetch_optional(pool)
     .await
@@ -62,7 +62,7 @@ pub async fn list_by_semester(pool: &PgPool, semester_id: SemesterId) -> Result<
         SELECT id, program_id, semester_id, code, name, description
         FROM courses WHERE semester_id = $1 ORDER BY code
         "#,
-        semester_id
+        semester_id.into_uuid()
     )
     .fetch_all(pool)
     .await
@@ -77,7 +77,7 @@ pub async fn update(
 ) -> Result<()> {
     sqlx::query!(
         r#"UPDATE courses SET name = $2, description = $3 WHERE id = $1"#,
-        id,
+        id.into_uuid(),
         name,
         description
     )

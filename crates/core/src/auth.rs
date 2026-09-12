@@ -21,6 +21,19 @@ pub enum Role {
     Student,
 }
 
+impl Role {
+    /// The `user_role` label this maps to in Postgres. Used to bind the role
+    /// through a `$n::text::user_role` cast — sqlx's query macros cannot infer
+    /// a Rust type for a user-defined Postgres enum used as a parameter.
+    pub const fn as_db_str(self) -> &'static str {
+        match self {
+            Role::SuperAdmin => "super_admin",
+            Role::SubAdmin => "sub_admin",
+            Role::Student => "student",
+        }
+    }
+}
+
 /// A single, named permission a handler can require of the caller.
 ///
 /// Deliberately flat — scoping (e.g. "manage programs, but only within

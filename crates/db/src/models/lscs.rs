@@ -25,7 +25,7 @@ pub async fn create(
         r#"
         INSERT INTO lscs (code, name, location)
         VALUES ($1, $2, $3)
-        RETURNING id, code, name, location, status
+        RETURNING id, code, name, location, status as "status: EntityStatus"
         "#,
         code,
         name,
@@ -39,8 +39,8 @@ pub async fn create(
 pub async fn find_by_id(pool: &PgPool, id: LscId) -> Result<Option<Lsc>> {
     sqlx::query_as!(
         Lsc,
-        r#"SELECT id, code, name, location, status FROM lscs WHERE id = $1"#,
-        id
+        r#"SELECT id, code, name, location, status as "status: EntityStatus" FROM lscs WHERE id = $1"#,
+        id.into_uuid()
     )
     .fetch_optional(pool)
     .await
@@ -48,7 +48,7 @@ pub async fn find_by_id(pool: &PgPool, id: LscId) -> Result<Option<Lsc>> {
 }
 
 pub async fn list(pool: &PgPool) -> Result<Vec<Lsc>> {
-    sqlx::query_as!(Lsc, r#"SELECT id, code, name, location, status FROM lscs ORDER BY name"#)
+    sqlx::query_as!(Lsc, r#"SELECT id, code, name, location, status as "status: EntityStatus" FROM lscs ORDER BY name"#)
         .fetch_all(pool)
         .await
         .map_err(Error::from_sqlx)
@@ -62,11 +62,11 @@ pub async fn update(
     status: EntityStatus,
 ) -> Result<()> {
     sqlx::query!(
-        r#"UPDATE lscs SET name = $2, location = $3, status = $4 WHERE id = $1"#,
-        id,
+        r#"UPDATE lscs SET name = $2, location = $3, status = $4::text::entity_status WHERE id = $1"#,
+        id.into_uuid(),
         name,
         location,
-        status
+        status.as_db_str()
     )
     .execute(pool)
     .await
