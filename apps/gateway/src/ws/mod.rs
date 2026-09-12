@@ -144,11 +144,17 @@ enum InternalEvent {
 /// (`.claude/rules/realtime-audio.md` "Gateway"): no `block_in_place`, no
 /// blocking calls in the audio path.
 async fn handle_socket(mut socket: WebSocket, state: AppState, user_id: UserId) {
-    let mut sync_gate = SyncGate::default();
+    let mut sync_gate = SyncGate::new();
     // Owns the demo scripted turn (BoardOps -> AudioChunk* -> TurnComplete)
     // used to prove the whiteboard-first ordering end-to-end. Real Gemini
     // Live wiring is out of scope for this pass.
-    let mut live_client = StubLiveSessionClient::default();
+    //
+    // `SyncGate` has no `Default` impl (only `new()`), and
+    // `StubLiveSessionClient` requires its script up front rather than
+    // implementing `Default` — fixed here at merge time; the demo script
+    // below is a placeholder standing in for what a real Gemini Live
+    // session would emit for one turn.
+    let mut live_client = StubLiveSessionClient::new(demo_script());
 
     let mut session_id: Option<Uuid> = None;
     // The turn the model is currently narrating. `AudioChunk` events from
@@ -464,4 +470,35 @@ async fn init_session(state: &AppState, user_id: UserId, block_id: Uuid, resume:
     }
 
     session_id
+}
+
+/// A hardcoded scripted turn standing in for what a real Gemini Live session
+/// would emit — this is the fixture that lets `StubLiveSessionClient`
+/// demonstrate the whiteboard-first (NN-1) ordering end-to-end without a
+/// real Gemini API key/connection (`TODO(phase3-gemini-api)` in
+/// `crates/live/src/gemini_client.rs`). Replace this with the real Gemini
+/// Live client once that's wired.
+fn demo_script() -> Vec<LiveModelEvent> {
+    let board_ops = dg_live::BoardOpsMessage {
+        msg_type: "board_ops".to_string(),
+        seq: 1,
+        clear_first: false,
+        ops: vec![
+            dg_live::BoardOp::Heading {
+                text: "Demo lesson".to_string(),
+                page: 1,
+            },
+            dg_live::BoardOp::Bullets {
+                items: vec!["This is a scripted Phase 3 demo turn.".to_string()],
+            },
+        ],
+    };
+
+    vec![
+        LiveModelEvent::BoardOps(board_ops),
+        LiveModelEvent::AudioChunk(bytes::Bytes::from_static(b"demo-audio-frame-1")),
+        LiveModelEvent::AudioChunk(bytes::Bytes::from_static(b"demo-audio-frame-2")),
+        LiveModelEvent::TurnComplete,
+        LiveModelEvent::SessionEnded,
+    ]
 }
