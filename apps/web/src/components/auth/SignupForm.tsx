@@ -207,13 +207,12 @@ export function SignupForm() {
             options={programs}
             placeholder="Select your program"
             value={programId}
-            onChange={(event) => {
-              setProgramId(event.target.value);
+            onValueChange={(next) => {
+              setProgramId(next);
               // Drop the old program's semesters immediately, so a stale
               // option can never sit selected under a different program.
               setSemesters([]);
             }}
-            required
             hasError={Boolean(errors.program_id)}
           />
         </Field>
@@ -224,7 +223,6 @@ export function SignupForm() {
             options={semesters}
             placeholder={programId ? "Select your semester" : "Choose a program first"}
             disabled={!programId || semesters.length === 0}
-            required
             hasError={Boolean(errors.semester_id)}
             className="disabled:cursor-not-allowed disabled:opacity-60"
           />
@@ -235,7 +233,6 @@ export function SignupForm() {
             id="lsc_id"
             options={lscs}
             placeholder="Select your study centre"
-            required
             hasError={Boolean(errors.lsc_id)}
           />
         </Field>
