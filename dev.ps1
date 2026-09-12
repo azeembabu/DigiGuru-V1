@@ -116,6 +116,19 @@ function Start-Dev($name, $file, $argList, $workdir) {
 if (-not $WebOnly) {
   $procs += Start-Dev 'gateway (http://localhost:8080)' 'cargo' @('run','-p','gateway') $root
 }
+# A leftover `next dev` on :3000 makes the new one refuse to start, and under the
+# all-or-nothing supervisor below that would take the gateway down with it. Clear
+# it first: the stale server is always ours, from an earlier run of this script.
+$stale = Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue
+if ($stale) {
+  # Not $pid: that is a read-only automatic variable (this process's own id).
+  foreach ($stalePid in ($stale.OwningProcess | Select-Object -Unique)) {
+    Warn "port 3000 held by PID $stalePid from an earlier run -- stopping it"
+    & taskkill /PID $stalePid /T /F 2>$null | Out-Null
+  }
+  Start-Sleep -Seconds 1
+}
+
 $npm = if ($IsWindows -or $env:OS -eq 'Windows_NT') { 'npm.cmd' } else { 'npm' }
 $procs += Start-Dev 'web (http://localhost:3000)' $npm @('run','dev') (Join-Path $root 'apps\web')
 
