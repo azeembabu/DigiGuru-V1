@@ -1,0 +1,54 @@
+@import "tailwindcss";
+
+/* Design tokens — see /DESIGN.md §1, §2, §3, §9 for the source spec.
+   Tailwind v4 reads colors/fonts/radii declared in @theme directly as
+   utility classes (bg-ink-950, text-lime-400, font-display, etc). */
+@theme {
+  /* ink */
+  --color-ink-950: #0a0c16;
+  --color-ink-900: #12141f;
+  --color-ink-800: #1c1f2e;
+  --color-ink-700: #2a2e42;
+
+  /* lime */
+  --color-lime-300: #c7f26b;
+  --color-lime-400: #a6e635;
+  --color-lime-500: #8fc91e;
+  --color-lime-950: #12190a;
+
+  /* indigo */
+  --color-indigo-300: #9ea3f2;
+  --color-indigo-400: #6e74e8;
+  --color-indigo-500: #5a5fd1;
+  --color-indigo-950: #171a33;
+
+  /* lavender / light surfaces */
+  --color-lavender-50: #f4f4fc;
+  --color-lavender-100: #e4e5f8;
+  --color-lavender-200: #d2d3f0;
+
+  /* neutrals (named to avoid colliding with Tailwind's default gray scale) */
+  --color-dg-gray-300: #b6b9c9;
+  --color-dg-gray-500: #6c6f82;
+  --color-dg-gray-900: #15161f;
+
+  /* functional */
+  --color-success: #3fcf7f;
+  --color-danger: #f1503d;
+  --color-warning: #f5b84a;
+
+  /* radius */
+  --radius-sm: 8px;
+  --radius-md: 16px;
+  --radius-lg: 28px;
+
+  /* fonts */
+  --font-display: var(--font-sora), sans-serif;
+  --font-sans: var(--font-inter), sans-serif;
+  --font-malayalam: var(--font-noto-malayalam), sans-serif;
+}
+
+body {
+  background: var(--color-ink-950);
+  color: white;
+}
