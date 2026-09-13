@@ -25,6 +25,7 @@
 
 import * as fabric from "fabric";
 
+import { latexToSvg } from "./math-render";
 import type { BoardOp } from "./protocol";
 
 /**
@@ -247,6 +248,8 @@ interface Viewport {
 export interface BoardRendererOptions {
   /** Called when an op cannot be rendered, so the client can send `board_error`. */
   onOpError?: (op: BoardOp, error: Error) => void;
+  /** Called whenever the page count or the viewed page changes. */
+  onPageChange?: (viewing: number, total: number) => void;
 }
 
 /**
@@ -277,6 +280,30 @@ export class BoardRenderer {
   private readonly onPage = new Set<string>();
   /** Vertical cursor in normalised units, so successive ops stack down the board. */
   private flowY = 0.06;
+  /**
+   * The unit being taught, pinned along the top of the slate.
+   *
+   * Kept out of the op flow and re-drawn after every clear, because it is not
+   * part of any turn: the board pages itself as it fills, and a heading that
+   * scrolled away with the first page would leave the student looking at a
+   * slate with no idea which unit is on it.
+   */
+  private unitLabel: string | null = null;
+  private unitLabelObject: fabric.FabricObject | null = null;
+  /**
+   * Completed pages, oldest first, each holding the objects drawn on it.
+   *
+   * The board used to *wipe* itself when it filled up, so the first half of a
+   * lesson was simply gone — a student who looked away during the explanation
+   * had no way back to it. Keeping the objects (rather than a JSON snapshot)
+   * means turning a page is an add/remove on the canvas with nothing to
+   * re-parse, re-measure or re-lay-out.
+   */
+  private readonly pages: fabric.FabricObject[][] = [];
+  /** Objects on the page currently being written to. */
+  private live: fabric.FabricObject[] = [];
+  /** Which page the student is looking at; equals `pages.length` when live. */
+  private viewing = 0;
   private disposed = false;
 
   constructor(
@@ -294,6 +321,63 @@ export class BoardRenderer {
     });
   }
 
+  /**
+   * Names the unit along the top of the board.
+   *
+   * Idempotent, so the caller can set it on every `session_ready` without
+   * having to track whether it has changed.
+   */
+  setUnitLabel(label: string | null): void {
+    if (this.disposed || this.unitLabel === label) return;
+    this.unitLabel = label;
+    this.drawUnitLabel();
+    this.canvas.requestRenderAll();
+  }
+
+  /** (Re)draws the pinned unit heading and the rule under it. */
+  private drawUnitLabel(): void {
+    if (this.unitLabelObject) {
+      this.canvas.remove(this.unitLabelObject);
+      this.unitLabelObject = null;
+    }
+    if (this.unitLabel === null || this.unitLabel.trim() === "") return;
+
+    const { width, height } = this.viewport;
+    const fontSize = Math.max(12, Math.round(width * 0.0155));
+    const text = new fabric.Textbox(this.unitLabel, {
+      left: width * 0.06,
+      top: height * 0.022,
+      width: width * 0.88,
+      fontSize,
+      fontWeight: "600",
+      fill: "rgba(244, 228, 160, 0.92)",
+      fontFamily: BOARD_FONT,
+      originX: "left",
+      originY: "top",
+      selectable: false,
+      objectCaching: false,
+    });
+    const rule = new fabric.Line(
+      [width * 0.06, height * 0.022 + fontSize * 1.6, width * 0.94, height * 0.022 + fontSize * 1.6],
+      {
+        stroke: "rgba(238, 236, 224, 0.25)",
+        strokeWidth: 1,
+        selectable: false,
+        objectCaching: false,
+      },
+    );
+
+    const group = new fabric.Group([text, rule], {
+      selectable: false,
+      objectCaching: false,
+    });
+    this.canvas.add(group);
+    // Behind the lesson: an op that happens to overlap should cover the
+    // heading rather than be covered by it.
+    this.canvas.sendObjectToBack(group);
+    this.unitLabelObject = group;
+  }
+
   get viewport(): Viewport {
     return { width: this.canvas.getWidth(), height: this.canvas.getHeight() };
   }
@@ -302,6 +386,9 @@ export class BoardRenderer {
   resize(width: number, height: number): void {
     if (this.disposed) return;
     this.canvas.setDimensions({ width, height });
+    // Positioned in pixels, so it has to be laid out again at the new size.
+    this.unitLabelObject = null;
+    this.drawUnitLabel();
     // The slate is painted at canvas size, so it has to be repainted when that
     // size changes or it would letterbox instead of filling the new board.
     this.canvas.backgroundColor = makeChalkboardTexture(width, height);
@@ -362,11 +449,26 @@ export class BoardRenderer {
     });
   }
 
+  /**
+   * Wipes the board completely — every page.
+   *
+   * This is `clear_first`, which the server sends on a block, chapter or
+   * session boundary (`whiteboard-sync.md`). It is a harder thing than the page
+   * break `ensureRoom` performs: there is no turning back to a topic that has
+   * been left behind, so the history goes with it.
+   */
   clear(): void {
     this.canvas.remove(...this.canvas.getObjects());
     this.byId.clear();
     this.onPage.clear();
-    this.flowY = 0.06;
+    this.pages.length = 0;
+    this.live = [];
+    this.viewing = 0;
+    this.flowY = this.startFlow();
+    // The heading belongs to the session, not to the page that was just wiped.
+    this.unitLabelObject = null;
+    this.drawUnitLabel();
+    this.notifyPages();
   }
 
   /**
@@ -390,7 +492,80 @@ export class BoardRenderer {
     // overlays the lower ~32% of the slate, and chalk written behind it is
     // chalk the student cannot read.
     if (this.flowY + neededNormalised <= FLOW_BOTTOM) return;
-    this.clear();
+    this.turnPage();
+  }
+
+  /**
+   * Files the current page and starts a fresh one.
+   *
+   * The filed page keeps its objects, so `goToPage` can put it back exactly as
+   * it was. Only the *canvas* is cleared; `byId` keeps every element, because a
+   * `highlight` may still target something written two pages ago and the
+   * student can turn back to see it.
+   */
+  private turnPage(): void {
+    if (this.live.length > 0) {
+      this.pages.push(this.live);
+      this.live = [];
+    }
+    this.canvas.remove(...this.pageObjects());
+    this.onPage.clear();
+    this.flowY = this.startFlow();
+    this.viewing = this.pages.length;
+    this.notifyPages();
+  }
+
+  /** Objects belonging to the lesson, i.e. everything but the pinned heading. */
+  private pageObjects(): fabric.FabricObject[] {
+    return this.canvas
+      .getObjects()
+      .filter((object) => object !== this.unitLabelObject);
+  }
+
+  private startFlow(): number {
+    return this.unitLabel ? 0.11 : 0.06;
+  }
+
+  /** How many pages exist, counting the one being written. */
+  get pageCount(): number {
+    return this.pages.length + (this.live.length > 0 ? 1 : 0);
+  }
+
+  /** The page on screen, 0-based. */
+  get pageIndex(): number {
+    return this.viewing;
+  }
+
+  /**
+   * Shows an earlier page, or returns to the live one.
+   *
+   * Turning back does not stop the lesson: the tutor keeps writing to the live
+   * page, and the next op snaps the student forward again (`applyOp` calls
+   * `returnToLive`). That is deliberate — NN-1 exists so the student is looking
+   * at the thing being explained, and leaving them on page 1 while the tutor
+   * narrates page 3 would break exactly that.
+   */
+  goToPage(index: number): void {
+    if (this.disposed) return;
+    const clamped = Math.max(0, Math.min(index, this.pageCount - 1));
+    if (clamped === this.viewing) return;
+
+    this.canvas.remove(...this.pageObjects());
+    const target = clamped < this.pages.length ? this.pages[clamped] : this.live;
+    for (const object of target) this.canvas.add(object);
+    this.viewing = clamped;
+    this.canvas.requestRenderAll();
+    this.notifyPages();
+  }
+
+  /** Snaps back to the page being written, if the student had turned back. */
+  private returnToLive(): void {
+    if (this.viewing === this.pages.length) return;
+    this.goToPage(this.pages.length);
+  }
+
+  private notifyPages(): void {
+    this.options.onPageChange?.(this.viewing, Math.max(1, this.pageCount));
   }
 
   /**
@@ -430,6 +605,8 @@ export class BoardRenderer {
    * it can only be caught by rendering a known marker and comparing.
    */
   private applyOp(op: BoardOp): void {
+    // Whatever the student was reading, the tutor is about to explain this.
+    this.returnToLive();
     const { width, height } = this.viewport;
 
     // Already on this page — see `onPage`. Silently skipped rather than
@@ -493,10 +670,12 @@ export class BoardRenderer {
 
       case "math": {
         this.ensureRoom(0.08);
-        // LaTeX is shown as monospace source, not typeset. A typesetting
-        // dependency (KaTeX/MathJax) inside the 400 ms hold is a real risk, and
-        // rendering nothing would be worse than rendering the source — the
-        // tutor is also saying it aloud.
+        // Typeset properly — see `math-render.ts`. The source text below is the
+        // fallback for LaTeX MathJax cannot parse; it is drawn immediately so
+        // the board is never empty, and replaced in place once the SVG is
+        // ready. A student copying from the board must see a fraction, not
+        // `\frac{a}{b}`.
+        void this.typesetMath(op.id, op.latex, width, height * this.flowY);
         const text = new fabric.Textbox(op.latex, {
           left: width * 0.08,
           top: height * this.flowY,
@@ -617,6 +796,7 @@ export class BoardRenderer {
           objectCaching: false,
         });
         this.canvas.add(label);
+        this.live.push(label);
         this.flowY += 0.2;
         break;
       }
@@ -872,6 +1052,96 @@ export class BoardRenderer {
     this.flowY += (label.height + 12 + boxHeight + 18) / height + 0.02;
   }
 
+  /**
+   * Replaces a formula's placeholder source text with the typeset SVG.
+   *
+   * Deliberately *not* awaited by `apply()`. MathJax's first call has to build
+   * its whole TeX pipeline, which can take longer than the 400 ms NN-1 hold —
+   * and blocking the board ACK on that would hold the tutor's audio back behind
+   * a typesetting library, which is exactly the sort of thing `whiteboard-sync.md`
+   * says the hold must never become. So the source text is painted inside the
+   * turn and the typeset version swaps in a frame or two later.
+   *
+   * The swap keeps the element's id and flow position, so a later `highlight`
+   * still finds it and nothing below it moves.
+   */
+  private async typesetMath(
+    id: string,
+    latex: string,
+    width: number,
+    top: number,
+  ): Promise<void> {
+    const svg = await latexToSvg(latex);
+    if (svg === null || this.disposed) return;
+
+    const placeholder = this.byId.get(id);
+    // The board may have been cleared or paged while MathJax was working; if
+    // the placeholder is gone, so is the turn it belonged to.
+    if (!placeholder || !this.canvas.getObjects().includes(placeholder)) return;
+
+    try {
+      const loaded = await fabric.loadSVGFromString(svg);
+      if (this.disposed) return;
+      const objects = loaded.objects.filter((object): object is fabric.FabricObject =>
+        Boolean(object),
+      );
+      if (objects.length === 0) return;
+
+      const group = fabric.util.groupSVGElements(objects, loaded.options);
+
+      // MathJax sizes in ex units, so an expression can come back at any
+      // scale. Fit it to a readable height, and cap the width so a long
+      // derivation shrinks rather than running off the slate.
+      const targetHeight = Math.max(22, width * 0.028);
+      const scale = Math.min(
+        targetHeight / Math.max(group.height ?? 1, 1),
+        (width * 0.84) / Math.max(group.width ?? 1, 1),
+      );
+
+      group.set({
+        left: width * 0.08,
+        top,
+        scaleX: scale,
+        scaleY: scale,
+        // Chalk white, overriding MathJax's black paths — the glyphs are
+        // filled paths, so this is the only way to colour them.
+        fill: CHALK_MINT,
+        originX: "left",
+        originY: "top",
+        selectable: false,
+        objectCaching: false,
+      });
+      // `groupSVGElements` returns a Group for a multi-glyph expression and a
+      // bare object for a single one, so the children are recoloured only when
+      // there are children to recolour.
+      if (group instanceof fabric.Group) {
+        group.getObjects().forEach((child) => child.set({ fill: CHALK_MINT }));
+      }
+
+      this.canvas.remove(placeholder);
+      this.canvas.add(group);
+      this.byId.set(id, group);
+      // Swap it inside whichever page it belongs to, so turning back to that
+      // page still shows the typeset formula rather than the placeholder.
+      const inLive = this.live.indexOf(placeholder);
+      if (inLive >= 0) {
+        this.live[inLive] = group;
+      } else {
+        for (const page of this.pages) {
+          const at = page.indexOf(placeholder);
+          if (at >= 0) {
+            page[at] = group;
+            break;
+          }
+        }
+      }
+      this.canvas.requestRenderAll();
+    } catch {
+      // Keep the source text. It is readable, and it is what was there before
+      // this method existed.
+    }
+  }
+
   /** The caption above a chart. */
   private chartTitle(text: string, left: number, top: number, width: number): fabric.Textbox {
     return new fabric.Textbox(text, {
@@ -930,6 +1200,7 @@ export class BoardRenderer {
   private add(id: string, object: fabric.FabricObject): void {
     this.canvas.add(object);
     this.byId.set(id, object);
+    this.live.push(object);
   }
 
   /** Serialises the board as a JSON op-log snapshot — never an image. */

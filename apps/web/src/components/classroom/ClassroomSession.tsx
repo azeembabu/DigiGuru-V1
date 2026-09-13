@@ -171,6 +171,13 @@ export function ClassroomSession({
   const [fullscreen, setFullscreen] = useState(false);
   const [notesOpen, setNotesOpen] = useState(true);
   /**
+   * Which board page is on screen, and how many there are.
+   *
+   * Mirrored from the renderer rather than counted here: the renderer decides
+   * when a page is full, and a second opinion in React would drift from it.
+   */
+  const [board, setBoard] = useState<{ page: number; total: number }>({ page: 0, total: 1 });
+  /**
    * The board op-log, kept for note export.
    *
    * `pedagogy.md`: an exported note is a client-side render of the ops, not a
@@ -213,6 +220,7 @@ export function ClassroomSession({
     if (!element || !shell) return;
 
     const renderer = new BoardRenderer(element, {
+      onPageChange: (page: number, total: number) => setBoard({ page, total }),
       onOpError: (op: BoardOp, error: Error) => {
         // Logged, not shown: one unrenderable op is not worth interrupting a
         // lesson for, and the gateway already hears about it via board_error
@@ -342,6 +350,17 @@ export function ClassroomSession({
           setDetail(info ?? null);
         },
         onSessionReady: (msg) => {
+          // The unit (or, failing that, the block) named along the top of the
+          // slate for the whole session — see `BoardRenderer.setUnitLabel`.
+          const context = msg.context ?? {};
+          const unit = typeof context.unit_title === "string" ? context.unit_title : null;
+          const block =
+            typeof context.block_title === "string"
+              ? typeof context.block_no === "number"
+                ? `Block ${context.block_no} · ${context.block_title}`
+                : context.block_title
+              : null;
+          renderer.setUnitLabel(unit ?? block);
           setSession(msg);
           setQuotaMs(msg.quota_remaining_ms);
         },
@@ -777,6 +796,42 @@ export function ClassroomSession({
               a line of chalk is never written behind a caption.
             */}
             {/*
+              Slide controls, bottom-left of the slate.
+
+              The board fills up and turns a page on its own; before this, the
+              page that scrolled away was simply gone, so a student who looked
+              down at their notebook lost the explanation behind them. Turning
+              back does not pause anything — the tutor keeps writing, and the
+              next op snaps the student forward to it, because NN-1 exists so
+              the student is looking at the thing being explained.
+            */}
+            {started && board.total > 1 ? (
+              <div className="absolute bottom-3 left-4 z-10 flex items-center gap-1 rounded-full border border-white/10 bg-black/55 px-1.5 py-1 backdrop-blur-sm sm:left-6">
+                <button
+                  type="button"
+                  onClick={() => rendererRef.current?.goToPage(board.page - 1)}
+                  disabled={board.page === 0}
+                  aria-label="Previous slide"
+                  className="rounded-full px-2 py-0.5 text-[15px] leading-none text-white/80 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-30"
+                >
+                  ‹
+                </button>
+                <span className="min-w-[44px] text-center text-[12px] tabular-nums text-white/60">
+                  {board.page + 1} / {board.total}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => rendererRef.current?.goToPage(board.page + 1)}
+                  disabled={board.page >= board.total - 1}
+                  aria-label="Next slide"
+                  className="rounded-full px-2 py-0.5 text-[15px] leading-none text-white/80 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-30"
+                >
+                  ›
+                </button>
+              </div>
+            ) : null}
+
+            {/*
               The live caption strip: the most recent thing said, clamped to
               three lines.
 
@@ -790,7 +845,7 @@ export function ClassroomSession({
             {started && lastCaption ? (
               <div
                 aria-live="polite"
-                className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 via-black/50 to-transparent px-4 pb-3 pt-10 sm:px-6"
+                className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 via-black/50 to-transparent px-4 pb-3 pl-28 pt-10 sm:px-6 sm:pl-32"
               >
                 <p className="dg-caption-clamp text-[15px] leading-snug text-white/95">
                   <span className="mr-1.5 align-[1px] text-[10px] font-semibold uppercase tracking-[0.12em] text-white/40">

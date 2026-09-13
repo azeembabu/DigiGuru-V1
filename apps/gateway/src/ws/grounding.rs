@@ -84,6 +84,9 @@ impl AcademicContext {
             "block_id": self.block_id,
             "block_title": self.block_title,
             "course_code": self.course_code,
+            // Null when the student opened a whole block rather than one unit;
+            // the client falls back to naming the block on the board.
+            "unit_title": self.unit_title,
         })
     }
 
