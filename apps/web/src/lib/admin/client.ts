@@ -12,13 +12,22 @@ import type {
   AdminStats,
   AdminUser,
   Block,
+  BoardEvent,
+  BoardLatencyBucket,
   Course,
   EntityStatus,
+  Enrollment,
+  EnrollmentStatus,
+  IncidentKind,
+  LearningSession,
   Lsc,
   Page,
   Program,
   Role,
+  SafetyIncident,
   Semester,
+  SessionEndReason,
+  SessionStatus,
   Student,
   UserStatus,
 } from "@/lib/admin/types";
@@ -278,4 +287,58 @@ export function uploadDocument(
 
 export function loadStats(): Promise<AdminStats> {
   return apiFetch<AdminStats>("/admin/stats");
+}
+
+// -------------------------------------------------------------- drill-downs
+//
+// The record lists behind the dashboard's metrics. All four are paginated
+// exactly like the lists above — bare array body, total in `X-Total-Count` —
+// so they all go through `apiFetchPage`.
+
+export function listEnrollments(
+  params: ListParams & { status?: EnrollmentStatus; course_id?: string; student_id?: string } = {},
+): Promise<Page<Enrollment>> {
+  return apiFetchPage<Enrollment>(`/admin/enrollments${query({ ...params })}`);
+}
+
+export function listSessions(
+  params: ListParams & {
+    status?: SessionStatus;
+    end_reason?: SessionEndReason;
+    student_id?: string;
+    block_id?: string;
+    course_id?: string;
+    from?: string;
+    to?: string;
+  } = {},
+): Promise<Page<LearningSession>> {
+  return apiFetchPage<LearningSession>(`/admin/sessions${query({ ...params })}`);
+}
+
+/**
+ * Ordered `turn_seq` ascending when `session_id` is given and `emitted_at`
+ * descending otherwise — one session reads as a transcript, the firehose reads
+ * as a feed. The ordering is the gateway's; nothing is re-sorted here.
+ */
+export function listBoardEvents(
+  params: ListParams & {
+    session_id?: string;
+    violations_only?: string;
+    bucket?: BoardLatencyBucket;
+  } = {},
+): Promise<Page<BoardEvent>> {
+  return apiFetchPage<BoardEvent>(`/admin/board-events${query({ ...params })}`);
+}
+
+export function listSafetyIncidents(
+  params: ListParams & {
+    tier?: string;
+    kind?: IncidentKind;
+    student_id?: string;
+    session_id?: string;
+    from?: string;
+    to?: string;
+  } = {},
+): Promise<Page<SafetyIncident>> {
+  return apiFetchPage<SafetyIncident>(`/admin/safety-incidents${query({ ...params })}`);
 }

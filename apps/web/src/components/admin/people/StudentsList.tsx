@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 
 import { useAdminSession } from "@/components/admin/AdminShell";
 import { AdminSelect, Pagination, SearchInput } from "@/components/admin/controls";
@@ -24,6 +25,11 @@ import { ApiError } from "@/lib/api";
 
 const PAGE_SIZE = 25;
 
+// The gateway validates `status` against the `users.status` enum and answers a
+// 400 for anything else, so an unknown value in the URL is dropped rather than
+// forwarded — a hand-edited link should show the unfiltered list, not an error.
+const ALLOWED_STATUSES = ["active", "inactive", "suspended"];
+
 /**
  * The roster.
  *
@@ -38,8 +44,18 @@ export function StudentsList() {
   const { me } = useAdminSession();
   const catalogue = useCatalogue();
 
-  const [q, setQ] = useState("");
-  const [status, setStatus] = useState("");
+  // Seeded from the URL so a dashboard metric can deep-link into a filtered
+  // view ("Suspended accounts" -> ?status=suspended) and so the filtered list
+  // stays shareable. Only the initial value is read: the controls below own
+  // the state from then on, and push the change back to the URL.
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const initialStatus = ALLOWED_STATUSES.includes(searchParams.get("status") ?? "")
+    ? (searchParams.get("status") as string)
+    : "";
+
+  const [q, setQ] = useState(() => searchParams.get("q") ?? "");
+  const [status, setStatus] = useState(initialStatus);
   const [offset, setOffset] = useState(0);
   const [rows, setRows] = useState<Student[]>([]);
   const [total, setTotal] = useState(0);
@@ -49,14 +65,27 @@ export function StudentsList() {
   // A changed filter invalidates the current page, so it resets to the first
   // one here at the source of the change rather than in an effect — an effect
   // would render the stale offset once before correcting it.
+  // Mirror the filters into the URL so the address bar always describes what
+  // is on screen — `replace`, not `push`, so typing a search term does not
+  // bury the previous page under a stack of history entries.
+  function syncUrl(nextQ: string, nextStatus: string) {
+    const params = new URLSearchParams();
+    if (nextQ) params.set("q", nextQ);
+    if (nextStatus) params.set("status", nextStatus);
+    const query = params.toString();
+    router.replace(query ? `/admin/students?${query}` : "/admin/students", { scroll: false });
+  }
+
   function onSearch(next: string) {
     setQ(next);
     setOffset(0);
+    syncUrl(next, status);
   }
 
   function onStatus(next: string) {
     setStatus(next);
     setOffset(0);
+    syncUrl(q, next);
   }
 
   useEffect(() => {

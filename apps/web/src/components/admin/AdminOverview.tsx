@@ -4,35 +4,51 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { useAdminSession } from "@/components/admin/AdminShell";
-import { Banner, PageHeader, StatusPill, panelClass } from "@/components/admin/primitives";
-import { loadStats } from "@/lib/admin/client";
-import type { AdminStats } from "@/lib/admin/types";
+import {
+  CatalogueSection,
+  IngestionSection,
+  StudentsSection,
+} from "@/components/admin/overview/CatalogueSections";
+import {
+  SafetySection,
+  SessionsSection,
+  WhiteboardSection,
+} from "@/components/admin/overview/LiveSections";
+import { ACK_VIOLATION_BUCKET, loadAnalytics } from "@/lib/admin/analytics";
+import type { AdminAnalytics } from "@/lib/admin/analytics";
+import { toBoardEvents, toIncidents } from "@/components/admin/overview/links";
+import { OverviewSkeleton } from "@/components/admin/overview/parts";
+import { Banner, PageHeader } from "@/components/admin/primitives";
 import { ApiError } from "@/lib/api";
 
 /**
- * The console's landing screen: counts, and the one thing that actually needs
- * an admin's attention.
+ * The console's landing screen: the platform's state at a glance, and the
+ * handful of numbers that are tasks rather than statistics.
  *
- * `GET /admin/stats` is scoped server-side — a sub-admin's numbers cover only
- * their programs, so this screen never has to explain a total that includes
- * content they cannot open.
+ * `GET /admin/analytics` is scoped server-side — a sub-admin's figures cover
+ * only their programs, so this screen never has to explain a total that
+ * includes content they cannot open, and it never filters client-side.
+ *
+ * An empty platform is the expected first render. Every section below is
+ * written for the all-zero case first: honest zeros, and a one-line note on
+ * what would populate the section. Nothing here invents or substitutes data.
  */
 export function AdminOverview() {
   const { me } = useAdminSession();
-  const [stats, setStats] = useState<AdminStats | null>(null);
+  const [data, setData] = useState<AdminAnalytics | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
 
-    loadStats()
+    loadAnalytics()
       .then((next) => {
-        if (!cancelled) setStats(next);
+        if (!cancelled) setData(next);
       })
       .catch((caught: unknown) => {
         if (cancelled) return;
         setError(
-          caught instanceof ApiError ? caught.message : "Could not load the summary.",
+          caught instanceof ApiError ? caught.message : "Could not load the dashboard.",
         );
       });
 
@@ -44,7 +60,7 @@ export function AdminOverview() {
   const firstName = me.full_name?.split(" ")[0];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-10">
       <PageHeader
         title={firstName ? `Welcome back, ${firstName}` : "Overview"}
         description={
@@ -54,99 +70,109 @@ export function AdminOverview() {
         }
       />
 
-      {error ? <Banner tone="danger">{error}</Banner> : null}
-
-      {/* A pending-review document is the one number that is a task, not a
-          statistic — low OCR confidence holds a textbook out of the syllabus
-          until a sub-admin approves it (`.claude/rules/rag-pipeline.md`). */}
-      {stats && stats.documents.pending_review > 0 ? (
-        <Banner tone="info">
-          {stats.documents.pending_review} document
-          {stats.documents.pending_review === 1 ? "" : "s"} need review before going live.
+      {error ? (
+        <Banner tone="danger">
+          {error} The dashboard reads `GET /admin/analytics`; nothing is shown until it answers.
         </Banner>
       ) : null}
 
-      <section aria-label="Totals" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        <StatCard label="Students" value={stats?.students} href="/admin/students" />
-        <StatCard label="Programs" value={stats?.programs} href="/admin/programs" />
-        <StatCard label="Learner support centres" value={stats?.lscs} href="/admin/lscs" />
-        <StatCard label="Semesters" value={stats?.semesters} />
-        <StatCard label="Courses" value={stats?.courses} />
-        <StatCard label="Blocks" value={stats?.blocks} />
-      </section>
+      {!error && !data ? <OverviewSkeleton /> : null}
 
-      <section aria-labelledby="ingestion-heading" className={`${panelClass} p-5`}>
-        <h2 id="ingestion-heading" className="font-display text-base font-semibold text-gray-900">
-          Textbook ingestion
-        </h2>
-        <p className="mt-1 text-sm text-gray-500">
-          A block cannot be taught from a document that has not finished embedding.
-        </p>
+      {data ? (
+        <>
+          <Alerts data={data} />
 
-        <dl className="mt-4 flex flex-wrap gap-x-8 gap-y-3">
-          <IngestStat label="Uploaded" value={stats?.documents.total} />
-          <IngestStat label="Embedded" value={stats?.documents.embedded} tone="success" />
-          <IngestStat
-            label="Awaiting review"
-            value={stats?.documents.pending_review}
-            tone="warning"
+          <CatalogueSection catalogue={data.catalogue} topBlocks={data.series.top_blocks} />
+          <StudentsSection students={data.students} daily={data.series.students_daily} />
+          <IngestionSection
+            documents={data.documents}
+            byStatus={data.series.documents_by_status}
+            daily={data.series.documents_daily}
           />
-          <IngestStat label="Failed" value={stats?.documents.failed} tone="danger" />
-        </dl>
-      </section>
+          <SessionsSection
+            sessions={data.sessions}
+            daily={data.series.sessions_daily}
+            endReasons={data.series.session_end_reasons}
+          />
+          <WhiteboardSection
+            whiteboard={data.whiteboard}
+            buckets={data.series.ack_latency_buckets}
+          />
+          <SafetySection safety={data.safety} daily={data.series.incidents_daily} />
+        </>
+      ) : null}
     </div>
   );
 }
 
-function StatCard({ label, value, href }: { label: string; value?: number; href?: string }) {
-  const body = (
-    <>
-      <p className="text-sm text-gray-500">{label}</p>
-      <p className="mt-1 font-display text-3xl font-semibold text-gray-900 tabular-nums">
-        {value === undefined ? (
-          <span className="inline-block h-8 w-16 animate-pulse rounded-sm bg-lavender-100 align-middle" />
-        ) : (
-          value.toLocaleString()
-        )}
-      </p>
-    </>
+/**
+ * The numbers that are a task, not a statistic — surfaced above the fold so an
+ * admin does not have to scroll a dashboard to find out something is wrong.
+ * Deliberately silent when there is nothing to say.
+ */
+function Alerts({ data }: { data: AdminAnalytics }) {
+  const overCeiling =
+    data.series.ack_latency_buckets.find((row) => row.label === ACK_VIOLATION_BUCKET)?.count ?? 0;
+  const nn1 = data.whiteboard.ops_unacked + overCeiling;
+
+  return (
+    <div className="space-y-3">
+      {nn1 > 0 ? (
+        <Banner tone="danger">
+          Whiteboard-first (NN-1) violated: {nn1.toLocaleString()} board op
+          {nn1 === 1 ? "" : "s"} went unacknowledged or past the 400 ms hold ceiling, so audio
+          reached a student before the board did.{" "}
+          <AlertLink
+            href={toBoardEvents({ violations_only: "true" })}
+            label={`View the ${nn1.toLocaleString()} violating board op${nn1 === 1 ? "" : "s"}`}
+          />
+        </Banner>
+      ) : null}
+
+      {data.safety.tier1 > 0 ? (
+        <Banner tone="danger">
+          {data.safety.tier1.toLocaleString()} Tier-1 safety incident
+          {data.safety.tier1 === 1 ? "" : "s"} tore a live session down (close 4009).{" "}
+          <AlertLink
+            href={toIncidents({ tier: "1" })}
+            label={`View the ${data.safety.tier1.toLocaleString()} Tier-1 incident${
+              data.safety.tier1 === 1 ? "" : "s"
+            }`}
+          />
+        </Banner>
+      ) : null}
+
+      {data.documents.failed > 0 ? (
+        <Banner tone="danger">
+          {data.documents.failed.toLocaleString()} document
+          {data.documents.failed === 1 ? "" : "s"} failed ingestion and are not retrievable.
+        </Banner>
+      ) : null}
+
+      {/* Low OCR confidence holds a textbook out of the syllabus until a
+          sub-admin approves it (`.claude/rules/rag-pipeline.md`). */}
+      {data.documents.pending_review > 0 ? (
+        <Banner tone="info">
+          {data.documents.pending_review.toLocaleString()} document
+          {data.documents.pending_review === 1 ? "" : "s"} need review before going live.
+        </Banner>
+      ) : null}
+    </div>
   );
+}
 
-  if (!href) {
-    return <div className={`${panelClass} p-5`}>{body}</div>;
-  }
-
+/**
+ * The "so open them" half of an alert. An alert that states a violation but
+ * cannot take you to the rows behind it leaves the admin to go hunting.
+ */
+function AlertLink({ href, label }: { href: string; label: string }) {
   return (
     <Link
       href={href}
-      className={`${panelClass} block p-5 transition-colors hover:border-gray-500/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-offset-2 focus-visible:ring-offset-lavender-50`}
+      aria-label={label}
+      className="font-medium underline underline-offset-2 hover:no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 focus-visible:ring-offset-2 focus-visible:ring-offset-lavender-50"
     >
-      {body}
+      {label}
     </Link>
-  );
-}
-
-function IngestStat({
-  label,
-  value,
-  tone = "neutral",
-}: {
-  label: string;
-  value?: number;
-  tone?: "neutral" | "success" | "warning" | "danger";
-}) {
-  return (
-    <div>
-      <dt className="text-xs font-medium uppercase tracking-wide text-gray-500">{label}</dt>
-      <dd className="mt-1">
-        {value === undefined ? (
-          <span className="inline-block h-5 w-10 animate-pulse rounded-sm bg-lavender-100" />
-        ) : tone === "neutral" ? (
-          <span className="font-display text-xl font-semibold tabular-nums">{value}</span>
-        ) : (
-          <StatusPill tone={tone}>{value}</StatusPill>
-        )}
-      </dd>
-    </div>
   );
 }

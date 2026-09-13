@@ -146,3 +146,92 @@ export type Page<T> = {
   items: T[];
   total: number;
 };
+
+// ------------------------------------------------- drill-down list rows
+//
+// The four lists behind the dashboard's metrics
+// (`.claude/rules/api-conventions.md` §"Drill-down list endpoints"). Every row
+// is denormalised by the gateway so a table renders without a second request
+// per row — resist adding a per-row lookup here, that is the N+1 these shapes
+// exist to prevent.
+
+export type EnrollmentStatus = "active" | "completed" | "dropped";
+
+export type Enrollment = {
+  id: string;
+  student_id: string;
+  student_name: string;
+  roll_number: string;
+  course_id: string;
+  course_code: string;
+  course_name: string;
+  semester_number: number;
+  status: EnrollmentStatus;
+  assigned_at: string;
+};
+
+export type SessionStatus = "in_progress" | "completed" | "abandoned";
+
+/** `null` while the session is still running. */
+export type SessionEndReason = "quota" | "idle" | "user" | "jailbreak" | "error";
+
+export type LearningSession = {
+  id: string;
+  student_id: string;
+  student_name: string;
+  roll_number: string;
+  course_id: string;
+  course_code: string;
+  block_id: string;
+  block_no: number;
+  block_title: string;
+  started_at: string;
+  ended_at: string | null;
+  /**
+   * NN-3: server-authoritative voice time, counted only while voice is active
+   * and never above `QUOTA_CAP_MS`. A client clock never contributes to it.
+   */
+  active_voice_ms: number;
+  status: SessionStatus;
+  end_reason: SessionEndReason | null;
+  last_topic: string | null;
+  last_page: number;
+  /** Per-session roll-ups, so a bad session is visible without opening it. */
+  board_ops: number;
+  /** NN-1 breaches: ops acked above `HOLD_MAX` or never acked at all. */
+  board_violations: number;
+};
+
+export type BoardOpKind = "heading" | "bullets" | "math" | "draw" | "image" | "highlight";
+
+/** The analytics ACK-latency buckets, reused as a board-event filter. */
+export type BoardLatencyBucket = "0-100ms" | "100-250ms" | "250-400ms" | ">400ms";
+
+export type BoardEvent = {
+  id: number;
+  session_id: string;
+  turn_seq: number;
+  /** Lifted out of `op` by the gateway so a list renders without parsing it. */
+  op_kind: BoardOpKind;
+  op: unknown;
+  emitted_at: string;
+  /** `null` when the client never acknowledged the op. */
+  acked_ms: number | null;
+  is_violation: boolean;
+};
+
+export type IncidentKind = "jailbreak" | "toxicity" | "out_of_scope";
+
+export type SafetyIncident = {
+  id: string;
+  session_id: string | null;
+  student_id: string;
+  student_name: string;
+  roll_number: string;
+  kind: IncidentKind;
+  /** 0 muted the upstream, 1 tore the socket down, 2 dropped model output. */
+  tier: number;
+  /** Already PII-redacted at write time — rendered as stored, never re-cleaned. */
+  excerpt: string;
+  created_at: string;
+};
