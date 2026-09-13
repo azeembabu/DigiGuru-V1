@@ -285,6 +285,104 @@ mod tests {
     }
 
     #[test]
+    fn verse_block_stays_atomic_and_tagged() {
+        // Short lines that mostly don't end in sentence punctuation: line
+        // breaks are structural, so the block must not be reflowed or split.
+        let verse_text =
+            "ഒരു വരി കവിത\nരണ്ടാമത്തെ വരി\nമൂന്നാമത്തെ വരി\nനാലാമത്തെ വരി";
+        let chunks = chunk_paragraphs(vec![Paragraph {
+            page: 7,
+            index: 4,
+            text: verse_text.to_string(),
+        }]);
+
+        assert_eq!(chunks.len(), 1, "a verse block must not be split");
+        assert_eq!(chunks[0].kind, ChunkKind::Verse);
+        assert_eq!(chunks[0].text, verse_text);
+        assert_eq!(chunks[0].page, 7);
+        assert_eq!(chunks[0].para_index, 4);
+    }
+
+    #[test]
+    fn a_table_flushes_pending_prose_rather_than_absorbing_it() {
+        // A table boundary is a harder boundary than the token target: the
+        // prose before it must not be swept into the table chunk, or the
+        // table stops being atomic.
+        let chunks = chunk_paragraphs(vec![
+            Paragraph {
+                page: 1,
+                index: 0,
+                text: "Some introductory prose before the table.".to_string(),
+            },
+            Paragraph {
+                page: 1,
+                index: 1,
+                text: "Name          Age\nAmal          20\nBinu          21".to_string(),
+            },
+        ]);
+
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].kind, ChunkKind::Prose);
+        assert_eq!(chunks[1].kind, ChunkKind::Table);
+        assert!(!chunks[1].text.contains("introductory prose"));
+    }
+
+    #[test]
+    fn prose_chunks_respect_the_token_ceiling() {
+        let text = (0..120)
+            .map(|n| format!("Sentence {n} with a handful of words in it."))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let chunks = chunk_paragraphs(vec![Paragraph {
+            page: 1,
+            index: 0,
+            text,
+        }]);
+
+        assert!(chunks.len() > 1);
+        // Every chunk but the trailing remainder must sit inside the target
+        // band; the last may be short because there is nothing left to merge
+        // it forward into.
+        for chunk in &chunks[..chunks.len() - 1] {
+            assert!(
+                chunk.token_count <= TARGET_MAX_TOKENS,
+                "chunk of {} tokens exceeds the {TARGET_MAX_TOKENS}-token ceiling",
+                chunk.token_count
+            );
+            assert!(
+                chunk.token_count >= TARGET_MIN_TOKENS,
+                "chunk of {} tokens is below the {TARGET_MIN_TOKENS}-token target",
+                chunk.token_count
+            );
+        }
+    }
+
+    #[test]
+    fn consecutive_prose_chunks_overlap_by_one_sentence() {
+        let text = (0..120)
+            .map(|n| format!("Sentence {n} with a handful of words in it."))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let chunks = chunk_paragraphs(vec![Paragraph {
+            page: 1,
+            index: 0,
+            text,
+        }]);
+
+        assert!(chunks.len() > 1);
+        for pair in chunks.windows(2) {
+            let previous_last = split_sentences(&pair[0].text)
+                .pop()
+                .expect("chunk has at least one sentence");
+            assert!(
+                pair[1].text.starts_with(&previous_last),
+                "expected a one-sentence overlap; {:?} does not start with {previous_last:?}",
+                &pair[1].text[..40.min(pair[1].text.len())]
+            );
+        }
+    }
+
+    #[test]
     fn no_chunk_boundary_falls_mid_sentence() {
         // Enough sentences to force at least one overflow boundary well
         // past the 450-token target.

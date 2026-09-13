@@ -30,12 +30,15 @@ pub fn clean_pages(pages: Vec<PageText>) -> Vec<PageText> {
     let mut normalized_counts: std::collections::HashMap<String, usize> =
         std::collections::HashMap::new();
 
-    let line_sets: Vec<Vec<(&str, String)>> = pages
+    // Owned lines rather than `&str` borrowed from `pages`: the final
+    // `into_iter()` below consumes `pages`, so slices into it would keep the
+    // borrow alive past the move.
+    let line_sets: Vec<Vec<(String, String)>> = pages
         .iter()
         .map(|p| {
             p.text
                 .lines()
-                .map(|line| (line, normalize_line(line)))
+                .map(|line| (line.to_string(), normalize_line(line)))
                 .collect()
         })
         .collect();
@@ -75,7 +78,7 @@ pub fn clean_pages(pages: Vec<PageText>) -> Vec<PageText> {
                     }
                     !furniture.contains(normalized)
                 })
-                .map(|(raw, _)| *raw)
+                .map(|(raw, _)| raw.as_str())
                 .collect();
             PageText {
                 page_number: page.page_number,
