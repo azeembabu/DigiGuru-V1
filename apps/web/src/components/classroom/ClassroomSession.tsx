@@ -57,7 +57,13 @@ const PLAYBACK_GATE_S = 0.05;
  * By the time this is flushed the tutor's stream has already ended, so a little
  * echo tail at the head of the student's turn has nothing to interrupt.
  */
-const PREROLL_MS = 300;
+/*
+ * Sized to cover the barge-in window as well as an ordinary overlap. Barge-in
+ * only fires after 500 ms of the student talking, so a 300 ms buffer had
+ * already discarded the first syllable of the very sentence being used to
+ * interrupt — Gemini would receive "...go back" and have to guess at the rest.
+ */
+const PREROLL_MS = 700;
 const PREROLL_FRAMES = Math.ceil(PREROLL_MS / 20);
 
 /**
@@ -111,6 +117,22 @@ const BARGE_IN_MIN_LEVEL = 0.03;
  * interrupt every single turn.
  */
 const BARGE_IN_WARMUP_FRAMES = 20;
+
+/**
+ * How long the mic gate is held open after a barge-in.
+ *
+ * This is what actually stops the tutor, and the previous version did not do
+ * it. Flushing local playback only drops what is already buffered — the model
+ * keeps generating, more audio arrives, and the tutor carries on mid-sentence.
+ * The only thing that stops Gemini is Gemini *hearing* the student, and while
+ * the gate is closed it never can.
+ *
+ * So a barge-in unlatches the gate and holds it open long enough for the whole
+ * interrupting sentence to reach the model, rather than for the single frame
+ * that triggered it. Long enough to say "wait, go back" without being so long
+ * that the tutor's next turn is talking into an open microphone.
+ */
+const BARGE_IN_HOLD_MS = 2500;
 
 /** `document.body` never changes identity, so there is nothing to subscribe to. */
 function subscribeNever(): () => void {
@@ -192,6 +214,14 @@ export function ClassroomSession({
   const echoLevelRef = useRef(0);
   /** Gated frames so far this turn; barge-in is deaf until the warm-up passes. */
   const gatedFramesRef = useRef(0);
+  /**
+   * When the barge-in hold expires (`performance.now()` ms), or 0 for "closed".
+   *
+   * While this is in the future the half-duplex gate is bypassed, so the
+   * student's voice reaches Gemini and its own turn detection cuts the tutor
+   * off. Without it, barge-in was purely cosmetic.
+   */
+  const bargeOpenUntilRef = useRef(0);
   /** Live mirror of `speaking`, readable from the per-frame callback. */
   const speakingRef = useRef(false);
   /**
@@ -371,7 +401,11 @@ export function ClassroomSession({
       // Withholding the send while the tutor is speaking means Gemini never
       // hears its own echo, so it never has a reason to self-interrupt.
       onFrame: (frame, level) => {
-        const gated = (playbackRef.current?.queuedSeconds ?? 0) > PLAYBACK_GATE_S;
+        // A barge-in holds the gate open even while the tutor still has audio
+        // queued — that is the whole point of it.
+        const holdingOpen = performance.now() < bargeOpenUntilRef.current;
+        const gated =
+          !holdingOpen && (playbackRef.current?.queuedSeconds ?? 0) > PLAYBACK_GATE_S;
         if (gated) {
           // Hold the tail end of what the student is saying rather than
           // discarding it outright.
@@ -404,10 +438,15 @@ export function ClassroomSession({
             if (bargeInRef.current >= BARGE_IN_FRAMES) {
               bargeInRef.current = 0;
               // Stop the tutor locally first — that silences the speakers, and
-              // with them the echo — then tell the server, so the model stops
-              // generating rather than queueing more behind what was dropped.
+              // with them the bleed.
               playbackRef.current?.stop();
               clientRef.current?.interrupt();
+              // Then open the gate, which is what actually ends the turn: the
+              // student's voice now reaches Gemini, whose own turn detection
+              // stops generating. A local flush alone left the model talking.
+              bargeOpenUntilRef.current = performance.now() + BARGE_IN_HOLD_MS;
+              gatedFramesRef.current = 0;
+              echoLevelRef.current = 0;
             }
           } else {
             bargeInRef.current = 0;
