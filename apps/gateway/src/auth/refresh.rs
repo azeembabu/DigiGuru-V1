@@ -2,7 +2,7 @@
 //! access token. The old `auth_sessions` row is revoked (never reused), and
 //! a new one is inserted, so a replayed old refresh token is detectable.
 
-use axum::extract::{ConnectInfo, State};
+use axum::extract::State;
 use axum_extra::extract::CookieJar;
 use chrono::{Duration, Utc};
 

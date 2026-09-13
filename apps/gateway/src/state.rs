@@ -13,6 +13,12 @@ pub struct AppState(pub Arc<AppStateInner>);
 
 pub struct AppStateInner {
     pub pool: PgPool,
+    // Connected at startup and held for Phase 3: the NN-3 quota ledger and the
+    // `sess:{session_id}` state both live in Redis. Nothing reads it yet, so
+    // clippy calls it dead -- but dropping it would mean re-establishing the
+    // connection manager later for no gain, and a failure to reach Redis is
+    // worth discovering at boot rather than on the first classroom session.
+    #[allow(dead_code)]
     pub redis: ConnectionManager,
     pub config: Config,
 }

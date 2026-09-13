@@ -23,6 +23,10 @@ path = "src/bin/create_admin.rs"
 dg-core = { workspace = true }
 dg-db = { workspace = true }
 
+# The `seed_dev` dev-only seeder writes rows directly with compile-time checked
+# `sqlx::query!` macros; the gateway proper goes through `dg-db`.
+sqlx = { workspace = true }
+
 tokio = { workspace = true }
 axum = { workspace = true }
 axum-extra = { workspace = true }
