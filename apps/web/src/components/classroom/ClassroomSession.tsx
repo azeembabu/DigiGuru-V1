@@ -88,6 +88,20 @@ const SPEECH_OPEN_FRAMES = 4;
 const BLEED_WARMUP_FRAMES = 10;
 
 /**
+ * Silence, in frames, before a declared turn is closed.
+ *
+ * The turn used to close on the VAD's own `speech_end`, which never arrived
+ * while the tutor's bleed was keeping the VAD open — so `activityEnd` was never
+ * sent and the model, which answers on that signal, never answered at all.
+ * Reported as "it is listening every time, no response from Gemini".
+ *
+ * So the close is driven by the same qualification test as the open: frames
+ * that are not the student. 700 ms is comfortably longer than the gaps inside a
+ * sentence and short enough not to feel like a wait.
+ */
+const SPEECH_CLOSE_FRAMES = 35;
+
+/**
  * Queued tutor audio above which the header shows "tutor speaking".
  *
  * A display threshold only — it no longer gates anything. `queuedSeconds`
@@ -164,6 +178,8 @@ export function ClassroomSession({
   const turnOpenRef = useRef(false);
   /** Consecutive qualifying frames — see `SPEECH_OPEN_FRAMES`. */
   const speechRunRef = useRef(0);
+  /** Consecutive non-qualifying frames — see `SPEECH_CLOSE_FRAMES`. */
+  const silenceRunRef = useRef(0);
   /** Running estimate of the tutor's bleed level, learned while it plays. */
   const bleedRef = useRef(0);
   /** Frames of bleed seen this tutor turn; the detector is deaf until warmed up. */
@@ -332,6 +348,7 @@ export function ClassroomSession({
       clientRef.current?.setActivity(false);
     }
     speechRunRef.current = 0;
+    silenceRunRef.current = 0;
     bleedRef.current = 0;
     bleedFramesRef.current = 0;
     if (hearingTimer.current !== null) {
@@ -372,7 +389,15 @@ export function ClassroomSession({
           bleedFramesRef.current += 1;
           const warming = bleedFramesRef.current <= BLEED_WARMUP_FRAMES;
           const loud = level > Math.max(bleedRef.current * SPEECH_OVER_BLEED, SPEECH_MIN_LEVEL);
-          if (warming || !loud) {
+          if (warming) {
+            // Converge fast, or the estimate is still near zero when the freeze
+            // below starts — every frame then looks louder than "bleed", the
+            // estimate never catches up, and the turn opens on the tutor's own
+            // voice and stays open. A slow average here was exactly that bug.
+            bleedRef.current = bleedRef.current * 0.7 + level * 0.3;
+          } else if (!loud) {
+            // Adapt slowly, and never from frames already loud enough to be the
+            // student — otherwise their voice trains the detector to ignore it.
             bleedRef.current = bleedRef.current * 0.97 + level * 0.03;
           }
         } else {
@@ -390,6 +415,14 @@ export function ClassroomSession({
             level > Math.max(bleedRef.current * SPEECH_OVER_BLEED, SPEECH_MIN_LEVEL));
         const qualifies = speakingRef.current && overBleed;
         speechRunRef.current = qualifies ? speechRunRef.current + 1 : 0;
+        silenceRunRef.current = qualifies ? 0 : silenceRunRef.current + 1;
+
+        // Closing is driven by the same test as opening, not by the VAD's own
+        // end-of-speech — which the tutor's bleed can suppress indefinitely.
+        if (turnOpenRef.current && silenceRunRef.current >= SPEECH_CLOSE_FRAMES) {
+          turnOpenRef.current = false;
+          clientRef.current?.setActivity(false);
+        }
 
         if (speechRunRef.current >= SPEECH_OPEN_FRAMES && !turnOpenRef.current) {
           turnOpenRef.current = true;
@@ -415,14 +448,9 @@ export function ClassroomSession({
         // the raw, gap-by-gap VAD signal and was the blinking.
         speakingRef.current = talking;
 
-        // End of speech closes the declared turn — after the VAD's hangover,
-        // so a pause between words does not end it. The model answers on this
-        // signal, which is what stops half a sentence being taken for a
-        // finished question.
-        if (!talking && turnOpenRef.current) {
-          turnOpenRef.current = false;
-          clientRef.current?.setActivity(false);
-        }
+        // The turn is closed in `onFrame`, not here: this event depends on the
+        // VAD alone, and the tutor's bleed can hold the VAD open for as long as
+        // it is speaking.
 
         // Held display value — see `hearing`. Driven from the event rather
         // than an effect, because the hold is a property of the transition,

@@ -124,9 +124,18 @@ const MAX_QUEUED_AUDIO_FRAMES: usize = 125;
 /// Shared send-side queue. Audio is lossy (drop-oldest); control messages —
 /// tool responses — are never dropped, because a swallowed function response
 /// leaves the model waiting forever.
+/// An item on the ordered stream, which carries mic audio and anything that
+/// must stay in sequence with it.
+enum Outgoing {
+    Audio(Bytes),
+    /// A control frame whose position relative to the audio matters — today
+    /// only `activityEnd`.
+    Ordered(String),
+}
+
 #[derive(Default)]
 struct OutboundQueue {
-    audio: Mutex<VecDeque<Bytes>>,
+    audio: Mutex<VecDeque<Outgoing>>,
     control: Mutex<VecDeque<String>>,
     notify: tokio::sync::Notify,
     dropped_frames: AtomicU64,
@@ -137,9 +146,16 @@ impl OutboundQueue {
     fn push_audio(&self, frame: Bytes) {
         let mut dropped_now = 0usize;
         if let Ok(mut q) = self.audio.lock() {
-            q.push_back(frame);
+            q.push_back(Outgoing::Audio(frame));
             while q.len() > MAX_QUEUED_AUDIO_FRAMES {
-                q.pop_front();
+                // Only audio is droppable under backpressure. Dropping a turn
+                // boundary would leave the model waiting for an end that never
+                // comes, which is a stuck session rather than a lost syllable.
+                let Some(index) = q.iter().position(|item| matches!(item, Outgoing::Audio(_)))
+                else {
+                    break;
+                };
+                q.remove(index);
                 dropped_now += 1;
             }
         }
@@ -158,6 +174,19 @@ impl OutboundQueue {
         self.notify.notify_one();
     }
 
+    /// Queues a control frame **behind** the audio already waiting.
+    ///
+    /// `activityEnd` closes the turn the queued frames belong to, so sending it
+    /// first tells the model the student finished before it has heard them. The
+    /// model then answers an empty turn — or, as reported, says nothing at all
+    /// while the audio arrives after the door has shut.
+    fn push_ordered(&self, json: String) {
+        if let Ok(mut q) = self.audio.lock() {
+            q.push_back(Outgoing::Ordered(json));
+        }
+        self.notify.notify_one();
+    }
+
     fn push_control(&self, json: String) {
         if let Ok(mut q) = self.control.lock() {
             q.push_back(json);
@@ -165,16 +194,23 @@ impl OutboundQueue {
         self.notify.notify_one();
     }
 
-    /// Control first, then one audio frame — a tool response must not queue
-    /// behind 2.5 s of mic audio.
+    /// Priority control first, then the ordered stream.
+    ///
+    /// The split is about *whether position matters*. A tool response or an
+    /// `activityStart` must not queue behind 2.5 s of mic audio — an
+    /// interruption that arrives late is not an interruption. An `activityEnd`
+    /// is the opposite: it means "that was the end of what you just heard", so
+    /// it has to travel with the audio, not ahead of it.
     fn pop(&self) -> Option<String> {
         if let Ok(mut q) = self.control.lock() {
             if let Some(msg) = q.pop_front() {
                 return Some(msg);
             }
         }
-        let frame = self.audio.lock().ok().and_then(|mut q| q.pop_front())?;
-        Some(realtime_audio_message(&frame).to_string())
+        match self.audio.lock().ok().and_then(|mut q| q.pop_front())? {
+            Outgoing::Audio(frame) => Some(realtime_audio_message(&frame).to_string()),
+            Outgoing::Ordered(json) => Some(json),
+        }
     }
 
     fn close(&self) {
@@ -423,12 +459,17 @@ impl LiveSessionClient for GeminiLiveSessionClient {
                 "the Gemini Live session is closed".to_string(),
             ));
         }
-        let message = if speaking {
-            crate::gemini_wire::activity_start_message()
+        if speaking {
+            // Jumps the queue: this both opens the turn and interrupts the
+            // tutor, and both are worthless if they arrive late.
+            self.outbound
+                .push_control(crate::gemini_wire::activity_start_message().to_string());
         } else {
-            crate::gemini_wire::activity_end_message()
-        };
-        self.outbound.push_control(message.to_string());
+            // Travels with the audio: it closes the turn those frames belong
+            // to and must not overtake them.
+            self.outbound
+                .push_ordered(crate::gemini_wire::activity_end_message().to_string());
+        }
         Ok(())
     }
 
@@ -1062,9 +1103,46 @@ mod tests {
             .audio
             .lock()
             .ok()
-            .and_then(|q| q.front().cloned())
-            .expect("queue is non-empty");
+            .and_then(|q| match q.front() {
+                Some(Outgoing::Audio(frame)) => Some(frame.clone()),
+                _ => None,
+            })
+            .expect("queue is non-empty and fronted by audio");
         assert_eq!(front, Bytes::copy_from_slice(&10u32.to_be_bytes()));
+    }
+
+    /// `activityEnd` must travel *with* the audio, not ahead of it.
+    ///
+    /// It closes the turn those frames belong to. Sent first — which is what
+    /// `push_control` does — the model is told the student finished before it
+    /// has heard them, and answers nothing at all. That was the reported
+    /// "it captures my speech, then silence".
+    #[test]
+    fn activity_end_drains_after_the_audio_it_closes() {
+        let queue = OutboundQueue::default();
+        queue.push_audio(Bytes::from_static(b"one"));
+        queue.push_audio(Bytes::from_static(b"two"));
+        queue.push_ordered("{\"realtimeInput\":{\"activityEnd\":{}}}".to_string());
+
+        let first = queue.pop().expect("audio");
+        let second = queue.pop().expect("audio");
+        let third = queue.pop().expect("activity end");
+
+        assert!(first.contains("realtimeInput"), "got: {first}");
+        assert!(second.contains("realtimeInput"), "got: {second}");
+        assert!(third.contains("activityEnd"), "the end must come last, got: {third}");
+    }
+
+    /// `activityStart` is the opposite case: it opens the turn *and* interrupts
+    /// the tutor, so it must overtake whatever mic audio is already waiting.
+    #[test]
+    fn activity_start_jumps_queued_audio() {
+        let queue = OutboundQueue::default();
+        queue.push_audio(Bytes::from_static(b"stale"));
+        queue.push_control("{\"realtimeInput\":{\"activityStart\":{}}}".to_string());
+
+        let first = queue.pop().expect("something queued");
+        assert!(first.contains("activityStart"), "the start must come first, got: {first}");
     }
 
     #[test]
