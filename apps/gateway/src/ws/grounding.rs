@@ -29,7 +29,7 @@
 //!    is not in your textbook" during an outage is merely unhelpful, not
 //!    wrong.
 
-use dg_core::{BlockId, CourseId, ProgramId};
+use dg_core::{BlockId, CourseId, DocumentId, ProgramId};
 use dg_db::PgPool;
 use rag::embed::{Embedder, GeminiEmbedder, StubEmbedder};
 use rag::retrieve::{retrieve, RetrievalOutcome, RetrievalQuery, RetrievedChunk};
@@ -53,6 +53,17 @@ pub struct AcademicContext {
     pub block_id: BlockId,
     pub block_no: i32,
     pub block_title: String,
+    /// The uploaded unit the student chose, when they chose one.
+    ///
+    /// Narrows retrieval within the block and nothing more — the four
+    /// mandatory filters are applied either way, so this can only shrink the
+    /// search, never move it. `None` searches the whole block, which is what a
+    /// student who picked a block rather than a unit asked for.
+    ///
+    /// Not part of the identity resolved from `block_id`: it comes from the
+    /// client, so it is validated against the block before it is trusted (see
+    /// `with_unit`).
+    pub unit_document_id: Option<DocumentId>,
 }
 
 impl AcademicContext {
@@ -69,8 +80,41 @@ impl AcademicContext {
         })
     }
 
+    /// Narrows this context to one unit of the block.
+    ///
+    /// The document is checked to belong to `self.block_id` first: the id
+    /// arrives from the client, and an unchecked one would let a student point
+    /// retrieval at a document in another block — the four mandatory filters
+    /// would still hold, so nothing would leak, but the tutor would be
+    /// searching for a unit that cannot be in this block and would find
+    /// nothing at all. A document that does not belong is ignored rather than
+    /// rejected: teaching the whole block is the correct fallback, and failing
+    /// a lesson over a stale bookmark would not be.
+    pub async fn with_unit(
+        mut self,
+        pool: &PgPool,
+        document_id: Option<DocumentId>,
+    ) -> Result<Self, dg_db::error::Error> {
+        let Some(document_id) = document_id else {
+            return Ok(self);
+        };
+        let belongs = dg_db::models::documents::belongs_to_block(pool, document_id, self.block_id)
+            .await?;
+        if belongs {
+            self.unit_document_id = Some(document_id);
+        } else {
+            tracing::warn!(
+                %document_id,
+                block_id = %self.block_id,
+                "session_init named a unit outside its block; teaching the whole block instead"
+            );
+        }
+        Ok(self)
+    }
+
     /// The retrieval query for one student turn, carrying all four mandatory
-    /// filter dimensions by construction.
+    /// filter dimensions by construction, plus the chosen unit when there is
+    /// one.
     fn retrieval_query(&self, question: &str) -> RetrievalQuery {
         RetrievalQuery {
             question: question.to_string(),
@@ -78,6 +122,7 @@ impl AcademicContext {
             semester_no: self.semester_no,
             course_id: self.course_id,
             block_no: self.block_no,
+            document_id: self.unit_document_id,
         }
     }
 }
@@ -110,6 +155,10 @@ pub async fn resolve_context(
         block_id: block.id,
         block_no: i32::from(block.block_no),
         block_title: block.title,
+        // Resolution answers "what block is this?"; the unit is the student's
+        // choice within it and is applied separately by `with_unit`, after
+        // being validated against this block.
+        unit_document_id: None,
     }))
 }
 
@@ -421,6 +470,7 @@ mod tests {
             block_id: BlockId::from_uuid(Uuid::nil()),
             block_no: 3,
             block_title: "Prosody".to_string(),
+            unit_document_id: None,
         }
     }
 

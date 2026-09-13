@@ -91,6 +91,8 @@ export interface SessionClientOptions {
   /** Base WS URL, e.g. `ws://localhost:8080/ws/session`. */
   url: string;
   blockId: string;
+  /** The unit chosen within the block; narrows retrieval, nothing else. */
+  documentId?: string | null;
   renderer: BoardRenderer;
   handlers: SessionClientHandlers;
   /**
@@ -159,7 +161,13 @@ export class SessionClient {
     socket.onopen = () => {
       this.attempts = 0;
       this.startHeartbeat();
-      socket.send(clientMessage.sessionInit(this.options.blockId, this.hasSession));
+      socket.send(
+        clientMessage.sessionInit(
+          this.options.blockId,
+          this.hasSession,
+          this.options.documentId ?? null,
+        ),
+      );
     };
 
     socket.onmessage = (event: MessageEvent<string | ArrayBuffer>) => {

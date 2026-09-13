@@ -412,6 +412,81 @@ Deliberately breaking, while the endpoint is unreleased and has a single caller:
 ids forced a client-side join against the programs list, and a scope whose program had
 not been loaded could not be named at all.
 
+### Removing academic content
+
+`DELETE` on a programme, course, block or unit, each paired with a
+`deletion-impact` preview. Capability `ManagePrograms`, scoped exactly as the
+matching `GET` is — a sub-admin may remove only inside its own programmes.
+
+| Method | Path | Capability |
+|---|---|---|
+| GET | `/api/v1/admin/programs/{id}/deletion-impact` | `ManagePrograms`, scoped against the path `program_id` |
+| DELETE | `/api/v1/admin/programs/{id}` | same |
+| GET | `/api/v1/admin/courses/{id}/deletion-impact` | `ManagePrograms`, scoped via `course -> program_id` |
+| DELETE | `/api/v1/admin/courses/{id}` | same |
+| GET | `/api/v1/admin/blocks/{id}/deletion-impact` | `ManagePrograms`, scoped via `block -> course -> program_id` |
+| DELETE | `/api/v1/admin/blocks/{id}` | same |
+| GET | `/api/v1/admin/documents/{id}/deletion-impact` | `ManagePrograms`, scoped via `document -> block -> course -> program_id` |
+| DELETE | `/api/v1/admin/documents/{id}` | same |
+
+`documents` is the route segment for what the console calls a **unit**.
+
+#### These deletions destroy student data, by design
+
+`blocks -> exams -> exam_attempts -> exam_attempt_answers` is `ON DELETE
+CASCADE` the whole way down, so removing a block permanently deletes every
+student's marks for that block's exams; removing the course or programme above
+it does the same, for more of them. `question_pool` and `flashcards` go the same
+way. There is no archive fallback on this path and no undo.
+
+That is why the preview exists. `deletion-impact` returns the counts a
+confirmation dialogue needs, and the console requires the item's own name to be
+typed back before it will call `DELETE`. The preview is **advisory, not a
+lock**: no server-side token ties one call to the other, and a script can skip
+it. The real protections are the capability check, the scope check and the audit
+row (`admin.{program,course,block,unit}.delete`).
+
+```json
+{ "semesters": 1, "courses": 2, "blocks": 3, "units": 4, "exams": 5,
+  "exam_attempts": 6, "questions": 7, "flashcards": 8,
+  "learning_sessions": 9, "board_events": 10, "enrollments": 11,
+  "students_affected": 12,
+  "can_delete": true, "blocked_reason": null }
+```
+
+Counts only, never ids: the dialogue reports scale, and a list of affected
+students would be a PII export from a screen that does not need one.
+`students_affected` is distinct students, not a sum — one student may lose an
+attempt *and* a session.
+
+`DELETE` answers `{ "deleted": true, "impact": { ... } }` with the same shape, so
+a console renders "this is what went" with the code that rendered "this is what
+will go".
+
+#### What removal never touches
+
+**Student accounts.** `students.program_id` is `NOT NULL ON DELETE RESTRICT` and
+that restriction is kept deliberately: removing a programme is a content
+operation, and deleting the people registered on it is a different decision.
+A programme with students on it answers `409 PROGRAM_HAS_STUDENTS` and changes
+nothing; its preview returns `can_delete: false` with `blocked_reason` set, so
+the console can disable the button and explain rather than offer an action that
+will fail.
+
+**Safety incidents.** NN-5 requires them persisted, so a removed session's
+incidents survive with `session_id` nulled.
+
+Everything else that would otherwise block the delete is unwound leaf-first
+inside one transaction: board events, sessions, uploaded units, and
+`students.current_block_id` (nulled — choosing a different block for a student
+would be inventing a curriculum decision).
+
+Qdrant vectors for removed units are purged **after** the Postgres transaction
+commits. The other order would leave a document row the tutor can no longer
+retrieve for if the transaction rolled back, which is an NN-4 violation no test
+would catch; this way the worst case is orphan vectors, which every query filters
+out by `block_no` anyway.
+
 ### Exams and attempts
 
 An exam belongs to a **block** — the teachable unit — and reaches its program,
@@ -989,6 +1064,84 @@ the browser's print pipeline (`window.print()` + a print stylesheet), not a PDF
 library — a question, option or explanation may be in Malayalam, every library
 needs the font embedded to write it, and a download that drops the script half
 the syllabus is taught in is worse than none.
+
+### The student's syllabus: course -> block -> unit
+
+Three read-only routes, capability `ViewOwnContext`, self-only. They are the
+navigation into the classroom: a student picks a course, then a block, then an
+uploaded **unit**, and that unit opens the board. Before these, `/classroom`
+opened straight onto `students.current_block_id` and a student could study one
+block with no way to reach the rest of their own course.
+
+| Method | Path | Capability |
+|---|---|---|
+| GET | `/api/v1/student/courses` | `ViewOwnContext` — self-only |
+| GET | `/api/v1/student/courses/{course_id}/blocks` | `ViewOwnContext` — self-only |
+| GET | `/api/v1/student/blocks/{block_id}/units` | `ViewOwnContext` — self-only |
+
+A "unit" is a row of `documents`. `documents` is the storage-side name (it has a
+`sha256`, a `storage_key`, an ingestion status); "Unit 1" is what the student was
+told to read, and what the titles say. Nothing is renamed in the schema, and
+neither `storage_key` nor `sha256` goes on the wire.
+
+Each query **starts from** `student_courses` with the caller's own id bound —
+not "filters by". A course, block or unit outside the student's active
+enrolments selects no row, so there is no result set for a later predicate to
+widen. An id belonging to someone else's programme is therefore
+indistinguishable from one that does not exist and answers `404`, never `403`.
+Only `active` enrolments count: a `dropped` or `completed` one is a historical
+record, not a licence to keep opening the classroom.
+
+**Not paginated.** A student has a handful of courses, a course a handful of
+blocks, a block a handful of units; these are navigation screens rendered whole,
+not feeds. The admin lists over the same tables stay paginated, because an admin
+sees every student's worth of them.
+
+```json
+// GET /student/courses
+[ { "course_id": "uuid", "code": "string", "name": "string",
+    "description": "string|null", "semester_number": 1, "semester_name": "string",
+    "block_count": 3, "teachable_block_count": 2 } ]
+
+// GET /student/courses/{course_id}/blocks
+[ { "block_id": "uuid", "block_no": 1, "title": "string",
+    "description": "string|null", "unit_count": 1, "ready_unit_count": 1 } ]
+
+// GET /student/blocks/{block_id}/units
+[ { "document_id": "uuid", "title": "string", "page_count": 71,
+    "is_ready": true } ]
+```
+
+`is_ready` is `status = 'embedded'` — the only state in which the unit has
+vectors to retrieve. `ready_unit_count` and `teachable_block_count` roll the same
+fact up. A unit that is not ready is **listed and marked, not hidden**: opening
+it would make the tutor abstain on every question (NN-4 working correctly, but
+indistinguishable from a broken classroom if you are the student), and "not ready
+yet" is a truthful answer where a missing unit is not.
+
+An empty list and "not yours" are different answers and must not both render as
+an empty page, so a `course_id` the student is not enrolled in, and a `block_id`
+outside their courses, are resolved to `404` rather than served as `[]`.
+
+#### `session_init` takes the chosen unit
+
+```jsonc
+{ "type": "session_init", "block_id": "uuid", "document_id": "uuid", "resume": true }
+```
+
+`document_id` is **optional and additive** — a client that omits it gets the
+whole block, exactly as before. It narrows retrieval and nothing else: the block
+still decides what the session *is*, and the four mandatory Qdrant filters
+(`program_id AND semester_no AND course_id AND block_no`) are applied whether it
+is present or not. It can only ever shrink the search, never move it, so E-25 is
+intact — this is a narrowing *inside* the four, not a fifth alternative to them.
+
+The gateway checks the document belongs to the block before honouring it. A
+document that does not is **ignored with a warning, not rejected**: the four
+filters would still hold so nothing could leak, but the tutor would be searching
+for a unit that cannot be in this block and would find nothing at all. Teaching
+the whole block is the correct fallback, and failing a lesson over a stale
+bookmark would not be.
 
 ### Student reports
 

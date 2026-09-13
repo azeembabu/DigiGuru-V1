@@ -10,6 +10,7 @@ import { ProgramForm } from "@/components/admin/academic/ProgramForm";
 import { Blank, CodeTag, RowLink, useResource } from "@/components/admin/academic/shared";
 import { listPrograms } from "@/lib/admin/client";
 import type { Program } from "@/lib/admin/types";
+import { RemoveDialog } from "./RemoveDialog";
 
 const PAGE_SIZE = 25;
 
@@ -37,6 +38,7 @@ export function ProgramsScreen() {
   // directly, because there is no `program_id` to scope a new program against
   // yet (`admin/programs.rs`). Hiding the button beats a guaranteed 403.
   const canCreate = me.role === "super_admin";
+  const [removing, setRemoving] = useState<{ id: string; name: string } | null>(null);
 
   const columns: Column<Program>[] = [
     {
@@ -83,6 +85,18 @@ export function ProgramsScreen() {
             onClick={() => setForm({ program: row })}
           >
             Edit
+          </AdminButton>
+          {/*
+            Removal is permanent and cascades into student marks, so it is kept
+            visually quiet and behind `RemoveDialog`'s type-the-name step rather
+            than sitting next to Edit as an equal-weight action.
+          */}
+          <AdminButton
+            type="button"
+            variant="outline-light"
+            onClick={() => setRemoving({ id: row.id, name: row.name })}
+          >
+            Remove
           </AdminButton>
           <RowLink href={`/admin/programs/${row.id}`}>Manage</RowLink>
         </div>
@@ -158,6 +172,19 @@ export function ProgramsScreen() {
           program={form.program}
           onClose={() => setForm(null)}
           onSaved={handleSaved}
+        />
+      ) : null}
+
+      {removing ? (
+        <RemoveDialog
+          kind="program"
+          id={removing.id}
+          name={removing.name}
+          onCancel={() => setRemoving(null)}
+          onRemoved={(message) => {
+            setRemoving(null);
+            handleSaved(message);
+          }}
         />
       ) : null}
     </div>

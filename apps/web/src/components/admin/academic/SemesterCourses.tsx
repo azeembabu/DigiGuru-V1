@@ -15,6 +15,7 @@ import {
 } from "@/components/admin/academic/shared";
 import { getProgram, getSemester, listCourses } from "@/lib/admin/client";
 import type { Course, Program, Semester } from "@/lib/admin/types";
+import { RemoveDialog } from "./RemoveDialog";
 
 type Loaded = { semester: Semester; program: Program; courses: Course[] };
 
@@ -31,6 +32,7 @@ type Loaded = { semester: Semester; program: Program; courses: Course[] };
 export function SemesterCourses({ semesterId }: { semesterId: string }) {
   const [form, setForm] = useState<{ course: Course | null } | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [removing, setRemoving] = useState<{ id: string; name: string } | null>(null);
 
   // `getSemester` gives this screen its own program, so it is correct from its
   // URL alone — the old `?program=` hint is no longer load-bearing.
@@ -74,9 +76,22 @@ export function SemesterCourses({ semesterId }: { semesterId: string }) {
       align: "right",
       className: "w-[100px]",
       cell: (row) => (
-        <AdminButton type="button" variant="outline-light" onClick={() => setForm({ course: row })}>
-          Edit
-        </AdminButton>
+        <div className="flex justify-end gap-2">
+          <AdminButton
+            type="button"
+            variant="outline-light"
+            onClick={() => setForm({ course: row })}
+          >
+            Edit
+          </AdminButton>
+          <AdminButton
+            type="button"
+            variant="outline-light"
+            onClick={() => setRemoving({ id: row.id, name: `${row.code} — ${row.name}` })}
+          >
+            Remove
+          </AdminButton>
+        </div>
       ),
     },
   ];
@@ -154,6 +169,19 @@ export function SemesterCourses({ semesterId }: { semesterId: string }) {
           defaultSemesterId={data.semester.id}
           onClose={() => setForm(null)}
           onSaved={handleSaved}
+        />
+      ) : null}
+
+      {removing ? (
+        <RemoveDialog
+          kind="course"
+          id={removing.id}
+          name={removing.name}
+          onCancel={() => setRemoving(null)}
+          onRemoved={(message) => {
+            setRemoving(null);
+            handleSaved(message);
+          }}
         />
       ) : null}
     </div>

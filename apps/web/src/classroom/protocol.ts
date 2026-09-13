@@ -150,8 +150,16 @@ export function parseServerMessage(raw: string): ServerMessage | null {
 
 /** Client -> server frames. Built here so no call site hand-writes the wire shape. */
 export const clientMessage = {
-  sessionInit: (blockId: string, resume: boolean) =>
-    JSON.stringify({ type: "session_init", block_id: blockId, resume }),
+  // `document_id` is the unit the student chose inside the block. Omitted when
+  // there is none, so the frame stays exactly what shipped for a student who
+  // opened a block rather than a unit.
+  sessionInit: (blockId: string, resume: boolean, documentId?: string | null) =>
+    JSON.stringify({
+      type: "session_init",
+      block_id: blockId,
+      resume,
+      ...(documentId ? { document_id: documentId } : {}),
+    }),
   boardAck: (seq: number) => JSON.stringify({ type: "board_ack", seq }),
   boardError: (seq: number, reason: string) =>
     JSON.stringify({ type: "board_error", seq, reason }),

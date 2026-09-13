@@ -13,6 +13,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 
 import { loadStudentContext } from "@/lib/student-context";
 import type { StudentContext } from "@/lib/student-context";
@@ -26,6 +27,12 @@ type Load =
   | { status: "error"; message: string };
 
 export function ClassroomEntry() {
+  const params = useSearchParams();
+  // `?block=` is what `/classroom` puts here after the student picks a unit.
+  // `current_block_id` remains the fallback so an older "resume" link, or a
+  // direct visit to this URL, still opens something rather than dead-ending.
+  const chosenBlock = params.get("block");
+  const chosenUnit = params.get("unit");
   const [load, setLoad] = useState<Load>({ status: "loading" });
 
   useEffect(() => {
@@ -64,16 +71,22 @@ export function ClassroomEntry() {
     );
   }
 
-  const block = load.context.current_block;
-  if (!block) {
+  const blockId = chosenBlock ?? load.context.current_block?.id ?? null;
+  if (blockId === null) {
     return (
       <Shell>
-        <h1 className="font-display text-[24px] font-bold text-white">No block assigned yet</h1>
+        <h1 className="font-display text-[24px] font-bold text-white">Nothing open yet</h1>
         <p className="max-w-md text-[15px] leading-relaxed text-gray-300">
           Your programme is set to {load.context.program.name}, semester{" "}
-          {load.context.semester.semester_number}, but nobody has placed you into a block yet. The
-          tutor teaches one block at a time, so there is nothing to open until then.
+          {load.context.semester.semester_number}. The tutor teaches one unit at a time, so pick
+          one to begin.
         </p>
+        <Link
+          href="/classroom"
+          className="rounded-lg bg-indigo-500 px-4 py-2 text-[14px] font-semibold text-white hover:bg-indigo-400"
+        >
+          Choose what to study
+        </Link>
         <BackLink />
       </Shell>
     );
@@ -81,7 +94,7 @@ export function ClassroomEntry() {
 
   return (
     <BoardErrorBoundary>
-      <ClassroomSession blockId={block.id} />
+      <ClassroomSession blockId={blockId} documentId={chosenUnit} />
     </BoardErrorBoundary>
   );
 }

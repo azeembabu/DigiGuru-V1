@@ -107,7 +107,14 @@ interface BoardLogEntry {
   turn: TurnState | null;
 }
 
-export function ClassroomSession({ blockId }: { blockId: string }) {
+export function ClassroomSession({
+  blockId,
+  documentId = null,
+}: {
+  blockId: string;
+  /** The unit chosen in `/classroom`; narrows retrieval within the block. */
+  documentId?: string | null;
+}) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
   const rendererRef = useRef<BoardRenderer | null>(null);
@@ -321,6 +328,7 @@ export function ClassroomSession({ blockId }: { blockId: string }) {
     playbackRef.current = playback;
 
     const client = new SessionClient({
+      documentId,
       url: webSocketUrl(),
       blockId,
       renderer,
@@ -408,7 +416,9 @@ export function ClassroomSession({ blockId }: { blockId: string }) {
     // user-gesture permission grant — a student who came here to learn should
     // not have to find and press a second button to be heard.
     void startMic();
-  }, [blockId, startMic]);
+    // `documentId` is read when the socket opens, so it belongs here with
+    // `blockId` — the two together decide what this session teaches.
+  }, [blockId, documentId, startMic]);
 
   const leave = useCallback(async () => {
     clientRef.current?.close();

@@ -20,6 +20,7 @@ pub mod exams;
 pub mod lscs;
 pub mod programs;
 pub mod question_import;
+pub mod removal;
 pub mod questions;
 pub mod safety_incidents;
 pub mod semesters;
@@ -52,8 +53,20 @@ pub fn router(max_upload_bytes: usize) -> Router<AppState> {
         )
         .route(
             "/programs/{id}",
-            get(programs::get_program).patch(programs::update_program),
+            get(programs::get_program)
+                .patch(programs::update_program)
+                .delete(removal::delete_program),
         )
+        // Permanent removal, and what it would destroy. The preview is not a
+        // lock on the delete — a script can skip it — it is what lets the
+        // console show an admin the cost before they type the name back.
+        .route(
+            "/programs/{id}/deletion-impact",
+            get(removal::program_impact),
+        )
+        .route("/courses/{id}/deletion-impact", get(removal::course_impact))
+        .route("/blocks/{id}/deletion-impact", get(removal::block_impact))
+        .route("/documents/{id}/deletion-impact", get(removal::unit_impact))
         .route("/semesters", post(semesters::create_semester))
         .route(
             "/semesters/{id}",
@@ -66,7 +79,9 @@ pub fn router(max_upload_bytes: usize) -> Router<AppState> {
         .route("/courses", post(courses::create_course))
         .route(
             "/courses/{id}",
-            get(courses::get_course).patch(courses::update_course),
+            get(courses::get_course)
+                .patch(courses::update_course)
+                .delete(removal::delete_course),
         )
         .route(
             "/semesters/{semester_id}/courses",
@@ -91,7 +106,9 @@ pub fn router(max_upload_bytes: usize) -> Router<AppState> {
         .route("/blocks", post(blocks::create_block))
         .route(
             "/blocks/{id}",
-            get(blocks::get_block).patch(blocks::update_block),
+            get(blocks::get_block)
+                .patch(blocks::update_block)
+                .delete(removal::delete_block),
         )
         .route(
             "/courses/{course_id}/blocks",
@@ -104,7 +121,10 @@ pub fn router(max_upload_bytes: usize) -> Router<AppState> {
                 // Applies to the GET too, harmlessly: it has no body.
                 .layer(DefaultBodyLimit::max(max_upload_bytes)),
         )
-        .route("/documents/{id}", get(documents::get_document))
+        .route(
+            "/documents/{id}",
+            get(documents::get_document).delete(removal::delete_unit),
+        )
         // Exams hang off a block, like documents do; scope is resolved
         // `exam -> block -> course -> program_id`.
         .route("/exams", post(exams::create_exam))

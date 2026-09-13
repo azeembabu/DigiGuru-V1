@@ -9,6 +9,7 @@ import { RowLink, useResource } from "@/components/admin/academic/shared";
 import { UnitsTable } from "@/components/admin/academic/units";
 import { listBlockDocuments } from "@/lib/admin/client";
 import type { AdminDocument, Block } from "@/lib/admin/types";
+import { RemoveDialog } from "./RemoveDialog";
 
 /**
  * One block as a collapsible panel, with its units inside.
@@ -32,6 +33,7 @@ export function BlockPanel({
   onNotice: (message: string) => void;
 }) {
   const [opened, setOpened] = useState(false);
+  const [removing, setRemoving] = useState<{ id: string; name: string } | null>(null);
 
   // The loader is the gate: while the panel has never been opened it resolves
   // to `null` without touching the network, and opening it changes the loader
@@ -83,16 +85,45 @@ export function BlockPanel({
           </Banner>
         ) : null}
 
-        <UnitsTable units={units} loading={loading} />
+        <UnitsTable units={units} loading={loading} onRemoved={onNotice} />
 
         <AddUnitForm blockId={block.id} onUploaded={handleUploaded} />
 
         <div className="flex flex-wrap justify-between gap-2">
           <RowLink href={`/admin/blocks/${block.id}`}>Open full block view</RowLink>
-          <AdminButton type="button" variant="outline-light" onClick={onEdit}>
-            Edit block
-          </AdminButton>
+          <div className="flex gap-2">
+            <AdminButton type="button" variant="outline-light" onClick={onEdit}>
+              Edit block
+            </AdminButton>
+            {/*
+              Removing a block takes its units, its exams and every student
+              mark recorded against them. `RemoveDialog` is what makes that
+              explicit before it happens.
+            */}
+            <AdminButton
+              type="button"
+              variant="outline-light"
+              onClick={() =>
+                setRemoving({ id: block.id, name: `Block ${block.block_no} — ${block.title}` })
+              }
+            >
+              Remove block
+            </AdminButton>
+          </div>
         </div>
+
+        {removing ? (
+          <RemoveDialog
+            kind="block"
+            id={removing.id}
+            name={removing.name}
+            onCancel={() => setRemoving(null)}
+            onRemoved={(message) => {
+              setRemoving(null);
+              onNotice(message);
+            }}
+          />
+        ) : null}
       </div>
     </details>
   );

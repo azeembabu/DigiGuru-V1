@@ -13,6 +13,7 @@
 //! the long-form argument, and `exam_module.rs` for why the answer key cannot
 //! leak through a response type.
 
+mod catalogue;
 pub mod dashboard;
 pub mod exam_module;
 pub mod exams;
@@ -53,6 +54,11 @@ pub(crate) async fn own_student(
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/dashboard", get(dashboard::get_dashboard))
+        // The syllabus the student navigates on the way into the classroom:
+        // course -> block -> unit. Read-only and enrolment-scoped.
+        .route("/courses", get(catalogue::list_courses))
+        .route("/courses/{course_id}/blocks", get(catalogue::list_blocks))
+        .route("/blocks/{block_id}/units", get(catalogue::list_units))
         .route("/revisions", get(revisions::list_revisions))
         .route("/flashcards", get(flashcards::list_flashcards))
         .route(

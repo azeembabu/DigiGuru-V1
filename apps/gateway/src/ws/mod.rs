@@ -82,6 +82,14 @@ pub struct WsAuthQuery {
 enum ClientMessage {
     SessionInit {
         block_id: Uuid,
+        /// The uploaded unit the student chose inside that block, if any.
+        ///
+        /// Optional and additive: an older client that does not send it gets
+        /// the whole block, which is the behaviour that shipped. It narrows
+        /// retrieval and nothing else — the block still decides what the
+        /// session *is*, and the four mandatory filters are unaffected.
+        #[serde(default)]
+        document_id: Option<Uuid>,
         #[serde(default)]
         resume: bool,
     },
@@ -347,7 +355,11 @@ async fn handle_socket(mut socket: WebSocket, state: AppState, user_id: UserId) 
                 match incoming {
                     Some(Ok(Message::Text(text))) => {
                         match serde_json::from_str::<ClientMessage>(text.as_str()) {
-                            Ok(ClientMessage::SessionInit { block_id, resume }) => {
+                            Ok(ClientMessage::SessionInit {
+                                block_id,
+                                document_id,
+                                resume,
+                            }) => {
                                 let sid = init_session(&state, user_id, block_id, resume).await;
 
                                 // Durable row BEFORE anything is audited against
@@ -441,6 +453,28 @@ async fn handle_socket(mut socket: WebSocket, state: AppState, user_id: UserId) 
                                         tracing::error!(%err, %block_id, "failed to resolve the academic context for a classroom session");
                                         None
                                     }
+                                };
+
+                                // The chosen unit, validated against the block
+                                // before it is allowed to narrow anything. A
+                                // failure here leaves the context teaching the
+                                // whole block, which is the shipped behaviour
+                                // and a safe fallback.
+                                let context = match context {
+                                    Some(context) => match context
+                                        .with_unit(
+                                            &state.pool,
+                                            document_id.map(dg_core::DocumentId::from),
+                                        )
+                                        .await
+                                    {
+                                        Ok(context) => Some(context),
+                                        Err(err) => {
+                                            tracing::error!(%err, %block_id, "failed to validate the chosen unit; teaching the whole block");
+                                            None
+                                        }
+                                    },
+                                    None => None,
                                 };
 
                                 let ready = SessionReadyMsg {

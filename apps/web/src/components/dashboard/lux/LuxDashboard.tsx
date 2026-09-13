@@ -309,7 +309,12 @@ export function LuxDashboard() {
           hint: `${student_info.program} · Semester ${student_info.semester}`,
         }
       : {
-          href: "/classroom",
+          // Straight back to the board: this student has a block in progress, so
+          // sending them through the course picker to re-choose what they were
+          // already doing is a step they did not ask for. "Start learning"
+          // above goes to `/classroom` precisely because there is nothing to
+          // resume.
+          href: `/classroom/session?block=${continue_learning.block_id}`,
           label: "Resume session",
           hint: `Block ${continue_learning.block_no} · ${continue_learning.block_title}`,
         };
@@ -521,7 +526,10 @@ function ResumeStrip({ resume }: { resume: StudentDashboard["continue_learning"]
         ) : null}
       </div>
 
-      <Link href="/classroom" className={luxButton("primary", "shrink-0")}>
+      <Link
+        href={`/classroom/session?block=${resume.block_id}`}
+        className={luxButton("primary", "shrink-0")}
+      >
         Resume
       </Link>
     </section>

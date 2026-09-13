@@ -4,6 +4,9 @@ import { DataTable, type Column } from "@/components/admin/DataTable";
 import { StatusPill, statusTone } from "@/components/admin/primitives";
 import { Blank, formatDate } from "@/components/admin/academic/shared";
 import type { AdminDocument, DocumentStatus } from "@/lib/admin/types";
+import { RemoveDialog } from "./RemoveDialog";
+import { useState } from "react";
+import { AdminButton } from "@/components/admin/controls";
 
 // A "unit" is a `documents` row. There is no separate units table on purpose:
 // a unit that did not go through ingestion (sha256 dedupe, OCR scoring,
@@ -104,25 +107,70 @@ export function unitColumns(options: { showUploaded: boolean }): Column<AdminDoc
   return columns;
 }
 
-/** The unit list, shared by the block panel and the block detail screen. */
+/**
+ * The unit list, shared by the block panel and the block detail screen.
+ *
+ * `onRemoved` is optional: the table is read-only wherever it is not passed,
+ * which keeps the removal affordance out of any view that has no business
+ * offering it, rather than relying on every caller to hide a column.
+ */
 export function UnitsTable({
   units,
   loading = false,
   showUploaded = false,
+  onRemoved,
 }: {
   units: AdminDocument[];
   loading?: boolean;
   showUploaded?: boolean;
+  onRemoved?: (message: string) => void;
 }) {
+  const [removing, setRemoving] = useState<{ id: string; name: string } | null>(null);
+
+  const columns = onRemoved
+    ? [
+        ...unitColumns({ showUploaded }),
+        {
+          key: "remove",
+          header: "",
+          align: "right" as const,
+          className: "w-[110px]",
+          cell: (row: AdminDocument) => (
+            <AdminButton
+              type="button"
+              variant="outline-light"
+              onClick={() => setRemoving({ id: row.id, name: row.title })}
+            >
+              Remove
+            </AdminButton>
+          ),
+        },
+      ]
+    : unitColumns({ showUploaded });
+
   return (
-    <DataTable
-      columns={unitColumns({ showUploaded })}
-      rows={units}
-      rowKey={(row) => row.id}
-      loading={loading}
-      empty="No units in this block yet."
-      emptyHint="Until a PDF is embedded, the tutor has nothing it is allowed to teach from."
-    />
+    <>
+      <DataTable
+        columns={columns}
+        rows={units}
+        rowKey={(row) => row.id}
+        loading={loading}
+        empty="No units in this block yet."
+        emptyHint="Until a PDF is embedded, the tutor has nothing it is allowed to teach from."
+      />
+      {removing ? (
+        <RemoveDialog
+          kind="unit"
+          id={removing.id}
+          name={removing.name}
+          onCancel={() => setRemoving(null)}
+          onRemoved={(message) => {
+            setRemoving(null);
+            onRemoved?.(message);
+          }}
+        />
+      ) : null}
+    </>
   );
 }
 

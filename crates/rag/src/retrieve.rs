@@ -75,6 +75,18 @@ pub struct RetrievalQuery {
     pub semester_no: i32,
     pub course_id: CourseId,
     pub block_no: i32,
+    /// Narrows to one uploaded unit within the block, when the student opened
+    /// the classroom on a specific one.
+    ///
+    /// Strictly **additional**: the four mandatory filters are applied whether
+    /// this is set or not, so it can only ever shrink the result set, never
+    /// widen it past the block. That is what keeps E-25 intact — this is not a
+    /// fifth alternative to the four, it is a narrowing inside them.
+    ///
+    /// `None` searches the whole block, which is the right default: a student
+    /// who navigated to a block rather than a unit, or a block holding a single
+    /// unit, should not have retrieval scoped more tightly than they asked for.
+    pub document_id: Option<DocumentId>,
 }
 
 /// One retrieved (and, post-rerank, reranked) chunk, carrying the full
@@ -144,15 +156,26 @@ pub async fn retrieve(
 }
 
 /// The mandatory `program_id AND semester_no AND course_id AND block_no`
-/// filter (E-25). Both search legs in [`retrieve`] go through this — there
-/// is no code path here that builds a Qdrant query without it.
+/// filter (E-25), plus an optional `document_id` narrowing. Both search legs
+/// in [`retrieve`] go through this — there is no code path here that builds a
+/// Qdrant query without it.
+///
+/// The four mandatory conditions are pushed unconditionally and first; the
+/// document condition is only ever appended. There is deliberately no branch
+/// that produces a filter *without* the four, because the failure mode that
+/// protects against — a query that escapes its course or block — is a
+/// correctness bug, not a relevance one (`rag-pipeline.md`).
 fn mandatory_filter(query: &RetrievalQuery) -> Filter {
-    Filter::must([
+    let mut conditions = vec![
         Condition::matches("program_id", query.program_id.to_string()),
         Condition::matches("semester_no", query.semester_no as i64),
         Condition::matches("course_id", query.course_id.to_string()),
         Condition::matches("block_no", query.block_no as i64),
-    ])
+    ];
+    if let Some(document_id) = query.document_id {
+        conditions.push(Condition::matches("document_id", document_id.to_string()));
+    }
+    Filter::must(conditions)
 }
 
 async fn search_dense(
@@ -279,4 +302,40 @@ fn scored_point_to_chunk(point: ScoredPoint) -> Option<RetrievedChunk> {
         lang: payload_str(payload, "lang"),
         score: point.score,
     })
+}
+
+#[cfg(test)]
+mod filter_tests {
+    use super::*;
+    use uuid::Uuid;
+
+    fn query(document_id: Option<DocumentId>) -> RetrievalQuery {
+        RetrievalQuery {
+            question: "What is sandhi?".to_string(),
+            program_id: ProgramId::from_uuid(Uuid::nil()),
+            semester_no: 1,
+            course_id: CourseId::from_uuid(Uuid::nil()),
+            block_no: 3,
+            document_id,
+        }
+    }
+
+    /// E-25: the four mandatory dimensions are present on every query this
+    /// module can build. Asserted on the condition count because a filter that
+    /// silently lost one would still be a valid `Filter` — cross-course leakage
+    /// is a correctness bug, not a relevance one (`rag-pipeline.md`).
+    #[test]
+    fn the_four_mandatory_filters_are_always_present() {
+        assert_eq!(mandatory_filter(&query(None)).must.len(), 4);
+    }
+
+    /// Choosing a unit narrows within the block; it never replaces any of the
+    /// four. The count going to five — not staying at four — is the property:
+    /// a document filter that displaced `block_no` would search one document
+    /// without checking it is in this block.
+    #[test]
+    fn a_chosen_unit_adds_a_fifth_condition_rather_than_replacing_one() {
+        let narrowed = mandatory_filter(&query(Some(DocumentId::from_uuid(Uuid::new_v4()))));
+        assert_eq!(narrowed.must.len(), 5);
+    }
 }

@@ -1,22 +1,28 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 
-import { ClassroomEntry } from "@/components/classroom/ClassroomEntry";
+import { SyllabusBrowser } from "@/components/classroom/SyllabusBrowser";
 
-// Replaces the Phase 3 placeholder: the WebSocket session, the SyncGate client
-// and the canvas now exist (`src/classroom/`). The real Gemini Live upstream is
-// still stubbed server-side, so the tutor's turns come from the gateway's
-// scripted demo — the NN-1 ordering this page proves is real either way, because
-// the gate does not know or care where a turn came from.
+// `/classroom` is the way *into* a session, not the session itself: course ->
+// block -> unit, then `/classroom/session`. It opened the board directly on
+// `students.current_block_id` before, which let a student study one block and
+// gave them no way to reach the rest of their own syllabus.
 //
 // Always dark, independent of any dashboard preference: DESIGN.md §7 makes the
 // classroom the one surface that does not follow the theme.
 
 export const metadata: Metadata = {
   title: "Classroom — Digi Guru",
-  description: "Your live tutoring session.",
+  description: "Choose what to study.",
   robots: { index: false, follow: false },
 };
 
 export default function ClassroomPage() {
-  return <ClassroomEntry />;
+  // `useSearchParams` in the browser requires a Suspense boundary above it, or
+  // the whole route opts out of static rendering.
+  return (
+    <Suspense fallback={null}>
+      <SyllabusBrowser />
+    </Suspense>
+  );
 }

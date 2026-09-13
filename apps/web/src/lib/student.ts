@@ -230,6 +230,74 @@ export type ReviewedQuestion = z.infer<typeof reviewedQuestionSchema>;
 export type ExamResult = z.infer<typeof examResultSchema>;
 
 // ---------------------------------------------------------------------------
+// The syllabus: course -> block -> unit
+// ---------------------------------------------------------------------------
+
+/**
+ * What the student navigates on the way into the classroom.
+ *
+ * Every list is enrolment-scoped server-side and returns a bare array — these
+ * are navigation screens rendered whole, not paginated feeds (a student has a
+ * handful of courses, a course a handful of blocks, a block a handful of
+ * units).
+ */
+export const syllabusCourseSchema = z.object({
+  course_id: uuid,
+  code: z.string(),
+  name: z.string(),
+  description: z.string().nullable(),
+  semester_number: z.number().int(),
+  semester_name: z.string(),
+  block_count: z.number().int(),
+  teachable_block_count: z.number().int(),
+});
+
+export const syllabusBlockSchema = z.object({
+  block_id: uuid,
+  block_no: z.number().int(),
+  title: z.string(),
+  description: z.string().nullable(),
+  unit_count: z.number().int(),
+  ready_unit_count: z.number().int(),
+});
+
+export const syllabusUnitSchema = z.object({
+  document_id: uuid,
+  title: z.string(),
+  page_count: z.number().int(),
+  /** Embedded, so the tutor has vectors to retrieve. */
+  is_ready: z.boolean(),
+});
+
+export type SyllabusCourse = z.infer<typeof syllabusCourseSchema>;
+export type SyllabusBlock = z.infer<typeof syllabusBlockSchema>;
+export type SyllabusUnit = z.infer<typeof syllabusUnitSchema>;
+
+export async function loadSyllabusCourses(): Promise<SyllabusCourse[]> {
+  return parse(
+    z.array(syllabusCourseSchema),
+    await apiFetch<unknown>("/student/courses"),
+    "course list",
+  );
+}
+
+export async function loadSyllabusBlocks(courseId: string): Promise<SyllabusBlock[]> {
+  return parse(
+    z.array(syllabusBlockSchema),
+    await apiFetch<unknown>(`/student/courses/${courseId}/blocks`),
+    "block list",
+  );
+}
+
+export async function loadSyllabusUnits(blockId: string): Promise<SyllabusUnit[]> {
+  return parse(
+    z.array(syllabusUnitSchema),
+    await apiFetch<unknown>(`/student/blocks/${blockId}/units`),
+    "unit list",
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Flashcards and revisions
 // ---------------------------------------------------------------------------
 
