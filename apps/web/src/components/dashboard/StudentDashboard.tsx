@@ -11,6 +11,7 @@ import { Card, CardTitle, StatTile } from "@/components/dashboard/Card";
 import { ContextPanel } from "@/components/dashboard/ContextPanel";
 import { ContinueCard } from "@/components/dashboard/ContinueCard";
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
+import { ExamCards } from "@/components/dashboard/ExamCards";
 import { DashboardSidebar } from "@/components/dashboard/DashboardSidebar";
 import { DevicesPanel } from "@/components/dashboard/DevicesPanel";
 import { SessionRules } from "@/components/dashboard/SessionRules";
@@ -94,6 +95,7 @@ export function StudentDashboard() {
               <Greeting context={state.context} />
               <StatRow context={state.context} />
               <ContinueCard context={state.context} />
+              <ExamCards />
               <div className="grid gap-6 lg:grid-cols-2">
                 <ContextPanel context={state.context} />
                 <SessionRules />
@@ -158,10 +160,15 @@ function StatRow({ context }: { context: StudentContext }) {
         hint={block === null ? "Not assigned yet" : block.title}
         icon={<IconBoard className="h-5 w-5" />}
       />
+      {/* NN-3 changed on 2026-09-13 from a per-session cap to a daily quota, so
+          this tile is the day's allowance, not a session budget. It is the
+          allowance rather than the remaining balance because the dashboard has
+          no quota endpoint to read a balance from — `quota_remaining_ms`
+          arrives on the classroom socket's `session_ready`, not here. */}
       <StatTile
-        label="Session length"
+        label="Daily voice limit"
         value="20:00"
-        hint="Counted only while you are speaking"
+        hint="Resets at midnight in your timezone"
         icon={<IconClock className="h-5 w-5" />}
       />
     </div>
