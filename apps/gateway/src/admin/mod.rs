@@ -10,12 +10,18 @@
 //! have already shipped a bare JSON array body, and reshaping that body
 //! would break every existing caller.
 
+pub mod analytics;
 pub mod blocks;
+pub mod board_events;
 pub mod courses;
 pub mod documents;
+pub mod enrollments;
+pub mod exams;
 pub mod lscs;
 pub mod programs;
+pub mod safety_incidents;
 pub mod semesters;
+pub mod sessions;
 pub mod stats;
 pub mod students;
 pub mod users;
@@ -63,7 +69,20 @@ pub fn router(max_upload_bytes: usize) -> Router<AppState> {
                 .layer(DefaultBodyLimit::max(max_upload_bytes)),
         )
         .route("/documents/{id}", get(documents::get_document))
+        // Exams hang off a block, like documents do; scope is resolved
+        // `exam -> block -> course -> program_id`.
+        .route("/exams", post(exams::create_exam))
+        .route("/exams/{id}", get(exams::get_exam))
+        .route("/exams/{exam_id}/attempts", get(exams::list_attempts_for_exam))
+        .route("/blocks/{block_id}/exams", get(exams::list_exams_for_block))
         .route("/stats", get(stats::get_stats))
+        .route("/analytics", get(analytics::get_analytics))
+        // Drill-downs behind the dashboard tiles: each opens the records
+        // behind one number. All four are plain paginated admin lists.
+        .route("/enrollments", get(enrollments::list_enrollments))
+        .route("/sessions", get(sessions::list_sessions))
+        .route("/board-events", get(board_events::list_board_events))
+        .route("/safety-incidents", get(safety_incidents::list_safety_incidents))
         .route("/users", get(users::list_users).post(users::create_admin))
         .route("/users/{id}/status", patch(users::set_user_status))
         .route("/users/{id}/scopes", get(users::list_scopes).post(users::add_scope))

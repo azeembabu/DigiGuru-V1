@@ -350,6 +350,91 @@ Deliberately breaking, while the endpoint is unreleased and has a single caller:
 ids forced a client-side join against the programs list, and a scope whose program had
 not been loaded could not be named at all.
 
+### Exams and attempts
+
+An exam belongs to a **block** — the teachable unit — and reaches its program,
+semester and course through the existing hierarchy; it carries no `program_id`
+of its own. Admin scope is therefore resolved `exam -> block -> course ->
+program_id`, and the owning program is resolved *before* the capability check,
+so a sub-admin outside the scope cannot tell an existing exam from a missing
+one. Scores are always **numbers** on the wire (`score`, `max_score`); a
+rendered "18/20" is the client's job.
+
+| Method | Path | Capability |
+|---|---|---|
+| POST | `/api/v1/admin/exams` | `ManagePrograms`, scoped via `block -> course -> program_id` |
+| GET | `/api/v1/admin/blocks/{block_id}/exams` | `ManagePrograms`, scoped the same way |
+| GET | `/api/v1/admin/exams/{id}` | `ManagePrograms`, scoped via `exam -> block -> course -> program_id` |
+| GET | `/api/v1/admin/exams/{exam_id}/attempts` | `ManagePrograms`, scoped the same way |
+| GET | `/api/v1/student/exam-attempts` | `ViewOwnExams` — self-only |
+| GET | `/api/v1/student/exam-attempts/{id}` | `ViewOwnExams` — self-only |
+
+`POST /api/v1/admin/exams` — body `{ "block_id": "uuid", "title": "2-200 chars",
+"description": "string|null", "max_score": 0.01..10000, "duration_minutes":
+1..600|null, "status": "draft|published|archived"|null }`. An omitted `status`
+is `draft`: an exam is never visible to students until an admin publishes it.
+`UNIQUE (block_id, title)`. Exam responses carry the flat ancestry of their
+block, so a console renders a breadcrumb from one response:
+
+```json
+{ "id": "uuid", "block_id": "uuid", "block_no": 1, "block_title": "string",
+  "course_id": "uuid", "course_code": "string", "semester_id": "uuid",
+  "program_id": "uuid", "title": "string", "description": "string|null",
+  "max_score": 20.0, "duration_minutes": 45,
+  "status": "draft|published|archived",
+  "created_by": "uuid", "created_at": "RFC3339" }
+```
+
+`GET /api/v1/admin/blocks/{block_id}/exams` supports `q` (title), `limit`,
+`offset` and `X-Total-Count` like every other paginated admin list; default
+`limit` is 50. Ordered by `title` ascending.
+
+`GET /api/v1/admin/exams/{exam_id}/attempts` — every student's attempts at one
+exam, newest first, paginated the same way (`limit`, `offset`,
+`X-Total-Count`, default 50):
+
+```json
+{ "id": "uuid", "exam_id": "uuid", "student_id": "uuid",
+  "student_name": "string", "roll_number": "string", "attempt_no": 1,
+  "score": 18.0, "max_score": 20.0,
+  "status": "in_progress|submitted|graded|abandoned",
+  "started_at": "RFC3339", "submitted_at": "RFC3339|null" }
+```
+
+`score` is `null` until the attempt is marked; only `graded` guarantees it is
+present.
+
+#### Student routes are self-only
+
+`/api/v1/student/*` is a new namespace for a student's own accumulated
+records, as distinct from `/me/*` (identity, academic context, profile).
+Neither exam route takes a `student_id` in its path, query or body: the
+subject is resolved from the caller's own access token and bound into the
+query, so **there is no request a client can make for another student's
+attempts**. An attempt id belonging to another student returns `404 NOT_FOUND`,
+never `403` — a `403` would confirm the id exists.
+
+`GET /api/v1/student/exam-attempts` — the dashboard's "recent exams" cards,
+newest first (`submitted_at` descending, then `started_at`, then `attempt_no`,
+so the ordering is total and the leading card is unambiguously the most recent
+attempt). Paginated exactly like the admin lists: bare array body, `limit`
+1-200 default 50, `offset`, `X-Total-Count`, validated and never clamped.
+`GET /api/v1/student/exam-attempts/{id}` returns the **same** object for one
+attempt, so a review screen codes against a single card type.
+
+The card carries everything it renders, denormalised, so a page of cards is
+one request. It deliberately has no `student_id`, `student_name` or
+`roll_number` field at all:
+
+```json
+{ "id": "uuid", "exam_id": "uuid", "exam_title": "string",
+  "block_id": "uuid", "block_no": 1, "block_title": "string",
+  "course_id": "uuid", "course_code": "string", "course_name": "string",
+  "attempt_no": 2, "score": 18.0, "max_score": 20.0,
+  "status": "in_progress|submitted|graded|abandoned",
+  "started_at": "RFC3339", "submitted_at": "RFC3339|null" }
+```
+
 ### List filters
 
 - `GET /admin/students` — `q` (full name, roll number, login email), `status`
