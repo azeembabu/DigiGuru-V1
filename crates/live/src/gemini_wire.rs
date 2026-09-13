@@ -268,6 +268,45 @@ fn speech_config(config: &GeminiLiveConfig) -> Value {
     cfg
 }
 
+/// How long the student may pause mid-sentence before Live decides the
+/// utterance is finished and answers.
+///
+/// The default is short enough that "What is the..." followed by a breath is
+/// treated as a complete question, and the tutor answers a fragment it had to
+/// guess at. 1200 ms is a natural thinking pause in speech and well past the
+/// gaps inside one sentence, so the student gets to finish.
+///
+/// It is the *only* mechanical lever on "wait for the complete utterance": the
+/// decision is made inside Live, before anything reaches this process, so no
+/// amount of prompting can move it.
+const SILENCE_BEFORE_REPLY_MS: i64 = 1200;
+
+/// Audio kept from just before speech was detected, so a turn does not begin
+/// clipped.
+const PREFIX_PADDING_MS: i64 = 300;
+
+/// Turn detection, tuned to answer questions rather than noises.
+///
+/// `START_SENSITIVITY_LOW` demands stronger evidence before treating sound as
+/// the start of speech — a cough, a keyboard, a chair, someone talking in the
+/// next room. `END_SENSITIVITY_LOW` makes it slower to declare the student
+/// finished, which together with `silenceDurationMs` is what stops the tutor
+/// interrupting a sentence that was still being formed.
+///
+/// `activityHandling` is deliberately left at its default (interruption
+/// enabled). Barge-in is how a student stops a tutor that is talking too long,
+/// and the classroom depends on it — see the client's own VAD barge-in.
+fn realtime_input_config() -> Value {
+    json!({
+        "automaticActivityDetection": {
+            "startOfSpeechSensitivity": "START_SENSITIVITY_LOW",
+            "endOfSpeechSensitivity": "END_SENSITIVITY_LOW",
+            "prefixPaddingMs": PREFIX_PADDING_MS,
+            "silenceDurationMs": SILENCE_BEFORE_REPLY_MS
+        }
+    })
+}
+
 pub fn setup_message(config: &GeminiLiveConfig) -> Value {
     json!({
         "setup": {
@@ -281,6 +320,11 @@ pub fn setup_message(config: &GeminiLiveConfig) -> Value {
                 "parts": [ { "text": config.system_instruction } ]
             },
             "tools": [ { "functionDeclarations": [ board_ops_declaration() ] } ],
+            // Turn detection. Verified accepted against the live endpoint
+            // before being relied on — a setup the service rejects closes the
+            // socket with 1007 and the classroom falls back to defaults with
+            // no visible error.
+            "realtimeInputConfig": realtime_input_config(),
             // Both directions, both required by a non-negotiable and neither
             // available any other way. The student's words are what NN-4
             // per-turn RAG grounding retrieves against, and the Tier-1
@@ -692,6 +736,37 @@ mod tests {
         // context instead of the student.
         let ctx = super::client_text_turn_message("CURRICULUM CONTEXT ...", false);
         assert_eq!(ctx["clientContent"]["turnComplete"], false);
+    }
+
+    /// Turn detection is configured, not left at the default.
+    ///
+    /// The defaults answer on any detected speech and decide an utterance has
+    /// ended after a short pause — which is why the tutor replied to coughs and
+    /// to half-finished sentences. This is the only place that behaviour can be
+    /// changed: the decision happens inside Live, before any audio reaches this
+    /// process, so it cannot be prompted away.
+    #[test]
+    fn setup_waits_for_a_finished_utterance_before_replying() {
+        let setup = setup_message(&GeminiLiveConfig::new("k", "grounded instruction"));
+        let vad = &setup["setup"]["realtimeInputConfig"]["automaticActivityDetection"];
+
+        assert_eq!(vad["startOfSpeechSensitivity"], "START_SENSITIVITY_LOW");
+        assert_eq!(vad["endOfSpeechSensitivity"], "END_SENSITIVITY_LOW");
+        assert_eq!(vad["silenceDurationMs"], 1200);
+        assert_eq!(vad["prefixPaddingMs"], 300);
+    }
+
+    /// Interruption stays enabled. A student must be able to talk over a tutor
+    /// that is going on too long — the classroom's own VAD barge-in depends on
+    /// it, and `NO_INTERRUPTION` would take that away.
+    #[test]
+    fn setup_leaves_barge_in_enabled() {
+        let setup = setup_message(&GeminiLiveConfig::new("k", "grounded instruction"));
+        assert!(
+            setup["setup"]["realtimeInputConfig"]["activityHandling"].is_null(),
+            "activityHandling must stay at its default; got: {}",
+            setup["setup"]["realtimeInputConfig"]
+        );
     }
 
     #[test]

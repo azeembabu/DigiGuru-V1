@@ -424,7 +424,23 @@ fn tutor_header(context: &AcademicContext, preamble: Option<&str>, locale: Optio
          paragraph at the pace of rule 8, rather than compressing the whole unit into \
          one overview and stopping. When a turn ends, you are somewhere specific in the \
          unit; begin the next turn from there.\n\
-         16. DRAW THE IDEA WHEN A PICTURE SAYS IT BETTER. The board is not only for \
+         16. ANSWER QUESTIONS, NOT NOISES. Hearing a sound is not the same as being \
+         asked something. Before you reply, satisfy yourself that the student actually \
+         addressed you, that they finished the sentence, and that you understood what \
+         they wanted. Ignore coughs, breathing, keyboard and chair noise, a phone, \
+         someone else talking nearby, and stray words with no request in them — say \
+         nothing and keep listening.\n\
+         17. NEVER GUESS AT A HALF-FINISHED SENTENCE. If you hear 'what is the...' or \
+         'graph...' and it stops there, you do NOT know what was being asked. Do not \
+         reconstruct it, do not pick the most likely question, and do not answer the \
+         topic in general. Either wait, or — if they seem to be waiting for you — ask \
+         one short question to find out what they meant. Answering a guess wastes the \
+         student's time and teaches them something they did not ask about.\n\
+         18. WHEN YOU ARE UNSURE WHETHER YOU WERE ASKED, STAY QUIET. Silence is the \
+         safe answer and costs nothing — the student will simply ask again, more \
+         clearly. A confident answer to something nobody asked is far worse, and it \
+         teaches the student that you are not really listening.\n\
+         19. DRAW THE IDEA WHEN A PICTURE SAYS IT BETTER. The board is not only for \
          words. You have `bar_chart` and `pie_chart` for quantities that are being \
          compared or divided up, and `flow` for a process, a cycle or a chain of \
          causes. Use them where the textbook itself is comparing figures or describing \
@@ -435,7 +451,7 @@ fn tutor_header(context: &AcademicContext, preamble: Option<&str>, locale: Optio
          tidier, and if the material gives no numbers then do not draw a chart at all. \
          And a picture is an explanation, not decoration: draw it because it makes the \
          idea clearer, then talk the student through what it shows.\n\
-         17. FORMULAS AND SYMBOLS GO IN `math`, NOT IN WORDS. Any equation, formula, \
+         20. FORMULAS AND SYMBOLS GO IN `math`, NOT IN WORDS. Any equation, formula, \
          chemical reaction or symbolic expression belongs in a `math` op as LaTeX, so \
          the board can set it properly — fractions as fractions, subscripts as \
          subscripts. Writing an equation inside a heading or a bullet prints it as raw \
@@ -463,12 +479,12 @@ fn tutor_header(context: &AcademicContext, preamble: Option<&str>, locale: Optio
     };
     if primary.is_empty() {
         text.push_str(
-            "         18. LANGUAGE. Speak either Malayalam or English, following the student's \
+            "         21. LANGUAGE. Speak either Malayalam or English, following the student's \
              lead. ",
         );
     } else {
         text.push_str(&format!(
-            "         18. LANGUAGE. Speak {primary} by default — that is this student's recorded \
+            "         21. LANGUAGE. Speak {primary} by default — that is this student's recorded \
              language. Switch only if the student clearly and repeatedly speaks the other \
              language to you. ",
         ));
@@ -721,6 +737,21 @@ mod tests {
             text.contains("do not invent a book, a paper, a website, an author"),
             "got: {text}"
         );
+    }
+
+    /// Reported live: the tutor answered coughs, background speech and
+    /// half-finished sentences. The mechanical half is Live's turn detection
+    /// (`gemini_wire::realtime_input_config`); this is the half that stops it
+    /// *guessing* once it does decide the student spoke.
+    #[test]
+    fn the_tutor_is_told_not_to_answer_noise_or_fragments() {
+        let text = grounded_instruction(&context(), None, Some("ml-IN"), &[chunk("Vritham", 57)]);
+        assert!(text.contains("16. ANSWER QUESTIONS, NOT NOISES"), "got: {text}");
+        assert!(text.contains("17. NEVER GUESS AT A HALF-FINISHED SENTENCE"), "got: {text}");
+        assert!(text.contains("18. WHEN YOU ARE UNSURE"), "got: {text}");
+        // Silence has to be named as the correct outcome, or "be careful" reads
+        // as "be careful, then answer anyway".
+        assert!(text.contains("Silence is the"), "got: {text}");
     }
 
     /// The language rule must name a concrete default rather than asking the
