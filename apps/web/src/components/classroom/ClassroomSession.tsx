@@ -60,6 +60,26 @@ const PLAYBACK_GATE_S = 0.05;
 const PREROLL_MS = 300;
 const PREROLL_FRAMES = Math.ceil(PREROLL_MS / 20);
 
+/**
+ * How long the student must keep talking, while the tutor is talking, before
+ * the tutor is cut off.
+ *
+ * This is the escape hatch from a deadlock that made the classroom unusable:
+ * mic frames are withheld whenever tutor audio is queued (to stop Gemini
+ * hearing its own echo and self-interrupting), the playback queue holds whole
+ * turns, and the tutor was told to work through a unit paragraph by paragraph.
+ * Together that meant the mic was shut for the entire turn — the student could
+ * not be heard at all, so the tutor never stopped, so the mic never reopened.
+ *
+ * 350 ms is long enough that a syllable of leaked echo does not trigger it, and
+ * short enough to feel like interrupting a person. On trigger, playback is
+ * flushed immediately, which also removes the echo source — so even a false
+ * positive cannot loop: it stops the tutor once, and the student says
+ * "continue".
+ */
+const BARGE_IN_MS = 350;
+const BARGE_IN_FRAMES = Math.ceil(BARGE_IN_MS / 20);
+
 /** `document.body` never changes identity, so there is nothing to subscribe to. */
 function subscribeNever(): () => void {
   return () => {};
@@ -126,6 +146,10 @@ export function ClassroomSession({
   const playbackRef = useRef<AudioPlayback | null>(null);
   /** Student speech captured while the mic was gated — see `PREROLL_MS`. */
   const prerollRef = useRef<Int16Array[]>([]);
+  /** Consecutive gated frames carrying speech — see `BARGE_IN_MS`. */
+  const bargeInRef = useRef(0);
+  /** Live mirror of `speaking`, readable from the per-frame callback. */
+  const speakingRef = useRef(false);
   /**
    * Re-entrancy latch for `start()`, set SYNCHRONOUSLY before its first
    * `await`.
@@ -292,8 +316,27 @@ export function ClassroomSession({
           const roll = prerollRef.current;
           roll.push(frame);
           if (roll.length > PREROLL_FRAMES) roll.shift();
+
+          // Barge-in: the student is talking over the tutor. Counted in frames
+          // of *sustained* speech rather than acted on immediately, so a burst
+          // of the tutor's own echo cannot cut it off.
+          if (speakingRef.current) {
+            bargeInRef.current += 1;
+            if (bargeInRef.current >= BARGE_IN_FRAMES) {
+              bargeInRef.current = 0;
+              // Stop the tutor locally first — that silences the speakers, and
+              // with them the echo — then tell the server, so the model stops
+              // generating rather than queueing more behind what was dropped.
+              playbackRef.current?.stop();
+              clientRef.current?.interrupt();
+            }
+          } else {
+            bargeInRef.current = 0;
+          }
           return;
         }
+
+        bargeInRef.current = 0;
         // Gate just opened: lead with whatever the student had already started
         // saying, in order, before the live frames.
         const roll = prerollRef.current;
@@ -304,7 +347,12 @@ export function ClassroomSession({
         clientRef.current?.sendAudio(frame);
       },
       onVad: (event) => {
-        setSpeaking(event === "speech_start");
+        const talking = event === "speech_start";
+        // Mirrored into a ref because `onFrame` runs on every 20 ms frame and
+        // must read the current value, not the one captured when the capture
+        // was constructed.
+        speakingRef.current = talking;
+        setSpeaking(talking);
       },
       onError: (error) => setMicError(error.message),
     });

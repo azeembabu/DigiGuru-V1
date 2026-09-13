@@ -81,6 +81,14 @@ export const boardOpsSchema = z.object({
   type: z.literal("board_ops"),
   seq: z.number(),
   clear_first: z.boolean(),
+  /**
+   * This turn's content is **not from the student's textbook**.
+   *
+   * Optional on the wire so an older gateway build still parses; absent means
+   * false, which is the safe default — a turn that retrieved nothing abstains
+   * rather than drawing, so unflagged content is textbook-sourced.
+   */
+  supplementary: z.boolean().optional().default(false),
   ops: z.array(boardOpSchema),
 });
 

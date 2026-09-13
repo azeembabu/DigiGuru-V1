@@ -258,7 +258,7 @@ export class SessionClient {
     this.renderChain = this.renderChain.then(async () => {
       const started = performance.now();
       try {
-        await this.options.renderer.apply(msg.ops, msg.clear_first);
+        await this.options.renderer.apply(msg.ops, msg.clear_first, msg.supplementary);
       } catch (error) {
         const reason = error instanceof Error ? error.message : "render_failed";
         this.send(clientMessage.boardError(msg.seq, reason.slice(0, 120)));

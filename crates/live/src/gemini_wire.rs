@@ -88,6 +88,15 @@ pub fn board_ops_declaration() -> Value {
                     "description": "Wipe the board before drawing. True on a block, \
     chapter or topic boundary, so stale content never carries across topics."
                 },
+                "supplementary": {
+                    "type": "boolean",
+                    "description": "Set TRUE when what you are about to write is NOT \
+    in the student's textbook — an example, formula, chart or explanation you are giving \
+    from general academic knowledge because the curriculum material does not cover what \
+    was asked. The board then shows a standing notice telling the student this content \
+    is not from their textbook. Never leave it false for such content, and never pass \
+    off outside material as the textbook's."
+                },
                 "ops": {
                     "type": "array",
                     "description": "Ordered whiteboard operations for this turn.",
@@ -616,6 +625,10 @@ pub fn board_ops_from_args(args: &Value, seq: u32) -> crate::error::Result<Board
         clear_first: args
             .get("clear_first")
             .or_else(|| args.get("clearFirst"))
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        supplementary: args
+            .get("supplementary")
             .and_then(Value::as_bool)
             .unwrap_or(false),
         ops,

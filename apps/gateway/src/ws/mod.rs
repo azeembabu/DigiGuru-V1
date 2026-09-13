@@ -124,6 +124,10 @@ struct BoardOpsMsg<'a> {
     kind: &'static str,
     seq: u32,
     clear_first: bool,
+    /// This turn's content is not from the student's textbook. Forwarded from
+    /// the model's own declaration — the gateway cannot check it, because the
+    /// only thing that could is the retrieval it already ran.
+    supplementary: bool,
     ops: &'a [BoardOp],
 }
 
@@ -860,6 +864,7 @@ most recent question: \"{question}\"]\n\n{}",
                             kind: "board_ops",
                             seq: accepted.seq.get(),
                             clear_first: accepted.clear_first,
+                            supplementary: msg.supplementary,
                             ops: &accepted.ops,
                         };
                         if send_json(&mut socket, &out).await.is_err() {
@@ -1450,6 +1455,7 @@ fn demo_script() -> Vec<LiveModelEvent> {
         msg_type: "board_ops".to_string(),
         seq: 1,
         clear_first: false,
+        supplementary: false,
         ops: vec![
             live::board::BoardOp::Heading {
                 text: "Demo lesson".to_string(),

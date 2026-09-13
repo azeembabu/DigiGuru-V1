@@ -678,6 +678,7 @@ mod tests {
 
     fn sample_board_ops() -> BoardOpsMessage {
         BoardOpsMessage {
+            supplementary: false,
             msg_type: "board_ops".to_string(),
             seq: 1,
             clear_first: false,

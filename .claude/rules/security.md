@@ -22,9 +22,15 @@ Three tiers, all required:
 - **Tier 2 — output guard.** Model output is screened before TTS release. A response citing no
   retrieved chunk, or leaking the system prompt, is dropped rather than spoken.
 
-Curriculum boundary: answer only from retrieved context; textbook and chapter names may be
-disclosed; with no context, say it is not covered in the textbook and offer the nearest
-in-syllabus topic. Never fall back to world knowledge.
+Curriculum boundary: answer from retrieved context first, always; textbook and chapter names
+may be disclosed; with no context, say it is not covered in the textbook and offer the nearest
+in-syllabus topic.
+
+Outside content is permitted **only** under NN-4's declared-supplementary rule (`CLAUDE.md`):
+on the student's request, announced aloud as not-from-the-textbook, flagged `supplementary` on
+any board op, never source-attributed (the tutor cannot browse), and withheld entirely when the
+tutor is not confident it is correct. Silently answering from world knowledge remains a
+violation — the offence is the *silence*, not the knowledge.
 
 ## Data handling
 

@@ -304,6 +304,8 @@ export class BoardRenderer {
   private live: fabric.FabricObject[] = [];
   /** Which page the student is looking at; equals `pages.length` when live. */
   private viewing = 0;
+  /** Whether this page already carries the supplementary notice. */
+  private noticeOnPage = false;
   private disposed = false;
 
   constructor(
@@ -332,6 +334,68 @@ export class BoardRenderer {
     this.unitLabel = label;
     this.drawUnitLabel();
     this.canvas.requestRenderAll();
+  }
+
+  /**
+   * The standing "not from your textbook" notice.
+   *
+   * Drawn as part of the page rather than as chrome, for two reasons. It has to
+   * survive a page turn — a student who scrolls back to a supplementary chart
+   * must still see that it is supplementary — and it has to appear in an
+   * exported note, which is a render of the op-log and would otherwise strip a
+   * chrome-only warning off the one content that most needs it.
+   *
+   * Emitted once per run of supplementary content: a second notice directly
+   * under the first tells the student nothing and eats the board.
+   */
+  private drawSupplementaryNotice(): void {
+    if (this.noticeOnPage) return;
+    const { width, height } = this.viewport;
+    this.ensureRoom(0.07);
+
+    const top = height * this.flowY;
+    const fontSize = Math.max(11, Math.round(width * 0.0135));
+    const band = new fabric.Rect({
+      left: width * 0.06,
+      top,
+      width: width * 0.88,
+      height: fontSize * 3.2,
+      fill: "rgba(244, 196, 120, 0.14)",
+      stroke: "rgba(244, 196, 120, 0.65)",
+      strokeWidth: 1,
+      rx: 4,
+      ry: 4,
+      originX: "left",
+      originY: "top",
+      selectable: false,
+      objectCaching: false,
+    });
+    const text = new fabric.Textbox(
+      "⚠ Supplementary — not from your textbook. Given as extra help, from general " +
+        "academic knowledge.",
+      {
+        left: width * 0.075,
+        top: top + fontSize * 0.7,
+        width: width * 0.85,
+        fontSize,
+        fontWeight: "600",
+        fill: "rgba(250, 224, 170, 0.95)",
+        fontFamily: BOARD_FONT,
+        originX: "left",
+        originY: "top",
+        selectable: false,
+        objectCaching: false,
+      },
+    );
+
+    const group = new fabric.Group([band, text], {
+      selectable: false,
+      objectCaching: false,
+    });
+    this.canvas.add(group);
+    this.live.push(group);
+    this.noticeOnPage = true;
+    this.flowY += (fontSize * 3.2 + 10) / height;
   }
 
   /** (Re)draws the pinned unit heading and the rule under it. */
@@ -403,7 +467,7 @@ export class BoardRenderer {
    * callback that calls `renderAll()` would resolve before the browser has
    * composited, which is the subtle version of the early-ACK bug.
    */
-  async apply(ops: BoardOp[], clearFirst: boolean): Promise<void> {
+  async apply(ops: BoardOp[], clearFirst: boolean, supplementary = false): Promise<void> {
     if (this.disposed) return;
 
     // Before any text is constructed — see `boardFontsReady`.
@@ -411,6 +475,10 @@ export class BoardRenderer {
     if (this.disposed) return;
 
     if (clearFirst) this.clear();
+
+    // Drawn before the content it applies to, so the student reads the warning
+    // on the way in rather than discovering it underneath.
+    if (supplementary) this.drawSupplementaryNotice();
 
     for (const op of ops) {
       try {
@@ -464,6 +532,7 @@ export class BoardRenderer {
     this.pages.length = 0;
     this.live = [];
     this.viewing = 0;
+    this.noticeOnPage = false;
     this.flowY = this.startFlow();
     // The heading belongs to the session, not to the page that was just wiped.
     this.unitLabelObject = null;
@@ -512,6 +581,9 @@ export class BoardRenderer {
     this.onPage.clear();
     this.flowY = this.startFlow();
     this.viewing = this.pages.length;
+    // A new page needs its own notice if supplementary content continues onto
+    // it — the warning must never be left behind on the previous page.
+    this.noticeOnPage = false;
     this.notifyPages();
   }
 

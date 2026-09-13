@@ -30,6 +30,11 @@ normalise + detect language
 - Retrieval returns the payload citation (`chapter`, `topic`, `page`) alongside the text; the tutor
   cites from that payload, never from its own memory.
 - `Abstain` is a first-class return value, not an empty vector. The caller must handle it explicitly.
+- `Abstain` means *the textbook does not cover this*, and that fact must reach the student in
+  those words. Since 2026-09-14 it no longer means the turn produces nothing: the tutor may go
+  on to help from general academic knowledge, but only on request and only as declared
+  supplementary content (NN-4). The retrieval contract is unchanged — abstention is still
+  decided by the similarity floor, never by the model.
 
 ## Cost discipline
 

@@ -75,6 +75,18 @@ pub struct BoardOpsMessage {
     pub seq: u32,
     #[serde(default)]
     pub clear_first: bool,
+    /// This turn's board content is **not from the student's textbook**.
+    ///
+    /// Set by the tutor when it answers from general academic knowledge because
+    /// the material does not cover what was asked. The client draws a standing
+    /// notice over the content; it is not a styling hint and must not be
+    /// rendered as one.
+    ///
+    /// Defaults to `false`, which is the safe direction: an omitted flag marks
+    /// content as textbook-sourced only when it genuinely came from retrieval,
+    /// because a turn that retrieved nothing abstains instead of drawing.
+    #[serde(default)]
+    pub supplementary: bool,
     pub ops: Vec<BoardOp>,
 }
 
@@ -220,6 +232,7 @@ mod tests {
 
     fn valid_message() -> BoardOpsMessage {
         BoardOpsMessage {
+            supplementary: false,
             msg_type: BOARD_OPS_TYPE.to_string(),
             seq: 42,
             clear_first: false,
@@ -261,6 +274,7 @@ mod tests {
     #[test]
     fn wire_format_matches_documented_shape() {
         let msg = BoardOpsMessage {
+            supplementary: false,
             msg_type: BOARD_OPS_TYPE.to_string(),
             seq: 1,
             clear_first: true,

@@ -36,7 +36,28 @@ Never weaken these. If a change makes one harder to guarantee, stop and raise it
    *Changed 2026-09-13 from a per-session hard cap to a daily resetting quota, on the product
    owner's instruction. The enforcement point is unchanged: the ledger is server-side, and a
    session still ends with `end_reason = 'quota'` when the remaining allowance reaches zero.*
-4. **NN-4 RAG-only.** Below the similarity floor the tutor abstains. No world knowledge, ever.
+4. **NN-4 Textbook-first, and outside content is always declared.** Retrieval decides what
+   is taught: when the syllabus covers the question, the tutor answers from the retrieved
+   chunks and nothing else, and every Qdrant query keeps its four mandatory filters.
+
+   *Changed 2026-09-14 by the product owner, from "RAG-only — no world knowledge, ever".*
+   A student who asks for an example, chart or formula the textbook does not contain may now
+   be given one from general academic knowledge — but only on request, only when the tutor is
+   confident it is correct, and never silently. The tutor must say the content is not from
+   their textbook before teaching it, and any board content it produces must set
+   `supplementary: true`, which draws a standing notice on the slate that survives page turns
+   and note export.
+
+   What did **not** change, and must not: retrieval still runs first and still wins; the four
+   mandatory filters are untouched; a turn that retrieved nothing still names the gap before
+   anything else; and uncertainty still stops the turn — "I am not certain enough to teach
+   that" is a correct answer and a confident guess is not.
+
+   The tutor has **no browsing tool** (`board_ops` is its only function). It therefore cannot
+   consult or verify an external source, and must never claim one — no invented books, papers,
+   URLs or authors. Supplementary material is described as general academic knowledge, because
+   that is what it is. If source-cited external content is ever required, it needs a retrieval
+   tool; it cannot be prompted into existence.
 5. **NN-5 Jailbreak termination.** Tier-0 guard mutes the upstream mid-utterance; Tier-1 tears the
    socket down. Incidents are always persisted.
 
