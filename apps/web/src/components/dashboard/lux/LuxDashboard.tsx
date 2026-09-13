@@ -26,6 +26,7 @@ import {
   weakTopics,
   type CourseRow,
 } from "@/lib/dashboard-metrics";
+import { AnswerSheetPanel } from "./AnswerSheetPanel";
 import { CourseTable } from "./CourseTable";
 import { KpiRow } from "./KpiRow";
 import { LuxHeader } from "./LuxHeader";
@@ -396,6 +397,19 @@ export function LuxDashboard() {
             attemptCount={exam_history.filter((e) => e.percentage !== null).length}
             filter={search}
           />
+        </div>
+
+        {/*
+          Full width, under the two-column row: an answer sheet is a document
+          the student goes looking for deliberately, so it gets a labelled
+          section of its own rather than a link buried in the chart.
+        */}
+        <div className="mt-6">
+          {attempts.status === "ready" ? (
+            <AnswerSheetPanel attempts={attemptItems} />
+          ) : attempts.status === "loading" ? (
+            <Skeleton className="h-[180px]" />
+          ) : null}
         </div>
       </div>
     </DashboardFrame>
