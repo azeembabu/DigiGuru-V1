@@ -113,6 +113,8 @@ async fn seed(pool: &PgPool) -> World {
         20.0,
         Some(45),
         ExamStatus::Published,
+        None,
+        None,
         UserId::from(admin.id.into_uuid()),
     )
     .await

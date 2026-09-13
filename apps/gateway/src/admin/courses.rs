@@ -13,7 +13,7 @@ use validator::Validate;
 use dg_core::{Capability, ProgramId, PublicError, SemesterId};
 use dg_db::models::{courses, programs, semesters};
 
-use crate::extractors::AuthenticatedActor;
+use crate::extractors::{AuthenticatedActor, JsonBody};
 use crate::state::AppState;
 
 #[derive(Debug, Serialize)]
@@ -63,7 +63,7 @@ pub struct CreateCourseRequest {
 pub async fn create_course(
     State(state): State<AppState>,
     AuthenticatedActor(actor): AuthenticatedActor,
-    Json(payload): Json<CreateCourseRequest>,
+    JsonBody(payload): JsonBody<CreateCourseRequest>,
 ) -> Result<Json<CourseResponse>, PublicError> {
     payload.validate().map_err(|_| PublicError::validation("code", "invalid course fields"))?;
 
@@ -205,7 +205,7 @@ pub async fn update_course(
     State(state): State<AppState>,
     AuthenticatedActor(actor): AuthenticatedActor,
     Path(id): Path<Uuid>,
-    Json(payload): Json<UpdateCourseRequest>,
+    JsonBody(payload): JsonBody<UpdateCourseRequest>,
 ) -> Result<(), PublicError> {
     payload.validate().map_err(|_| PublicError::validation("name", "invalid course fields"))?;
 

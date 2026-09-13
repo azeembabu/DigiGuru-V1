@@ -6,14 +6,13 @@ import { useCallback, useEffect, useState } from "react";
 import { ApiError } from "@/lib/api";
 import { loadStudentContext, type StudentContext } from "@/lib/student-context";
 import { buttonClass } from "@/components/ui/Button";
-import { IconBoard, IconBook, IconClock, IconTarget } from "@/components/icons";
-import { Card, CardTitle, StatTile } from "@/components/dashboard/Card";
+import { Card, CardTitle } from "@/components/dashboard/Card";
 import { ContextPanel } from "@/components/dashboard/ContextPanel";
-import { ContinueCard } from "@/components/dashboard/ContinueCard";
 import { DashboardHeader } from "@/components/dashboard/DashboardHeader";
 import { DashboardSidebar } from "@/components/dashboard/DashboardSidebar";
 import { DevicesPanel } from "@/components/dashboard/DevicesPanel";
 import { SessionRules } from "@/components/dashboard/SessionRules";
+import { StudentOverview } from "@/components/student/StudentOverview";
 
 // The dashboard is client-rendered against `GET /me/context` rather than
 // fetched in a Server Component — see the note at the top of
@@ -92,8 +91,13 @@ export function StudentDashboard() {
           ) : (
             <div className="space-y-6">
               <Greeting context={state.context} />
-              <StatRow context={state.context} />
-              <ContinueCard context={state.context} />
+              {/* The six study components, hydrated from the single
+                  `GET /student/dashboard` call. Held in its own component with
+                  its own loading and error states rather than folded into this
+                  one: `/me/context` and `/student/dashboard` are two endpoints
+                  and either can fail alone, so one failing must not blank the
+                  other's panels. */}
+              <StudentOverview />
               <div className="grid gap-6 lg:grid-cols-2">
                 <ContextPanel context={state.context} />
                 <SessionRules />
@@ -124,46 +128,6 @@ function Greeting({ context }: { context: StudentContext }) {
           ? "Your first session starts with a short introduction — after that, the tutor picks up wherever you stopped."
           : "Your classroom opens straight onto your current block. No picker, no setup."}
       </p>
-    </div>
-  );
-}
-
-/**
- * The reference layout leads with a metric row, so this one does too — but
- * every tile is a fact the gateway returned or the fixed NN-3 cap. There is no
- * progress percentage, streak, or score here because nothing in the API
- * measures one yet; a plausible-looking number a student cannot act on is
- * worse than an absent tile.
- */
-function StatRow({ context }: { context: StudentContext }) {
-  const block = context.current_block;
-
-  return (
-    <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-      <StatTile
-        label="Program"
-        value={context.program.code}
-        hint={context.program.name}
-        icon={<IconBook className="h-5 w-5" />}
-      />
-      <StatTile
-        label="Semester"
-        value={String(context.semester.semester_number)}
-        hint={context.semester.name.trim() || "Current semester"}
-        icon={<IconTarget className="h-5 w-5" />}
-      />
-      <StatTile
-        label="Current block"
-        value={block === null ? "—" : String(block.block_no)}
-        hint={block === null ? "Not assigned yet" : block.title}
-        icon={<IconBoard className="h-5 w-5" />}
-      />
-      <StatTile
-        label="Session length"
-        value="20:00"
-        hint="Counted only while you are speaking"
-        icon={<IconClock className="h-5 w-5" />}
-      />
     </div>
   );
 }

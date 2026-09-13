@@ -87,3 +87,9 @@ define_id!(SessionId);
 // `ExamAttemptId`, which is what a student's dashboard card links to.
 define_id!(ExamId);
 define_id!(ExamAttemptId);
+// A `question_pool` row — one MCQ in a block's question bank. An
+// `exam_attempt_answers` row has no newtype: it is addressed by the pair
+// `(attempt_id, question_seq)` everywhere, never by its own id.
+define_id!(QuestionId);
+// A `flashcards` row — one card in a student's notebook.
+define_id!(FlashcardId);

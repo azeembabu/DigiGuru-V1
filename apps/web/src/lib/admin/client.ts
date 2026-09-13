@@ -11,24 +11,32 @@ import type {
   AdminDocument,
   AdminStats,
   AdminUser,
+  AssessmentType,
+  AttemptStatus,
   Block,
   BoardEvent,
   BoardLatencyBucket,
   Course,
-  EntityStatus,
+  DifficultyLevel,
   Enrollment,
   EnrollmentStatus,
+  EntityStatus,
   IncidentKind,
   LearningSession,
   Lsc,
   Page,
+  PoolQuestion,
   Program,
+  QuestionPoolCount,
+  QuestionStatus,
   Role,
   SafetyIncident,
   Semester,
   SessionEndReason,
   SessionStatus,
   Student,
+  StudentReport,
+  StudentReportRow,
   UserStatus,
 } from "@/lib/admin/types";
 
@@ -341,4 +349,131 @@ export function listSafetyIncidents(
   } = {},
 ): Promise<Page<SafetyIncident>> {
   return apiFetchPage<SafetyIncident>(`/admin/safety-incidents${query({ ...params })}`);
+}
+
+// ------------------------------------------------------------ question pool
+//
+// AMENDMENT A1.3. Two ingestion channels — one question at a time from the
+// form, or a whole file in one atomic import. Both land on
+// `/api/v1/admin/question-pool`; the version prefix is never dropped.
+
+export function listPoolQuestions(
+  params: ListParams & {
+    program_id?: string;
+    semester_id?: string;
+    /** A2.1: the pool is per course, so this is the filter that matters most. */
+    course_id?: string;
+    block_id?: string;
+    assessment_type?: AssessmentType;
+    difficulty_level?: DifficultyLevel;
+    status?: QuestionStatus;
+  } = {},
+): Promise<Page<PoolQuestion>> {
+  return apiFetchPage<PoolQuestion>(`/admin/question-pool${query({ ...params })}`);
+}
+
+/**
+ * Pool size per course for a whole program, in one request.
+ *
+ * Unpaginated by contract and includes empty courses, ordered by semester then
+ * course code. This replaces a per-course `limit=1` count loop — N requests to
+ * read N headers, which also could not report a course that had no rows.
+ */
+export function getQuestionPoolCounts(programId: string): Promise<QuestionPoolCount[]> {
+  return apiFetch<QuestionPoolCount[]>(`/admin/programs/${programId}/question-pool-counts`);
+}
+
+export function createPoolQuestion(input: {
+  /** A2.1: required. The pool belongs to the course. */
+  course_id: string;
+  /** A2.1: optional unit/module pointer. Must belong to `course_id` when sent. */
+  block_id?: string;
+  topic: string;
+  question_text: string;
+  options: string[];
+  correct_option_index: number;
+  explanation: string;
+  assessment_type: AssessmentType;
+  difficulty_level: DifficultyLevel;
+}): Promise<PoolQuestion> {
+  return apiFetch<PoolQuestion>("/admin/question-pool", { method: "POST", ...json(input) });
+}
+
+export function updatePoolQuestion(
+  id: string,
+  input: Partial<{
+    /** `null` detaches the question from its unit/module (A2.1: optional). */
+    block_id: string | null;
+    topic: string;
+    question_text: string;
+    options: string[];
+    correct_option_index: number;
+    explanation: string;
+    assessment_type: AssessmentType;
+    difficulty_level: DifficultyLevel;
+    status: QuestionStatus;
+  }>,
+): Promise<PoolQuestion> {
+  return apiFetch<PoolQuestion>(`/admin/question-pool/${id}`, { method: "PATCH", ...json(input) });
+}
+
+/** A2.3: four accepted ingestion formats. */
+export type BulkFormat = "json" | "csv" | "xlsx" | "docx";
+
+const BULK_CONTENT_TYPE: Record<BulkFormat, string> = {
+  json: "application/json",
+  csv: "text/csv",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+};
+
+/**
+ * Bulk import — ALL or NOTHING.
+ *
+ * The gateway validates every row before writing any row and rejects the whole
+ * file with a per-row `VALIDATION_ERROR` message, because a half-imported pool
+ * is worse than a rejected one (A1.3). So there is no partial-success shape to
+ * model here: either a count comes back, or an `ApiError` does.
+ *
+ * `body` is a string for the text formats and a `File` for `.xlsx`/`.docx`,
+ * which are ZIP containers and cannot survive being pasted into a textarea. The
+ * declared format rides in the query string and the `Content-Type` is set for
+ * completeness, but neither is authoritative: the gateway sniffs the magic bytes
+ * (A2.3), so a mislabelled file is rejected by content rather than trusted.
+ */
+export function bulkImportPoolQuestions(
+  body: string | File,
+  format: BulkFormat,
+): Promise<{ imported: number }> {
+  return apiFetch<{ imported: number }>(`/admin/question-pool/bulk${query({ format })}`, {
+    method: "POST",
+    body,
+    headers: { "Content-Type": BULK_CONTENT_TYPE[format] },
+  });
+}
+
+// ---------------------------------------------------------- student reports
+//
+// AMENDMENT A2.4. Scoped exactly as `/admin/analytics`: the caller's role
+// decides which query runs, and a sub-admin with no scopes gets an empty array
+// rather than a platform-wide fallback. Nothing is re-filtered here.
+
+export function listStudentReports(
+  params: ListParams & {
+    program_id?: string;
+    semester_id?: string;
+    course_id?: string;
+    student_id?: string;
+    exam_id?: string;
+    assessment_type?: AssessmentType;
+    status?: AttemptStatus;
+    from?: string;
+    to?: string;
+  } = {},
+): Promise<Page<StudentReportRow>> {
+  return apiFetchPage<StudentReportRow>(`/admin/student-reports${query({ ...params })}`);
+}
+
+export function getStudentReport(studentId: string): Promise<StudentReport> {
+  return apiFetch<StudentReport>(`/admin/students/${studentId}/report`);
 }

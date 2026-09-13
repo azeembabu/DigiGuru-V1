@@ -18,7 +18,7 @@ use validator::Validate;
 use dg_core::{Capability, EntityStatus, PublicError, Role};
 use dg_db::models::lscs;
 
-use crate::extractors::AuthenticatedActor;
+use crate::extractors::{AuthenticatedActor, JsonBody};
 use crate::state::AppState;
 
 #[derive(Debug, Serialize)]
@@ -48,7 +48,7 @@ pub struct CreateLscRequest {
 pub async fn create_lsc(
     State(state): State<AppState>,
     AuthenticatedActor(actor): AuthenticatedActor,
-    Json(payload): Json<CreateLscRequest>,
+    JsonBody(payload): JsonBody<CreateLscRequest>,
 ) -> Result<Json<LscResponse>, PublicError> {
     if actor.role != Role::SuperAdmin {
         return Err(PublicError::Forbidden);
@@ -120,7 +120,7 @@ pub async fn update_lsc(
     State(state): State<AppState>,
     AuthenticatedActor(actor): AuthenticatedActor,
     Path(id): Path<Uuid>,
-    Json(payload): Json<UpdateLscRequest>,
+    JsonBody(payload): JsonBody<UpdateLscRequest>,
 ) -> Result<(), PublicError> {
     if actor.role != Role::SuperAdmin {
         return Err(PublicError::Forbidden);

@@ -22,10 +22,12 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use validator::Validate;
 
-use dg_core::{BlockId, Capability, ExamAttemptStatus, ExamId, ExamStatus, PublicError};
+use dg_core::{
+    AssessmentType, BlockId, Capability, ExamAttemptStatus, ExamId, ExamStatus, PublicError,
+};
 use dg_db::models::{blocks, exams};
 
-use crate::extractors::AuthenticatedActor;
+use crate::extractors::{AuthenticatedActor, JsonBody};
 use crate::state::AppState;
 
 /// An exam plus the flat ancestry of its block, so a console renders a
@@ -47,6 +49,13 @@ pub struct ExamResponse {
     pub max_score: f64,
     /// `null` = untimed.
     pub duration_minutes: Option<i16>,
+    /// How many questions the paper draws from the pool. `null` together with
+    /// `assessment_type` means this is not an MCQ exam — a written or oral
+    /// assessment marked by hand, which is what every exam created before the
+    /// question pool is. The schema keeps the two NULL together.
+    pub question_count: Option<i16>,
+    /// Which pool the paper samples from. `null` = not an MCQ exam.
+    pub assessment_type: Option<AssessmentType>,
     pub status: ExamStatus,
     pub created_by: Uuid,
     pub created_at: DateTime<Utc>,
@@ -67,6 +76,8 @@ impl From<exams::Exam> for ExamResponse {
             description: e.description,
             max_score: e.max_score,
             duration_minutes: e.duration_minutes,
+            question_count: e.question_count,
+            assessment_type: e.assessment_type,
             status: e.status,
             created_by: e.created_by.into_uuid(),
             created_at: e.created_at,
@@ -86,6 +97,14 @@ pub struct CreateExamRequest {
     pub max_score: f64,
     #[validate(range(min = 1, max = 600))]
     pub duration_minutes: Option<i16>,
+    /// Paper size, 1..200. Must be supplied together with `assessment_type`:
+    /// an exam either samples an MCQ paper or it does not, and the schema
+    /// rejects one without the other.
+    #[validate(range(min = 1, max = 200))]
+    pub question_count: Option<i16>,
+    /// Which pool to sample from. Omit both this and `question_count` for a
+    /// written or oral assessment marked by hand.
+    pub assessment_type: Option<AssessmentType>,
     /// Omitted means `draft` — an exam is not visible to students until an
     /// admin deliberately publishes it.
     pub status: Option<ExamStatus>,
@@ -100,11 +119,21 @@ fn requested_status(status: Option<ExamStatus>) -> ExamStatus {
 pub async fn create_exam(
     State(state): State<AppState>,
     AuthenticatedActor(actor): AuthenticatedActor,
-    Json(payload): Json<CreateExamRequest>,
+    JsonBody(payload): JsonBody<CreateExamRequest>,
 ) -> Result<Json<ExamResponse>, PublicError> {
     payload
         .validate()
         .map_err(|_| PublicError::validation("title", "invalid exam fields"))?;
+
+    // The schema enforces `(assessment_type IS NULL) = (question_count IS NULL)`.
+    // Checking it here turns what would reach the client as an opaque conflict
+    // into a field error naming what is missing.
+    if payload.question_count.is_some() != payload.assessment_type.is_some() {
+        return Err(PublicError::validation(
+            "question_count",
+            "question_count and assessment_type must be supplied together, or both omitted",
+        ));
+    }
 
     let block_id = BlockId::from(payload.block_id);
     let program_id = blocks::program_id_for_block(&state.pool, block_id)
@@ -122,6 +151,8 @@ pub async fn create_exam(
         payload.max_score,
         payload.duration_minutes,
         requested_status(payload.status),
+        payload.question_count,
+        payload.assessment_type,
         actor.user_id,
     )
     .await

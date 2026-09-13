@@ -17,7 +17,7 @@ use validator::Validate;
 use dg_core::{Capability, EntityStatus, PublicError, Role};
 use dg_db::models::programs;
 
-use crate::extractors::AuthenticatedActor;
+use crate::extractors::{AuthenticatedActor, JsonBody};
 use crate::state::AppState;
 
 #[derive(Debug, Serialize)]
@@ -47,7 +47,7 @@ pub struct CreateProgramRequest {
 pub async fn create_program(
     State(state): State<AppState>,
     AuthenticatedActor(actor): AuthenticatedActor,
-    Json(payload): Json<CreateProgramRequest>,
+    JsonBody(payload): JsonBody<CreateProgramRequest>,
 ) -> Result<Json<ProgramResponse>, PublicError> {
     // No existing program_id to scope against yet — super-admin only.
     if actor.role != Role::SuperAdmin {
@@ -149,7 +149,7 @@ pub async fn update_program(
     State(state): State<AppState>,
     AuthenticatedActor(actor): AuthenticatedActor,
     Path(id): Path<Uuid>,
-    Json(payload): Json<UpdateProgramRequest>,
+    JsonBody(payload): JsonBody<UpdateProgramRequest>,
 ) -> Result<(), PublicError> {
     let program_id = dg_core::ProgramId::from(id);
     actor.require_scoped(Capability::ManagePrograms, program_id)?;

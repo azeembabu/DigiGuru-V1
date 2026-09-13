@@ -121,3 +121,71 @@ impl ExamAttemptStatus {
         }
     }
 }
+
+/// Mirrors `question_status` — `question_pool.status`. A question is
+/// `Retired` rather than deleted: attempts that already asked it keep
+/// referencing the row, so a graded paper stays reviewable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "question_status", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
+pub enum QuestionStatus {
+    Active,
+    Retired,
+}
+
+impl QuestionStatus {
+    /// The `question_status` label this maps to in Postgres.
+    pub const fn as_db_str(self) -> &'static str {
+        match self {
+            QuestionStatus::Active => "active",
+            QuestionStatus::Retired => "retired",
+        }
+    }
+}
+
+/// Mirrors `assessment_type` — which paper a `question_pool` row may be drawn
+/// into. Sampling filters on this, so it is part of a question's identity and
+/// not a label on the exam alone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "assessment_type", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
+pub enum AssessmentType {
+    Assignment,
+    MidTermQuiz,
+    SemesterExam,
+}
+
+impl AssessmentType {
+    /// The `assessment_type` label this maps to in Postgres.
+    pub const fn as_db_str(self) -> &'static str {
+        match self {
+            AssessmentType::Assignment => "assignment",
+            AssessmentType::MidTermQuiz => "mid_term_quiz",
+            AssessmentType::SemesterExam => "semester_exam",
+        }
+    }
+}
+
+/// Mirrors `difficulty_level` — `question_pool.difficulty_level`. The same
+/// three tiers the tutor's adaptive difficulty uses
+/// (`.claude/rules/pedagogy.md`), so `Beginner` here means what tier 0 means
+/// there.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "difficulty_level", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
+pub enum DifficultyLevel {
+    Beginner,
+    Intermediate,
+    Advanced,
+}
+
+impl DifficultyLevel {
+    /// The `difficulty_level` label this maps to in Postgres.
+    pub const fn as_db_str(self) -> &'static str {
+        match self {
+            DifficultyLevel::Beginner => "beginner",
+            DifficultyLevel::Intermediate => "intermediate",
+            DifficultyLevel::Advanced => "advanced",
+        }
+    }
+}

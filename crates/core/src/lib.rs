@@ -15,10 +15,11 @@ pub mod ids;
 
 pub use auth::{Actor, Capability, Role};
 pub use domain::{
-    EntityStatus, EnrollmentStatus, ExamAttemptStatus, ExamStatus, SessionStatus, UserStatus,
+    AssessmentType, DifficultyLevel, EnrollmentStatus, EntityStatus, ExamAttemptStatus, ExamStatus,
+    QuestionStatus, SessionStatus, UserStatus,
 };
 pub use error::{Error, FieldError, PublicError};
 pub use ids::{
-    BlockId, CourseId, DocumentId, ExamAttemptId, ExamId, LscId, ProgramId, SemesterId, SessionId,
-    StudentId, UserId,
+    BlockId, CourseId, DocumentId, ExamAttemptId, ExamId, FlashcardId, LscId, ProgramId,
+    QuestionId, SemesterId, SessionId, StudentId, UserId,
 };

@@ -12,7 +12,7 @@ use validator::Validate;
 use dg_core::{Capability, EntityStatus, PublicError, ProgramId};
 use dg_db::models::semesters;
 
-use crate::extractors::AuthenticatedActor;
+use crate::extractors::{AuthenticatedActor, JsonBody};
 use crate::state::AppState;
 
 #[derive(Debug, Serialize)]
@@ -48,7 +48,7 @@ pub struct CreateSemesterRequest {
 pub async fn create_semester(
     State(state): State<AppState>,
     AuthenticatedActor(actor): AuthenticatedActor,
-    Json(payload): Json<CreateSemesterRequest>,
+    JsonBody(payload): JsonBody<CreateSemesterRequest>,
 ) -> Result<Json<SemesterResponse>, PublicError> {
     payload.validate().map_err(|_| PublicError::validation("semester_number", "must be 1-12"))?;
 
@@ -113,7 +113,7 @@ pub async fn update_semester(
     State(state): State<AppState>,
     AuthenticatedActor(actor): AuthenticatedActor,
     Path(id): Path<Uuid>,
-    Json(payload): Json<UpdateSemesterRequest>,
+    JsonBody(payload): JsonBody<UpdateSemesterRequest>,
 ) -> Result<(), PublicError> {
     payload.validate().map_err(|_| PublicError::validation("name", "invalid semester fields"))?;
 

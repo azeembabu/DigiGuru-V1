@@ -19,7 +19,7 @@ use validator::Validate;
 use dg_core::{BlockId, Capability, CourseId, EntityStatus, PublicError};
 use dg_db::models::{blocks, courses};
 
-use crate::extractors::AuthenticatedActor;
+use crate::extractors::{AuthenticatedActor, JsonBody};
 use crate::state::AppState;
 
 #[derive(Debug, Serialize)]
@@ -67,7 +67,7 @@ pub struct CreateBlockRequest {
 pub async fn create_block(
     State(state): State<AppState>,
     AuthenticatedActor(actor): AuthenticatedActor,
-    Json(payload): Json<CreateBlockRequest>,
+    JsonBody(payload): JsonBody<CreateBlockRequest>,
 ) -> Result<Json<BlockResponse>, PublicError> {
     payload
         .validate()
@@ -166,7 +166,7 @@ pub async fn update_block(
     State(state): State<AppState>,
     AuthenticatedActor(actor): AuthenticatedActor,
     Path(id): Path<Uuid>,
-    Json(payload): Json<UpdateBlockRequest>,
+    JsonBody(payload): JsonBody<UpdateBlockRequest>,
 ) -> Result<(), PublicError> {
     payload
         .validate()

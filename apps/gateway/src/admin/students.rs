@@ -20,7 +20,7 @@ use dg_core::{
 };
 use dg_db::models::{blocks, lscs, programs, semesters, students};
 
-use crate::extractors::AuthenticatedActor;
+use crate::extractors::{AuthenticatedActor, JsonBody};
 use crate::state::AppState;
 
 #[derive(Debug, Serialize)]
@@ -161,7 +161,7 @@ pub async fn update_student_academic(
     State(state): State<AppState>,
     AuthenticatedActor(actor): AuthenticatedActor,
     Path(id): Path<Uuid>,
-    Json(payload): Json<UpdateAcademicRequest>,
+    JsonBody(payload): JsonBody<UpdateAcademicRequest>,
 ) -> Result<(), PublicError> {
     actor.require(Capability::ManageStudents)?;
 
@@ -232,7 +232,7 @@ pub async fn set_current_block(
     State(state): State<AppState>,
     AuthenticatedActor(actor): AuthenticatedActor,
     Path(id): Path<Uuid>,
-    Json(payload): Json<SetCurrentBlockRequest>,
+    JsonBody(payload): JsonBody<SetCurrentBlockRequest>,
 ) -> Result<(), PublicError> {
     actor.require(Capability::ManageStudents)?;
 

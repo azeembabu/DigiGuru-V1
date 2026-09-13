@@ -30,6 +30,25 @@ extractor can be rejected (notably a body-limit rejection on an upload) wraps it
 returns a `PublicError` instead. Map by status code, not by matching the rejection
 enum: those enums are `#[non_exhaustive]`.
 
+Two extractors exist for this and every route uses one of them:
+`extractors::UploadBody` for raw bytes, and `extractors::JsonBody<T>` for a JSON
+body. **`axum::Json<T>` must never appear in the argument position** — only as a
+response type. A bare `axum::Json` answers a body it cannot deserialise with
+plaintext naming the request struct's field and a line/column position
+(`Failed to deserialize the JSON body into the target type: missing field
+`course_id` at line 1 column 11`), which is both outside the envelope and a
+disclosure: `/auth/*` is unauthenticated, so that text let anyone enumerate the
+shape of the login and signup payloads.
+
+A body that does not deserialise — malformed JSON, a missing field, a mistyped
+field — is `400 VALIDATION_ERROR` on field `body`, with a message that says the
+body was unacceptable and nothing more. The `422` in the table above is for a
+request that parsed and was then semantically rejected by a handler (e.g.
+`EXAM_NOT_MCQ`), never for one that never parsed. A missing or wrong
+`Content-Type` is the same `400`; an oversize body is `413 PAYLOAD_TOO_LARGE`
+without quoting a megabyte figure, since the per-route upload cap is not a JSON
+endpoint's limit.
+
 ### Pagination and `X-Total-Count`
 
 Paginated list endpoints (`/admin/programs`, `/admin/lscs`, `/admin/students`,
@@ -422,6 +441,13 @@ attempt). Paginated exactly like the admin lists: bare array body, `limit`
 `GET /api/v1/student/exam-attempts/{id}` returns the **same** object for one
 attempt, so a review screen codes against a single card type.
 
+This list deliberately includes `in_progress` attempts, and that is load-bearing:
+it is how a client recovers from `409 EXAM_ATTEMPT_ACTIVE` (see "Sitting an
+exam"). The conflict body cannot carry the live attempt's id — the error
+envelope has no details field — so the client reads the `in_progress` row's `id`
+from here and resumes at `GET /api/v1/student/exams/attempts/{id}`. Filtering
+`in_progress` out of this list would break exam resume.
+
 The card carries everything it renders, denormalised, so a page of cards is
 one request. It deliberately has no `student_id`, `student_name` or
 `roll_number` field at all:
@@ -434,6 +460,519 @@ one request. It deliberately has no `student_id`, `student_name` or
   "status": "in_progress|submitted|graded|abandoned",
   "started_at": "RFC3339", "submitted_at": "RFC3339|null" }
 ```
+
+### The question pool
+
+The MCQ bank the exam module samples from. A pool belongs to a **course**: the
+academic taxonomy is Program > Semester > Course > Unit/Module, and a pool is
+pre-populated per course with the unit/module link explicitly **optional**. So
+`course_id` is required on every write and `block_id` is the optional module
+pointer. Program and semester are reached through
+`question_pool -> courses` and are not duplicated on the row. Admin scope is
+resolved `question -> course -> program_id`, and the owning program is resolved
+*before* the capability check, so a sub-admin outside the scope cannot tell an
+existing question from a missing one.
+
+| Method | Path | Capability |
+|---|---|---|
+| POST | `/api/v1/admin/question-pool` | `ManagePrograms`, scoped via `course -> program_id` |
+| POST | `/api/v1/admin/question-pool/bulk` | `ManagePrograms`, scoped per row the same way |
+| GET | `/api/v1/admin/question-pool` | `ManagePrograms`; the list is scoped for a sub-admin |
+| PATCH | `/api/v1/admin/question-pool/{id}` | `ManagePrograms`, scoped via `question -> course -> program_id` |
+| GET | `/api/v1/admin/programs/{program_id}/question-pool-counts` | `ManagePrograms`, scoped against the path `program_id` |
+
+When `block_id` is present it must belong to the given `course_id`, or the write
+is `400 VALIDATION_ERROR` on field `block_id`. That is checked in the handler,
+not by a CHECK constraint: the constraint would need a `blocks` subquery and
+cannot have one. Doing it in the handler also lets the bulk path name the
+offending **row number**, which a trigger could not.
+
+Every paper is exactly **A/B/C/D**: `options` is four non-blank strings and
+`correct_option_index` is `0..=3`. `explanation` is **mandatory** — it drives
+the post-exam feedback screen, so it is `"string"` on every admin response and
+on every review payload, never `null`. An admin response carries
+`correct_option_index` and `explanation` because an author has to see the key
+they are authoring; the student-facing paper is a different type that has no
+field for either (see "Sitting an exam" below).
+
+```json
+{ "id": "uuid", "course_id": "uuid", "course_code": "string",
+  "semester_id": "uuid", "program_id": "uuid",
+  "block_id": "uuid|null", "block_no": 1, "block_title": "string|null",
+  "topic": "string", "question_text": "string",
+  "options": ["A","B","C","D"], "correct_option_index": 1,
+  "explanation": "string",
+  "assessment_type": "assignment|mid_term_quiz|semester_exam",
+  "difficulty_level": "beginner|intermediate|advanced",
+  "status": "active|retired",
+  "created_by": "uuid", "created_at": "RFC3339" }
+```
+
+The three module fields are `null` **together**: a course-wide question is the
+normal shape, not a row with a missing value. `course_id` and `course_code` are
+never null. There is deliberately no `course_name` or `semester_number` on this
+response — a row is labelled from `course_code`, and the console already holds
+the course list it navigated through to reach the pool.
+
+`POST /api/v1/admin/question-pool` — body is that shape without the server-set
+fields: `{ "course_id", "block_id"?, "topic", "question_text", "options",
+"correct_option_index", "explanation", "assessment_type", "difficulty_level"? }`.
+An omitted `block_id` is a course-wide question; an omitted `difficulty_level`
+is `beginner`, matching the column default and the tutor's tier 0
+(`pedagogy.md`).
+
+`PATCH /api/v1/admin/question-pool/{id}` is partial — `{ "block_id"?, "topic"?,
+"question_text"?, "options"?, "correct_option_index"?, "explanation"?,
+"assessment_type"?, "difficulty_level"?, "status"? }`, omitted fields
+untouched. `block_id` **is** editable: it only re-files a question within its
+own course, and the new module is validated against that course, read back from
+the stored row rather than taken from the request. `course_id` is **not**
+editable — moving a question to another course would move it past the scope
+check it was authorized under *and* into a different paper's pool. A question is
+retired with `status: "retired"`, never deleted: attempts that already asked it
+keep referencing the row, so a graded paper stays reviewable.
+
+`GET /api/v1/admin/question-pool` is a plain paginated admin list: bare array
+body, `X-Total-Count`, `limit` 1-200 (default 50) and `offset` validated rather
+than clamped. Filters: `program_id`, `semester_id`, `course_id`, `block_id`,
+`assessment_type`, `difficulty_level`, `status`, and `q` (topic, question text).
+Filtering on `block_id` returns only the questions filed under that module —
+never the course-wide ones, which is usually most of the pool. The caller's role
+selects the scoped or unscoped query as `/admin/analytics` does; a sub-admin with
+no scopes gets an empty array, never a platform-wide fallback.
+
+`GET /api/v1/admin/programs/{program_id}/question-pool-counts` — every course in
+one program with its active question count, **including courses with none**.
+That is the point of the endpoint: a Program -> Semester -> Course navigation has
+to show which pools are still empty, which a `GROUP BY` over the pool would
+hide. Not paginated — a program has tens of courses, and the screen is one tree.
+Ordered by `semester_number` then `course_code`.
+
+```json
+[ { "course_id": "uuid", "course_code": "string", "course_name": "string",
+    "semester_id": "uuid", "semester_number": 1, "active_questions": 0 } ]
+```
+
+#### Bulk import
+
+`POST /api/v1/admin/question-pool/bulk` takes any of **four** formats. The body
+is capped at **8 MiB** on this route alone (axum's 2 MiB default stays in force
+on every other JSON endpoint) and at **500 rows**.
+
+The format is decided by **sniffing the bytes**, never by the declared
+`Content-Type` or a filename — the same posture the PDF upload takes with
+`%PDF-`. `.xlsx` and `.docx` are *both* ZIP containers opening `PK\x03\x04`, so
+the magic bytes only get as far as "a ZIP"; which one it is is decided by the
+OOXML part inside (`xl/workbook.xml` vs `word/document.xml`). A ZIP carrying
+neither is refused.
+
+**The authoritative tabular header**, shared by CSV, `.xlsx` and `.docx`, in any
+order and case-insensitive:
+
+```
+course_id,block_id,topic,question_text,option_a,option_b,option_c,option_d,correct_option,explanation,assessment_type,difficulty_level
+```
+
+- `course_id` is **required** — the pool is per course.
+- `block_id` is the **optional** unit/module. A blank cell is a course-wide
+  question, not an error.
+- `difficulty_level` is the other optional column; omitting it makes every row
+  `beginner`.
+- `correct_option` is a **letter**: `A`, `B`, `C` or `D`, case-insensitive. A
+  **number is refused**, not interpreted — `1` could mean "the first option" or
+  "index 1", and guessing wrong silently marks the wrong option correct. That is
+  the one failure mode in this route worth being rigid about, so the rejection
+  message says why. The column may also be spelled `correct_option_index`, so a
+  spreadsheet built from a JSON export imports without a rename; the *value* is
+  still a letter either way.
+- A column named twice is rejected rather than resolved. A merged header cell in
+  a spreadsheet is one of the ways that happens.
+- The JSON channel is the exception and keeps the machine-readable zero-based
+  `correct_option_index` integer, where the base is unambiguous because it is
+  typed rather than typed in.
+
+Per format:
+
+- **JSON** — an array of the create body. Rows are read individually so a bad
+  one reports as `row N` rather than as a byte offset.
+- **CSV** — UTF-8, header row first. Quoted fields may contain commas, escaped
+  quotes (`""`) and newlines.
+- **`.xlsx`** — the **first worksheet only**, exact header row in row 1. Renamed
+  or duplicated columns are rejected rather than guessed at. Trailing blank rows
+  left by deleted content are ignored, not imported as empty questions.
+- **`.docx`** — exactly **one** supported layout: the **first table** in the
+  document, whose first row is that same header row and whose remaining rows are
+  one question each. Free-form Word text is **not parsed at all** — no `Q:` /
+  `A)` / `Ans:` heuristics, no guessing at paragraph structure — because
+  misreading an answer key is far worse than refusing a file. Anything else is a
+  `VALIDATION_ERROR` that quotes the expected header and points the author at
+  `.csv`/`.xlsx`. A cell's text is every run inside it concatenated (Word splits
+  a typed sentence across runs), and a nested table's text is never folded into
+  the enclosing cell.
+
+**Every row is validated before any row is written**, and the write is a single
+statement, so the import is atomic in both the handler and the database: a
+half-imported pool is worse than a rejected one, because nobody can tell which
+half arrived. Every distinct `course_id` is authorized and every `block_id`
+checked against its course before the insert — a sub-admin slipping one
+out-of-scope course into a 500-row import has the whole import rejected, not 499
+questions written.
+
+Per-row failures come back in the ordinary envelope — there is no second error
+shape. The `VALIDATION_ERROR` message is `row N: ...` clauses joined by `"; "`,
+ending with its own `nothing was imported` clause, so a console splits on
+`"; "` and renders each clause as one checklist line (at most 20 rows are
+quoted; the rest are counted):
+
+```json
+{ "error": { "code": "VALIDATION_ERROR",
+             "message": "questions: row 3: exactly 4 options are required (A, B, C and D), got 3; row 7: explanation is required; nothing was imported" } }
+```
+
+Success is `{ "imported": 42, "format": "json|csv|xlsx|docx" }`. `imported`
+always equals the rows submitted; a partial count is not a state this route can
+return. `format` echoes what was sniffed, so an author who meant to send a
+spreadsheet and sent something else can see what happened.
+
+`exams` gained two nullable columns that pair: `question_count` (1-200) and
+`assessment_type`. Both `null` means **this is not an MCQ exam** — a written or
+oral assessment marked by hand, which is what every exam created before the
+question pool is. `POST /admin/exams` accepts both and rejects one without the
+other as `400 VALIDATION_ERROR` on `question_count`; `ExamResponse` carries
+both, purely additively.
+
+### The student dashboard
+
+`GET /api/v1/student/dashboard` — capabilities `ViewOwnContext` **and**
+`ViewOwnExams`, because the payload is both the academic context and the
+student's own exam record. An admin holds the first but not the second and is
+`403`. Self-only with no parameters at all: there is no request shape that
+could name another student.
+
+One request hydrates the whole screen. Six separate calls would paint the page
+in six stages and each would re-resolve the same `students` row.
+
+```json
+{ "student_info": { "name": "string", "roll_number": "string",
+    "program": "string", "program_id": "uuid", "semester": 1,
+    "avatar_url": null },
+  "continue_learning": { "session_id": "uuid", "course_id": "uuid",
+    "course_title": "string", "block_id": "uuid", "block_no": 1,
+    "block_title": "string", "chapter_name": "string|null",
+    "page_number": 0, "para_index": null,
+    "progress_percentage": 0.0, "resume_summary": "string|null",
+    "last_active_at": "RFC3339" },
+  "quota_status": { "minutes_used": 0, "minutes_max": 20,
+    "ms_used": 0, "ms_remaining": 1200000,
+    "is_locked": false, "resets_at": "RFC3339", "timezone": "string" },
+  "exam_history": [ { "attempt_id": "uuid", "exam_id": "uuid",
+    "exam_title": "string", "score": 8.0, "max_score": 10.0,
+    "percentage": 80.0, "status": "in_progress|submitted|graded|abandoned",
+    "submitted_at": "RFC3339|null", "weak_topics": ["string"] } ],
+  "saved_resources": { "preserved_notes_count": 0,
+    "flashcards_total": 0, "flashcards_due_for_review": 0,
+    "revisions_due_count": 0 } }
+```
+
+- `continue_learning` is `null` for a student with no sessions. A first-login
+  dashboard renders an empty state; it does not fail.
+- `progress_percentage` is distinct blocks of that course with a `completed`
+  session, over blocks in the course, as 0..100. Counted distinctly so
+  re-studying a block cannot push it past 100; a course with no blocks is `0.0`.
+- `para_index` is always `null`. Paragraph position lives in the Redis session
+  state (`sess:{session_id}`), not in Postgres, and resume targets
+  course -> block -> chapter -> page.
+- `quota_status` is a **read** of the NN-3 ledger and never charges or extends
+  it — only the socket task holding a live session may. `minutes_max` is
+  derived from the ledger's own 20-minute constant, and `resets_at` is the next
+  midnight in `students.timezone`, so a student is never told their allowance
+  resets at a UTC hour that is mid-afternoon for them. `timezone` is echoed so
+  a client can render "resets in N hours" without guessing.
+- `exam_history` is the three most recent attempts. `weak_topics` is empty for
+  an `in_progress` attempt: before submission, which answers are wrong is part
+  of the answer key.
+- `avatar_url` is always `null` — there is no avatar column and no upload
+  route; the field exists so the header does not change shape when one lands.
+- `preserved_notes_count` has no list endpoint, deliberately. A note export is
+  a client-side render of the board op-log (`pedagogy.md`), so `note_reminders`
+  is the only server-side trace and the count is all there is to serve.
+
+`GET /api/v1/student/revisions` — capability `ViewOwnContext`. The due
+`note_reminders` for the caller, most recently due first, paginated like every
+other list (bare array, `X-Total-Count`, `limit` 1-200 default 50, `offset`
+validated not clamped). "Due" is resolved against the student's **own**
+calendar date, not the server's — a reminder set for tomorrow in Kochi must not
+surface because a UTC server has already rolled over.
+
+```json
+[ { "id": "uuid", "session_id": "uuid",
+    "event_from_id": 1, "event_to_id": 9, "board_ops_count": 9,
+    "course_id": "uuid", "course_code": "string",
+    "block_id": "uuid", "block_no": 1, "block_title": "string",
+    "topic": "string|null", "remind_at": "2026-09-13",
+    "surfaced_at": "RFC3339|null", "created_at": "RFC3339" } ]
+```
+
+`board_ops_count` is counted, not derived from the id span: `board_events.id`
+is a global sequence shared with every other session, so `to - from` is not a
+row count.
+
+### Flashcards
+
+| Method | Path | Capability |
+|---|---|---|
+| GET | `/api/v1/student/flashcards` | `ViewOwnContext` — self-only |
+| POST | `/api/v1/student/flashcards/{id}/review` | `ViewOwnContext` — self-only |
+
+There is deliberately **no create route**. Cards are written by the live
+session through the internal `crates/db` path when a turn produces one; nothing
+on this path calls an LLM, and a student cannot author a card into their own
+notebook from the browser.
+
+`GET` takes `due_only` (`true` narrows to cards due on or before the student's
+local today), `block_id`, `limit`, `offset`, and returns a bare array with
+`X-Total-Count`. `POST .../review` takes `{ "recalled": true }` and returns the
+same card with its advanced schedule — `interval_days`, `ease` and `due_on` are
+computed server-side by the SM-2-lite step, so a client cannot schedule a card
+into the far future to clear its queue.
+
+```json
+{ "id": "uuid", "block_id": "uuid", "block_no": 1, "block_title": "string",
+  "front": "string", "back": "string", "topic": "string|null",
+  "source_session_id": "uuid|null", "due_on": "2026-09-13",
+  "interval_days": 6, "ease": 250, "is_due": true,
+  "reviewed_at": "RFC3339|null", "created_at": "RFC3339" }
+```
+
+`ease` is SM-2 ease in permille (250 = 2.50), kept integral so a schedule is
+exactly reproducible. `is_due` is computed against the student's local today so
+the client never compares dates across zones. The card carries no
+`student_id`, `student_name` or `roll_number` field at all.
+
+### Sitting an exam
+
+| Method | Path | Capability |
+|---|---|---|
+| GET | `/api/v1/student/exams` | `ViewOwnExams` — self-only |
+| POST | `/api/v1/student/exams/{exam_id}/attempts` | `ViewOwnExams` — self-only |
+| GET | `/api/v1/student/exams/attempts/{id}` | `ViewOwnExams` — self-only |
+| PATCH | `/api/v1/student/exams/attempts/{id}/answers` | `ViewOwnExams` — self-only |
+| POST | `/api/v1/student/exams/attempts/{id}/submit` | `ViewOwnExams` — self-only |
+
+An attempt is addressed by its own id, not by `{exam_id}/attempts/{id}`: an
+attempt id is unique and already carries its exam, and a second addressable
+path for the same row is a second thing to keep checked.
+
+#### The answer key never leaves the server before submission
+
+`correct_option_index` and `explanation` are absent from the paper payload's
+question type **as fields**, not set to `null` — there is no value a handler
+could assign that would leak the key, because there is nowhere to put it. The
+review payload is a separate type, built only from a query that refuses an
+`in_progress` attempt in SQL. Grading reads the key in SQL and returns a tally;
+on that path the key never transits the gateway as a value at all.
+
+`GET /api/v1/student/exams` — published exams in the caller's enrolled courses
+(`student_courses -> courses -> blocks -> exams`, `status = 'published'` only).
+A draft or archived exam is not content a student may sit, and the predicate is
+in the query. Paginated like every other list.
+
+```json
+[ { "id": "uuid", "block_id": "uuid", "block_no": 1, "block_title": "string",
+    "course_id": "uuid", "course_code": "string", "course_name": "string",
+    "semester_id": "uuid", "program_id": "uuid",
+    "title": "string", "description": "string|null",
+    "max_score": 10.0, "duration_minutes": 45, "time_limit_minutes": 45,
+    "question_count": 10,
+    "assessment_type": "assignment|mid_term_quiz|semester_exam",
+    "attempts_used": 1, "best_percentage": 80.0 } ]
+```
+
+`time_limit_minutes` is the same number as `duration_minutes` under the name
+the runner's countdown uses. `best_percentage` is `null` when nothing is graded
+yet — a `0` would read as a measured score. `question_count` and
+`assessment_type` are `null` together for an exam that is not an MCQ paper.
+
+`POST /api/v1/student/exams/{exam_id}/attempts` — starts an attempt. The paper
+is sampled from the **course's own pool** — every active question with that
+`course_id`, narrowed by the exam's `assessment_type`. The course is reached from
+the exam (`exams -> blocks -> course_id`); the exam still anchors to a block and
+still supplies `question_count` and `duration_minutes`, but neither the exam's
+block nor a question's optional unit/module narrows the draw, because most
+questions have no module and a module filter would silently shrink the pool.
+
+The student must be actively enrolled in that course. That is not a second
+check: the exam is resolved through a query that already joins
+`student_courses`, so an exam in a course the student is not enrolled in selects
+no row and answers `404` — the same answer a missing or unpublished exam gets.
+
+The sample is written to `exam_attempt_answers` in the same transaction as the
+attempt row, which is what makes a reload show the same questions in the same
+order — "no two attempts identical" is a property across attempts, not within
+one.
+
+```json
+{ "attempt_id": "uuid", "exam_id": "uuid", "exam_title": "string",
+  "assessment_type": "mid_term_quiz",
+  "duration_minutes": 45, "time_limit_minutes": 45,
+  "attempt_no": 1, "started_at": "RFC3339", "total_questions": 10,
+  "questions": [ { "question_seq": 1, "question_id": "uuid",
+    "topic": "string", "question_text": "string",
+    "options": ["A","B","C","D"], "selected_option_index": null } ] }
+```
+
+`topic` stays on the question even though a runner need not render it: the
+weak-area roll-up is by topic, and a topic label is not part of the answer.
+
+Failure modes:
+
+- `404 NOT_FOUND` — the exam does not exist, is not published, or the caller is
+  not enrolled in its course. All three are the same answer, deliberately.
+- `422 EXAM_NOT_MCQ` — the exam declares no `question_count`/`assessment_type`,
+  so there is no paper to sample. Semantically invalid, not an internal fault.
+- `422 INSUFFICIENT_QUESTIONS` — the **course's** pool holds fewer active
+  questions of that `assessment_type` than the paper asks for. The message names
+  both numbers so a console can tell the centre how far short the pool is. The
+  count is re-checked after sampling as well, so a question retired between the
+  two never yields a short paper scored out of the full `max_score`.
+- `409 EXAM_ATTEMPT_ACTIVE` — an `in_progress` attempt already exists. The body
+  is the ordinary `{ code, message }` envelope and **carries no attempt id**:
+  the envelope has no details field and adding one for a single route would
+  break the rule that every client parses every error the same way. The client
+  finds the live attempt in `GET /api/v1/student/exam-attempts` — which returns
+  `in_progress` attempts with their `id` — and resumes it at
+  `GET /api/v1/student/exams/attempts/{id}`. That coupling is the resume
+  mechanism; neither half may be removed without the other.
+
+`GET /api/v1/student/exams/attempts/{id}` — resume: the same answer-free
+payload with whatever has been saved so far. A submitted, graded or abandoned
+attempt is `409 EXAM_ATTEMPT_NOT_ACTIVE` rather than being re-served as a
+paper; its review is the submit response. Another student's attempt id is
+`404`, never `403` — a `403` would confirm the id exists.
+
+`PATCH /api/v1/student/exams/attempts/{id}/answers` — save-as-you-go, and
+idempotent, so a client may retry a dropped save without reasoning about
+ordering.
+
+```json
+{ "answers": [ { "question_seq": 1, "selected_option_index": 2 } ] }
+```
+
+`selected_option_index` is `0..=3`, or `null` to clear an answer — `null` is
+unanswered and `0` is a real choice of A, which are different things. The whole
+batch is validated before any of it is written: a duplicated `question_seq`, an
+index outside A-D, an empty batch, or more than 200 answers is
+`400 VALIDATION_ERROR` on `answers`. A non-`in_progress` attempt is
+`409 EXAM_ATTEMPT_NOT_ACTIVE`. The response is
+`{ "attempt_id": "uuid", "saved": 10 }`; a `saved` below the number submitted
+means a `question_seq` was not part of this paper.
+
+`POST /api/v1/student/exams/attempts/{id}/submit` — grades server-side in one
+transaction from the stored key. Nothing the client sent participates in the
+arithmetic, and an unanswered question is simply incorrect. Submitting twice is
+`409 EXAM_ATTEMPT_NOT_ACTIVE`, not a re-grade. Only now is the key disclosed:
+
+```json
+{ "attempt_id": "uuid", "exam_id": "uuid", "exam_title": "string",
+  "total_questions": 10, "correct_answers": 8, "score": 8.0,
+  "max_score": 10.0, "score_percentage": 80.0,
+  "weak_topics": ["string"], "submitted_at": "RFC3339",
+  "review": [ { "question_seq": 1, "question_id": "uuid", "topic": "string",
+    "question_text": "string", "options": ["A","B","C","D"],
+    "selected_option_index": 2, "correct_option_index": 1,
+    "is_correct": false, "explanation": "string" } ] }
+```
+
+`weak_topics` is the distinct topics of the questions answered incorrectly.
+`explanation` is `"string"`, never `null`: it is NOT NULL in the schema because
+it drives the feedback screen.
+
+There is **no** `sync_targets`, no async push, and no second gradebook store.
+The admin gradebook (`GET /admin/exams/{exam_id}/attempts`) reads the same
+`exam_attempts` rows this route writes, so a queue or a duplicate table would
+only create a way for the two to disagree. Do not add one.
+
+### Student reports
+
+| Method | Path | Capability |
+|---|---|---|
+| GET | `/api/v1/admin/student-reports` | `ManagePrograms`; scoped for a sub-admin |
+| GET | `/api/v1/admin/students/{student_id}/report` | `ManagePrograms`, scoped via `student -> program_id` |
+
+There is **no new store behind these**. Both read the same `exam_attempts` and
+`exam_attempt_answers` rows a student's own submit writes, which is exactly why
+the design has no `sync_targets`, no queue and no mirrored gradebook: a second
+copy would only create a way for the admin's numbers and the student's to
+disagree. `GET /admin/exams/{exam_id}/attempts` is unchanged and still served —
+that is the per-exam view; this is the per-student one.
+
+`time_spent_seconds` is **derived** (`submitted_at - started_at`), not stored. A
+duration column would have to be kept true by every write path touching either
+timestamp, and would drift the first time one was corrected.
+
+Scoping follows `/admin/analytics` exactly: the caller's role decides *which
+query runs*, never a filter over a platform-wide result. A sub-admin sees only
+its `sub_admin_scopes` programs, reached by `exam_attempts -> students ->
+program_id`, and a sub-admin with no scopes gets an empty array — the correct
+answer, not a reason to fall back to the unscoped query. A student outside the
+scope is `404`, never `403`, because a `403` would confirm the id exists.
+
+#### `GET /api/v1/admin/student-reports`
+
+Every attempt, newest first, paginated like every other admin list: bare array
+body, `X-Total-Count`, `limit` 1-200 (default 50) and `offset` validated rather
+than clamped. Filters: `program_id`, `semester_id`, `course_id`, `student_id`,
+`exam_id`, `assessment_type`, `status`, `from`/`to` (RFC3339, on `started_at`),
+and `q` (student name, roll number, exam title).
+
+Each row is denormalised enough to render without a second request.
+
+```json
+[ { "attempt_id": "uuid", "student_id": "uuid", "student_name": "string",
+    "roll_number": "string", "program_id": "uuid", "program_name": "string",
+    "semester_number": 1, "course_id": "uuid", "course_code": "string",
+    "course_name": "string", "exam_id": "uuid", "exam_title": "string",
+    "assessment_type": "assignment|mid_term_quiz|semester_exam|null",
+    "attempt_no": 1, "total_questions": 10, "answered_questions": 9,
+    "correct_answers": 8, "score": 8.0, "max_score": 10.0,
+    "percentage": 80.0, "time_spent_seconds": 412,
+    "status": "in_progress|submitted|graded|abandoned",
+    "started_at": "RFC3339", "submitted_at": "RFC3339|null",
+    "weak_topics": ["string"] } ]
+```
+
+- `score`, `percentage` and `time_spent_seconds` are `null` until the attempt is
+  graded or submitted — never `0`, which would be a real measured claim.
+- `total_questions` is counted from the attempt's own stored paper, not from
+  `exams.question_count`: that is the *intended* size, and a historic attempt may
+  have been served a different one.
+- `weak_topics` is empty while the attempt is unsubmitted. Before grading, which
+  questions are wrong is part of the answer key, and an admin list is not an
+  exception to that.
+- `assessment_type` is `null` for an exam that is not an MCQ paper.
+
+#### `GET /api/v1/admin/students/{student_id}/report`
+
+One student's record: profile, per-course rollup, and weak topics aggregated
+across every graded attempt, descending by how often each was missed.
+
+```json
+{ "student_id": "uuid", "student_name": "string", "roll_number": "string",
+  "program_name": "string", "semester_number": 1, "lsc_code": "string|null",
+  "attempts_total": 0, "attempts_graded": 0,
+  "average_percentage": null, "best_percentage": null,
+  "total_time_spent_seconds": 0,
+  "by_course": [ { "course_id": "uuid", "course_code": "string",
+    "course_name": "string", "attempts": 0, "average_percentage": null } ],
+  "weak_topics": [ { "topic": "string", "missed_count": 0 } ] }
+```
+
+Averages are `null` with nothing to average, per the existing analytics rule;
+counts and summed durations are genuinely `0`. `by_course` is grouped from
+attempts, so a course the student has not sat has no line. `weak_topics` is at
+most 20 rows and counts only answers that were actually marked wrong — a NULL
+`is_correct` belongs to an ungraded attempt and must not invent weakness from an
+abandoned paper.
 
 ### List filters
 
