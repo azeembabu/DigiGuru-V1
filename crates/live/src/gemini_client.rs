@@ -84,6 +84,18 @@ pub trait LiveSessionClient: Send {
     /// Send one frame of captured student audio upstream.
     async fn send_audio_frame(&mut self, frame: Bytes) -> Result<()>;
 
+    /// Declare the start or end of a student turn.
+    ///
+    /// Automatic turn detection is disabled (`gemini_wire::realtime_input_config`),
+    /// so these are what tell the service a turn has begun and ended. `true`
+    /// during a tutor turn is also the interruption signal.
+    ///
+    /// Ordering matters and is the caller's responsibility: start, then audio,
+    /// then end. They go on the **control** queue so a start is never stuck
+    /// behind queued mic audio — an interruption that arrives after the frames
+    /// it was meant to precede is an interruption that did not happen.
+    async fn send_activity(&mut self, speaking: bool) -> Result<()>;
+
     /// Send a gateway-authored text turn (kickoff greeting, resume prompt, or
     /// per-turn curriculum context). `turn_complete = true` asks the model to
     /// respond now; `false` only adds context and waits for the student.
@@ -405,6 +417,21 @@ impl LiveSessionClient for GeminiLiveSessionClient {
         Ok(())
     }
 
+    async fn send_activity(&mut self, speaking: bool) -> Result<()> {
+        if self.outbound.is_closed() {
+            return Err(LiveError::Session(
+                "the Gemini Live session is closed".to_string(),
+            ));
+        }
+        let message = if speaking {
+            crate::gemini_wire::activity_start_message()
+        } else {
+            crate::gemini_wire::activity_end_message()
+        };
+        self.outbound.push_control(message.to_string());
+        Ok(())
+    }
+
     async fn send_text_turn(&mut self, text: &str, turn_complete: bool) -> Result<()> {
         if self.outbound.is_closed() {
             return Err(LiveError::Session(
@@ -653,6 +680,12 @@ impl StubLiveSessionClient {
 
 #[async_trait::async_trait]
 impl LiveSessionClient for StubLiveSessionClient {
+    /// The stub has no upstream to tell, and its script does not depend on
+    /// turn boundaries — so this records nothing and succeeds.
+    async fn send_activity(&mut self, _speaking: bool) -> Result<()> {
+        Ok(())
+    }
+
     async fn send_audio_frame(&mut self, frame: Bytes) -> Result<()> {
         self.sent_frames.push(frame);
         Ok(())

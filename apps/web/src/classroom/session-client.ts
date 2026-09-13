@@ -293,6 +293,16 @@ export class SessionClient {
     this.options.handlers.onFlushAudio?.();
   }
 
+  /**
+   * Declare the student's turn boundary upstream.
+   *
+   * Sent on the control channel, ahead of audio, because an interruption that
+   * arrives after the frames it was meant to precede is not an interruption.
+   */
+  setActivity(speaking: boolean): void {
+    this.send(clientMessage.activity(speaking));
+  }
+
   skipRecap(): void {
     this.send(clientMessage.skipRecap());
   }

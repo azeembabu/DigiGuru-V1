@@ -268,54 +268,48 @@ fn speech_config(config: &GeminiLiveConfig) -> Value {
     cfg
 }
 
-/// How long the student may pause mid-sentence before Live decides the
-/// utterance is finished and answers.
+/// Turn detection is the **client's** job, not the service's.
 ///
-/// The default is short enough that "What is the..." followed by a breath is
-/// treated as a complete question, and the tutor answers a fragment it had to
-/// guess at. 1200 ms is a natural thinking pause in speech and well past the
-/// gaps inside one sentence, so the student gets to finish.
+/// Automatic detection was tried both ways round and neither works in a browser
+/// playing the tutor through speakers:
 ///
-/// It is the *only* mechanical lever on "wait for the complete utterance": the
-/// decision is made inside Live, before anything reaches this process, so no
-/// amount of prompting can move it.
-const SILENCE_BEFORE_REPLY_MS: i64 = 1200;
-
-/// Audio kept from just before speech was detected, so a turn does not begin
-/// clipped.
-const PREFIX_PADDING_MS: i64 = 300;
-
-/// Turn detection, tuned to answer questions rather than noises.
+/// * With the microphone gated while the tutor speaks, the model never hears
+///   the student and cannot be interrupted at all.
+/// * With the microphone open, the model hears its own voice bleeding back
+///   through the speakers, treats it as the student speaking, and interrupts
+///   itself — observed as every tutor sentence cut off mid-word and the
+///   student's transcript arriving as disconnected fragments.
 ///
-/// The two sensitivities pull in opposite directions and are set accordingly.
+/// The two failures have the same root: the service cannot tell the student's
+/// voice from its own echo, and only the client has the information needed to
+/// decide — it knows exactly what it is playing, and how loud that comes back.
+/// So detection moves to the client, which declares turns explicitly with
+/// `activityStart` / `activityEnd`.
 ///
-/// `startOfSpeechSensitivity` is **HIGH**, i.e. quick to notice speech. It is
-/// tempting to set it LOW so coughs and background noise do not start a turn,
-/// and that was tried — but noticing speech is also what *interrupts* the
-/// tutor, and when a student talks over it their voice is already attenuated by
-/// the browser's echo cancellation (double-talk). Demanding strong evidence on
-/// top of that meant genuine interruptions were never registered, and the tutor
-/// talked over the student indefinitely. Being interruptible matters more than
-/// never reacting to a noise.
-///
-/// `endOfSpeechSensitivity` stays **LOW**, and with `silenceDurationMs` it is
-/// what actually protects against replying to fragments: the model waits out a
-/// thinking pause instead of answering half a sentence. That guard costs
-/// nothing on the interruption side, because it applies after speech has
-/// already been detected.
-///
-/// `activityHandling` is deliberately left at its default (interruption
-/// enabled). Barge-in is how a student stops a tutor that is talking too long,
-/// and the classroom depends on it — see the client's own VAD barge-in.
+/// Verified against the live endpoint before being relied on: a setup the
+/// service rejects closes the socket with 1007 and the classroom silently falls
+/// back to defaults.
 fn realtime_input_config() -> Value {
     json!({
-        "automaticActivityDetection": {
-            "startOfSpeechSensitivity": "START_SENSITIVITY_HIGH",
-            "endOfSpeechSensitivity": "END_SENSITIVITY_LOW",
-            "prefixPaddingMs": PREFIX_PADDING_MS,
-            "silenceDurationMs": SILENCE_BEFORE_REPLY_MS
-        }
+        "automaticActivityDetection": { "disabled": true }
     })
+}
+
+/// `{"realtimeInput":{"activityStart":{}}}` — the student has begun speaking.
+///
+/// Sent before the first audio frame of a turn. While the tutor is talking this
+/// is also the interruption signal: the service ends its own turn on it.
+pub fn activity_start_message() -> Value {
+    json!({ "realtimeInput": { "activityStart": {} } })
+}
+
+/// `{"realtimeInput":{"activityEnd":{}}}` — the student has stopped.
+///
+/// Sent after the last audio frame of a turn, once the client's VAD hangover
+/// has elapsed. The service does not answer until it arrives, which is what
+/// stops a mid-sentence pause being treated as a finished question.
+pub fn activity_end_message() -> Value {
+    json!({ "realtimeInput": { "activityEnd": {} } })
 }
 
 pub fn setup_message(config: &GeminiLiveConfig) -> Value {
@@ -749,35 +743,28 @@ mod tests {
         assert_eq!(ctx["clientContent"]["turnComplete"], false);
     }
 
-    /// Turn detection is configured, not left at the default.
-    ///
-    /// The defaults answer on any detected speech and decide an utterance has
-    /// ended after a short pause — which is why the tutor replied to coughs and
-    /// to half-finished sentences. This is the only place that behaviour can be
-    /// changed: the decision happens inside Live, before any audio reaches this
-    /// process, so it cannot be prompted away.
+    /// Turn detection is the client's, not the service's — see
+    /// `realtime_input_config` for why neither automatic mode works in a
+    /// browser playing the tutor through speakers.
     #[test]
-    fn setup_waits_for_a_finished_utterance_before_replying() {
+    fn setup_disables_automatic_turn_detection() {
         let setup = setup_message(&GeminiLiveConfig::new("k", "grounded instruction"));
         let vad = &setup["setup"]["realtimeInputConfig"]["automaticActivityDetection"];
-
-        // HIGH, deliberately: detecting speech is what interrupts the tutor.
-        assert_eq!(vad["startOfSpeechSensitivity"], "START_SENSITIVITY_HIGH");
-        assert_eq!(vad["endOfSpeechSensitivity"], "END_SENSITIVITY_LOW");
-        assert_eq!(vad["silenceDurationMs"], 1200);
-        assert_eq!(vad["prefixPaddingMs"], 300);
+        assert_eq!(vad["disabled"], true);
     }
 
-    /// Interruption stays enabled. A student must be able to talk over a tutor
-    /// that is going on too long — the classroom's own VAD barge-in depends on
-    /// it, and `NO_INTERRUPTION` would take that away.
+    /// The frames that replace it. Their exact shape is what the service
+    /// accepts; a typo here means turns that never start or never end, with no
+    /// error either way.
     #[test]
-    fn setup_leaves_barge_in_enabled() {
-        let setup = setup_message(&GeminiLiveConfig::new("k", "grounded instruction"));
-        assert!(
-            setup["setup"]["realtimeInputConfig"]["activityHandling"].is_null(),
-            "activityHandling must stay at its default; got: {}",
-            setup["setup"]["realtimeInputConfig"]
+    fn activity_frames_have_the_shape_the_service_accepts() {
+        assert_eq!(
+            activity_start_message(),
+            serde_json::json!({ "realtimeInput": { "activityStart": {} } })
+        );
+        assert_eq!(
+            activity_end_message(),
+            serde_json::json!({ "realtimeInput": { "activityEnd": {} } })
         );
     }
 

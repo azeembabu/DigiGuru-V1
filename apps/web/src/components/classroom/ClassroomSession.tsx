@@ -34,21 +34,36 @@ import { buttonClass } from "@/components/ui/Button";
 import { Logo } from "@/components/ui/Logo";
 
 /**
- * Mic capture is **continuous**: every frame goes upstream, including while the
- * tutor is talking.
+ * Turn-taking is decided **here**, not by the service.
  *
- * This matches the reference Live API client, and it is what makes interruption
- * work at all. Gemini ends its own turn when it hears the student — so the
- * student's voice has to reach it. Every scheme that withheld frames to stop the
- * model hearing its own echo also stopped it hearing a genuine interruption, and
- * no amount of tuning inside that design could have both.
+ * Gemini's automatic detection cannot work in a browser playing the tutor
+ * through speakers, and both settings of it failed in practice: with the
+ * microphone gated the model could never hear an interruption, and with it open
+ * the model heard its own voice bleeding back, took it for the student, and
+ * interrupted itself — every tutor sentence cut off mid-word, the student's
+ * transcript arriving as disconnected fragments.
  *
- * The echo that half-duplex was protecting against is handled where it should
- * be: `getUserMedia` acoustic echo cancellation, plus the playback flush on an
- * interrupted turn (`onFlushAudio`) so the speakers go quiet immediately. On
- * speakers in a live room some bleed can still reach the model; headphones
- * remove it entirely, which is what the reference client assumes.
+ * Only this side has what is needed to tell the two apart: it knows exactly what
+ * it is playing and how loudly that comes back. So the client runs the detector
+ * and declares turns with `activity` frames, and audio is sent only inside a
+ * declared turn — so bleed never reaches the model at all, and a real
+ * interruption is an explicit signal rather than something inferred from a
+ * waveform.
  */
+
+/** Mic level must clear this multiple of the measured bleed to count as the student. */
+const SPEECH_OVER_BLEED = 3.0;
+
+/** Absolute floor for that test, so near-silence cannot qualify as speech. */
+const SPEECH_MIN_LEVEL = 0.02;
+
+/**
+ * Frames of bleed measured before the detector will open a turn.
+ *
+ * The estimate starts at zero, so without this the tutor's first loud moment
+ * clears the threshold and opens a turn on the tutor's own voice.
+ */
+const BLEED_WARMUP_FRAMES = 15;
 
 /**
  * Queued tutor audio above which the header shows "tutor speaking".
@@ -123,6 +138,13 @@ export function ClassroomSession({
   const clientRef = useRef<SessionClient | null>(null);
   const captureRef = useRef<AudioCapture | null>(null);
   const playbackRef = useRef<AudioPlayback | null>(null);
+  /** True between `activity(true)` and `activity(false)` — a declared turn. */
+  const turnOpenRef = useRef(false);
+  /** Running estimate of the tutor's bleed level, learned while it plays. */
+  const bleedRef = useRef(0);
+  /** Frames of bleed seen this tutor turn; the detector is deaf until warmed up. */
+  const bleedFramesRef = useRef(0);
+
   /**
    * Live mirror of the VAD's speech state.
    *
@@ -279,6 +301,14 @@ export function ClassroomSession({
     // The mic is off, so nothing is being heard — including the held display
     // value and any timer still waiting to clear it.
     speakingRef.current = false;
+    // A turn left open would have the model waiting for an end that never
+    // comes.
+    if (turnOpenRef.current) {
+      turnOpenRef.current = false;
+      clientRef.current?.setActivity(false);
+    }
+    bleedRef.current = 0;
+    bleedFramesRef.current = 0;
     if (hearingTimer.current !== null) {
       clearTimeout(hearingTimer.current);
       hearingTimer.current = null;
@@ -306,21 +336,67 @@ export function ClassroomSession({
       // TTS streams from the model, heard locally as doubled, glitchy audio.
       // Withholding the send while the tutor is speaking means Gemini never
       // hears its own echo, so it never has a reason to self-interrupt.
-      // Every frame, always. See the note at the top of this file: withholding
-      // audio while the tutor speaks is what broke interruption, and it is the
-      // one thing the working reference client never does.
-      onFrame: (frame) => {
-        clientRef.current?.sendAudio(frame);
+      onFrame: (frame, level) => {
+        const tutorAudible = (playbackRef.current?.queuedSeconds ?? 0) > TUTOR_SPEAKING_GATE_S;
+
+        // While the tutor is audible, whatever the microphone hears is mostly
+        // its own voice. Learn that level — but never from frames already loud
+        // enough to be the student, or the student's voice teaches the detector
+        // to ignore them.
+        if (tutorAudible) {
+          bleedFramesRef.current += 1;
+          const warming = bleedFramesRef.current <= BLEED_WARMUP_FRAMES;
+          const loud = level > Math.max(bleedRef.current * SPEECH_OVER_BLEED, SPEECH_MIN_LEVEL);
+          if (warming || !loud) {
+            bleedRef.current = bleedRef.current * 0.97 + level * 0.03;
+          }
+        } else {
+          bleedFramesRef.current = 0;
+          bleedRef.current = 0;
+        }
+
+        // The student is speaking if the VAD says so and — while the tutor is
+        // audible — the signal is clearly louder than the bleed. When the tutor
+        // is silent there is nothing to confuse it with, so the VAD alone
+        // decides.
+        const overBleed =
+          !tutorAudible ||
+          (bleedFramesRef.current > BLEED_WARMUP_FRAMES &&
+            level > Math.max(bleedRef.current * SPEECH_OVER_BLEED, SPEECH_MIN_LEVEL));
+        const isStudent = speakingRef.current && overBleed;
+
+        if (isStudent && !turnOpenRef.current) {
+          turnOpenRef.current = true;
+          // Declared before the first frame. Upstream this both opens the turn
+          // and, if the tutor is mid-sentence, ends its turn.
+          clientRef.current?.setActivity(true);
+          // Silence the speakers at once rather than waiting for the round
+          // trip — and with them, the bleed.
+          if (tutorAudible) playbackRef.current?.stop();
+        }
+
+        // Audio flows only inside a declared turn, so the tutor's own voice
+        // never reaches the model.
+        if (turnOpenRef.current) clientRef.current?.sendAudio(frame);
       },
       onVad: (event) => {
         const talking = event === "speech_start";
         // Mirrored into a ref because `onFrame` runs on every 20 ms frame and
         // must read the current value, not the one captured when the capture
         // was constructed.
-        // The ref is what `onFrame` reads for barge-in; `hearing` below is
-        // what the UI shows. There is deliberately no third `speaking` state:
-        // it rendered the raw, gap-by-gap VAD signal and was the blinking.
+        // The ref is what `onFrame` reads; `hearing` below is what the UI
+        // shows. There is deliberately no third `speaking` state: it rendered
+        // the raw, gap-by-gap VAD signal and was the blinking.
         speakingRef.current = talking;
+
+        // End of speech closes the declared turn — after the VAD's hangover,
+        // so a pause between words does not end it. The model answers on this
+        // signal, which is what stops half a sentence being taken for a
+        // finished question.
+        if (!talking && turnOpenRef.current) {
+          turnOpenRef.current = false;
+          clientRef.current?.setActivity(false);
+        }
 
         // Held display value — see `hearing`. Driven from the event rather
         // than an effect, because the hold is a property of the transition,

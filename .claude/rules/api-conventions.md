@@ -1243,6 +1243,7 @@ JSON control messages. Every control message has `type` and, where it belongs to
 
 ```jsonc
 { "type": "session_init",  "block_id": "uuid", "resume": true }
+{ "type": "activity",      "speaking": true }
 { "type": "board_ack",     "seq": 42 }
 { "type": "board_error",   "seq": 42, "reason": "render_failed" }
 { "type": "skip_recap" }
@@ -1263,6 +1264,33 @@ JSON control messages. Every control message has `type` and, where it belongs to
 { "type": "session_end",   "reason": "quota" }
 { "type": "error",         "code": "UPSTREAM_UNAVAILABLE", "message": "..." }
 ```
+
+### Turn-taking is the client's
+
+Gemini Live's automatic turn detection is **disabled**
+(`realtimeInputConfig.automaticActivityDetection.disabled = true`). The client
+runs the detector and declares boundaries with `activity`, and the gateway
+forwards them upstream as `activityStart` / `activityEnd`.
+
+That is not a preference. Neither automatic setting works in a browser playing
+the tutor through speakers: with the microphone gated while the tutor speaks the
+model never hears an interruption, and with it open the model hears its own voice
+bleeding back, takes it for the student and interrupts itself — observed as every
+tutor sentence cut off mid-word and the student's transcript arriving as
+fragments. Only the client can tell the two apart, because only the client knows
+what it is playing and how loudly that returns to the microphone.
+
+Consequences a client must honour:
+
+- Audio frames are sent **only between** `activity{speaking:true}` and
+  `activity{speaking:false}`. Streaming outside a declared turn puts the tutor's
+  own bleed into the model's ear, which is the failure above.
+- `activity{speaking:true}` during a tutor turn **is** the interruption; there is
+  no separate interrupt message. The client should also flush local playback at
+  that moment, so the speakers go quiet without waiting for the round trip.
+- The model answers on `activity{speaking:false}`, so it must not be sent until
+  the client's VAD hangover has elapsed — sending it at the first gap between
+  words is what makes the tutor answer half a sentence.
 
 ### Rules
 

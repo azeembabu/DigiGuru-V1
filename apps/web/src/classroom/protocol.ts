@@ -192,6 +192,13 @@ export const clientMessage = {
       resume,
       ...(documentId ? { document_id: documentId } : {}),
     }),
+  /**
+   * The student started or stopped speaking, decided by our own VAD.
+   *
+   * Gemini's automatic turn detection is off, so these open and close the turn
+   * upstream — and `true` while the tutor is talking is the interruption.
+   */
+  activity: (speaking: boolean) => JSON.stringify({ type: "activity", speaking }),
   boardAck: (seq: number) => JSON.stringify({ type: "board_ack", seq }),
   boardError: (seq: number, reason: string) =>
     JSON.stringify({ type: "board_error", seq, reason }),

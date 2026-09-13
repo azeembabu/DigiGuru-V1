@@ -93,6 +93,17 @@ enum ClientMessage {
         #[serde(default)]
         resume: bool,
     },
+    /// The student started or stopped speaking, as decided by the client's own
+    /// VAD.
+    ///
+    /// Gemini's automatic turn detection is disabled, so these are what open
+    /// and close a turn upstream — and `speaking: true` during a tutor turn is
+    /// the interruption. Detection lives in the client because only the client
+    /// knows what it is playing and how loudly that returns to the microphone;
+    /// the service cannot tell the student's voice from its own echo.
+    Activity {
+        speaking: bool,
+    },
     BoardAck {
         seq: u32,
     },
@@ -649,6 +660,23 @@ speak.",
                                         Some(Box::new(StubLiveSessionClient::new(demo_script())));
                                 }
 
+                            }
+                            Ok(ClientMessage::Activity { speaking }) => {
+                                // Forwarded verbatim and immediately. This is
+                                // the interruption path, so it must not wait
+                                // behind anything — `send_activity` puts it on
+                                // the control queue for the same reason.
+                                if let Some(client) = live_client.as_mut() {
+                                    if let Err(err) = client.send_activity(speaking).await {
+                                        tracing::warn!(
+                                            ?err,
+                                            speaking,
+                                            "failed to forward a student activity signal upstream"
+                                        );
+                                    } else {
+                                        tracing::debug!(speaking, "student activity forwarded");
+                                    }
+                                }
                             }
                             Ok(ClientMessage::BoardAck { seq }) => {
                                 let outcome = sync_gate.on_board_ack(TurnSeq(seq));
