@@ -291,7 +291,30 @@ fn tutor_header(context: &AcademicContext, preamble: Option<&str>, locale: Optio
          Write the definition, the numbered points, the steps or the table so the \
          student can copy them into their notebook, then talk through what you have \
          written. A student who asked for notes needs something they can read, not only \
-         something they heard.\n",
+         something they heard.\n\
+         10. NEVER WRITE THE SAME THING TWICE. Look at what is already on the board \
+         before you call board_ops. If a heading or a point is already up there, do not \
+         write it again — build on it, add the next point, or highlight the line you are \
+         talking about. A board that repeats itself reads as a stutter, not as teaching.\n\
+         11. CHECK THAT THE STUDENT UNDERSTOOD. After you finish an idea, stop and ask \
+         them — briefly and in the language you are speaking — whether it made sense, or \
+         ask a one-line question that only someone who followed it could answer. Then \
+         WAIT. Do not move to the next idea until they have answered.\n\
+         12. IF THEY DID NOT UNDERSTAND, TEACH IT AGAIN DIFFERENTLY. Never simply repeat \
+         the same sentences louder or slower. Go back a step, use smaller words, and \
+         ground it in something from the student's own daily life in Kerala — a bus \
+         queue, a paddy field, a kitchen, a cricket match. Break the idea into two \
+         smaller ones and write the simpler version on the board. Then check again. The \
+         substance must still come only from the CURRICULUM CONTEXT; an everyday \
+         comparison is a way of explaining what the textbook says, never a way of adding \
+         something it does not say.\n\
+         13. BE A PERSON, NOT A READER. If the student says something conversational in \
+         the middle of the lesson — a greeting, a joke, that they are tired, that they \
+         have an exam on Friday — answer it warmly in a sentence or two, like a teacher \
+         would, and then pick the lesson back up where you left it. That is not an \
+         off-syllabus question and you must not abstain from it: the abstention rule is \
+         about questions on the subject matter whose answer is not in the CURRICULUM \
+         CONTEXT, not about ordinary human conversation.\n",
     );
 
     // LANGUAGE. Anchored on the student's recorded locale rather than left to
@@ -314,12 +337,12 @@ fn tutor_header(context: &AcademicContext, preamble: Option<&str>, locale: Optio
     };
     if primary.is_empty() {
         text.push_str(
-            "         10. LANGUAGE. Speak either Malayalam or English, following the student's \
+            "         14. LANGUAGE. Speak either Malayalam or English, following the student's \
              lead. ",
         );
     } else {
         text.push_str(&format!(
-            "         10. LANGUAGE. Speak {primary} by default — that is this student's recorded \
+            "         14. LANGUAGE. Speak {primary} by default — that is this student's recorded \
              language. Switch only if the student clearly and repeatedly speaks the other \
              language to you. ",
         ));
@@ -463,6 +486,40 @@ mod tests {
                 "{locale}: {text}"
             );
         }
+    }
+
+    /// Observed live: the tutor re-emitted the same heading and bullets on a
+    /// later turn, so the board showed the block twice. The renderer suppresses
+    /// the repeat mechanically; this is the half that stops it being emitted.
+    #[test]
+    fn the_tutor_is_told_not_to_rewrite_what_is_already_on_the_board() {
+        let text = grounded_instruction(&context(), None, Some("ml-IN"), &[chunk("Vritham", 57)]);
+        assert!(text.contains("10. NEVER WRITE THE SAME THING TWICE"), "got: {text}");
+    }
+
+    /// `pedagogy.md`: a comprehension-gate failure drops the tutor a tier and
+    /// re-explains rather than advancing. The prompt has to ask the question in
+    /// the first place, or the gate never has an answer to act on.
+    #[test]
+    fn the_tutor_checks_comprehension_and_reteaches_on_a_no() {
+        let text = grounded_instruction(&context(), None, Some("ml-IN"), &[chunk("Vritham", 57)]);
+        assert!(text.contains("11. CHECK THAT THE STUDENT UNDERSTOOD"), "got: {text}");
+        assert!(text.contains("12. IF THEY DID NOT UNDERSTAND"), "got: {text}");
+        assert!(text.contains("Never simply repeat"), "got: {text}");
+    }
+
+    /// NN-4 must not swallow small talk. Abstention is about subject-matter
+    /// questions with no supporting chunk; a greeting is not one, and a tutor
+    /// that answers "how are you" with "that is not in the textbook" is broken
+    /// rather than safe. The rule says so explicitly, and it must not be
+    /// rephrased into anything that softens abstention itself.
+    #[test]
+    fn conversational_asides_are_answered_without_weakening_abstention() {
+        let text = grounded_instruction(&context(), None, Some("ml-IN"), &[chunk("Vritham", 57)]);
+        assert!(text.contains("13. BE A PERSON, NOT A READER"), "got: {text}");
+        assert!(text.contains("not about ordinary human conversation"), "got: {text}");
+        // The abstention rule itself is still stated in full.
+        assert!(text.contains("CURRICULUM CONTEXT"), "got: {text}");
     }
 
     /// The language rule must name a concrete default rather than asking the

@@ -131,6 +131,15 @@ export function ClassroomSession({ blockId }: { blockId: string }) {
   // opening turn, and "the board is blank because nothing has been taught
   // yet" reads very differently from "the classroom is broken".
   const [boardReady, setBoardReady] = useState(false);
+  /**
+   * Mirrors `document.fullscreenElement` rather than tracking our own intent.
+   *
+   * The browser exits fullscreen on its own — Escape, a tab switch, a window
+   * manager — and none of those routes call our handler. A flag we set
+   * ourselves would then say "fullscreen" over a windowed page, and the button
+   * would offer to expand something already collapsed.
+   */
+  const [fullscreen, setFullscreen] = useState(false);
   // Captions. The Live service can repeat the last partial output chunk when
   // a turn ends (observed live), so consecutive identical entries from the
   // same speaker are collapsed rather than shown twice.
@@ -398,6 +407,32 @@ export function ClassroomSession({ blockId }: { blockId: string }) {
     if (el) el.scrollTop = el.scrollHeight;
   }, [captions]);
 
+  useEffect(() => {
+    const sync = () => setFullscreen(document.fullscreenElement !== null);
+    document.addEventListener("fullscreenchange", sync);
+    sync();
+    return () => document.removeEventListener("fullscreenchange", sync);
+  }, []);
+
+  /**
+   * Fullscreen is requested on the whole page, not on the board element.
+   * Fullscreening the canvas alone would take the transcript, the topic and
+   * the microphone control off screen — the board is the biggest part of the
+   * classroom, not the whole of it.
+   *
+   * Rejections are swallowed: a browser may refuse (an iframe without
+   * `allowfullscreen`, a policy block) and a refused *cosmetic* request is not
+   * something to interrupt a lesson with. `fullscreenchange` keeps the label
+   * honest either way.
+   */
+  const toggleFullscreen = useCallback(() => {
+    if (document.fullscreenElement) {
+      void document.exitFullscreen().catch(() => {});
+      return;
+    }
+    void document.documentElement.requestFullscreen().catch(() => {});
+  }, []);
+
   const connected = state === "ready";
   const worstAck = turns.reduce((max, entry) => Math.max(max, entry.ackMs), 0);
   const violations = turns.filter((entry) => entry.violation).length;
@@ -459,23 +494,22 @@ export function ClassroomSession({ blockId }: { blockId: string }) {
             </button>
           ) : null}
           {/*
-            Barge-in is manual, not automatic-on-VAD: browser echo
-            cancellation is unreliable for audio scheduled through raw Web
-            Audio nodes, so the mic hears the tutor's own voice and local VAD
-            cannot tell that apart from the student genuinely interrupting.
-            Automatic interruption on that false signal was the doubled/
-            flickering-voice bug. A button the student presses on purpose has
-            no such ambiguity.
+            There is deliberately no Interrupt button. Barging in is what
+            speaking does — the student talks and the tutor stops, the way it
+            works in a room — and a button that duplicates that only adds a
+            control to think about mid-lesson. `SessionClient.interrupt()` is
+            still called on a real barge-in; only the manual affordance is
+            gone.
           */}
-          {connected && tutorSpeaking ? (
-            <button
-              type="button"
-              onClick={() => clientRef.current?.interrupt()}
-              className={buttonClass("outline", "px-3 py-1.5 text-[13px]")}
-            >
-              Interrupt
-            </button>
-          ) : null}
+          <button
+            type="button"
+            onClick={toggleFullscreen}
+            aria-pressed={fullscreen}
+            title={fullscreen ? "Leave fullscreen (Esc)" : "Fill the screen"}
+            className={buttonClass("outline", "px-3 py-1.5 text-[13px]")}
+          >
+            {fullscreen ? "Minimise" : "Fullscreen"}
+          </button>
           {started ? (
             <button
               type="button"

@@ -36,8 +36,34 @@ const FLOW_BOTTOM = 0.72;
 /** Matches the `HOLD_MAX` the gateway enforces, for the renderer's own warning. */
 export const HOLD_MAX_MS = 400;
 
+/**
+ * The chalk hand. Malayalam first in the stack, because the Latin face
+ * (Caveat) declares no Malayalam coverage and the browser would otherwise fall
+ * through to a printed system face for the script that carries most of the
+ * lesson. Chilanka is a real Malayalam handwriting font, so conjuncts shape
+ * properly rather than being faked.
+ *
+ * The families come from `--font-chalk-ml` / `--font-chalk`, declared in
+ * `app/layout.tsx` so Next hosts and preloads them. They are named literally
+ * here rather than read from the CSS variables because Fabric measures text
+ * against a canvas 2D context, which does not resolve `var()`.
+ */
 const BOARD_FONT =
-  '"Noto Sans Malayalam", "Noto Sans", system-ui, -apple-system, "Segoe UI", sans-serif';
+  '"Chilanka", "Caveat", "Noto Sans Malayalam", system-ui, -apple-system, sans-serif';
+
+/**
+ * Resolves once the chalk faces are actually loaded.
+ *
+ * Fabric lays a Textbox out the moment it is constructed, so text built before
+ * the webfont arrives is measured against the fallback and keeps those wrong
+ * line breaks after the swap — the wrap is baked into the object, not
+ * recomputed on repaint. Waiting costs nothing after the first turn (the
+ * promise is already settled) and the NN-1 hold has 400 ms of headroom.
+ */
+function chalkFontsReady(): Promise<unknown> {
+  if (typeof document === "undefined" || !("fonts" in document)) return Promise.resolve();
+  return document.fonts.ready;
+}
 
 /**
  * The chalkboard palette.
@@ -167,6 +193,21 @@ export class BoardRenderer {
   private canvas: fabric.Canvas;
   /** Element ids -> objects, so `highlight` can target an earlier element. */
   private readonly byId = new Map<string, fabric.FabricObject>();
+  /**
+   * Signatures of the content already written on the current page.
+   *
+   * The tutor re-emits a heading and its bullets when it returns to a topic —
+   * observed live as the same "പരിസ്ഥിതി പഠനം (Environmental Studies)" block
+   * written twice, one under the other, which reads as a stutter rather than
+   * as teaching. The system instruction asks it not to, but a prompt is a
+   * request; this is the mechanical half, and it is cheap: content already
+   * visible on this page is not written again.
+   *
+   * Scoped to the page, not to the session: after a `clear_first` or a page
+   * break the board is empty, and re-stating the heading of the topic being
+   * continued is then correct rather than repetitive.
+   */
+  private readonly onPage = new Set<string>();
   /** Vertical cursor in normalised units, so successive ops stack down the board. */
   private flowY = 0.06;
   private disposed = false;
@@ -211,6 +252,10 @@ export class BoardRenderer {
   async apply(ops: BoardOp[], clearFirst: boolean): Promise<void> {
     if (this.disposed) return;
 
+    // Before any text is constructed — see `chalkFontsReady`.
+    await chalkFontsReady();
+    if (this.disposed) return;
+
     if (clearFirst) this.clear();
 
     for (const op of ops) {
@@ -253,6 +298,7 @@ export class BoardRenderer {
   clear(): void {
     this.canvas.remove(...this.canvas.getObjects());
     this.byId.clear();
+    this.onPage.clear();
     this.flowY = 0.06;
   }
 
@@ -319,6 +365,16 @@ export class BoardRenderer {
   private applyOp(op: BoardOp): void {
     const { width, height } = this.viewport;
 
+    // Already on this page — see `onPage`. Silently skipped rather than
+    // reported through `onOpError`: a repeat is not a render failure, and a
+    // `board_error` would drop the turn to the text fallback for something
+    // that rendered correctly the first time.
+    const signature = contentSignature(op);
+    if (signature !== null) {
+      if (this.onPage.has(signature)) return;
+      this.onPage.add(signature);
+    }
+
     switch (op.kind) {
       case "heading": {
         this.ensureRoom(0.1);
@@ -327,7 +383,7 @@ export class BoardRenderer {
           top: height * this.flowY,
           width: width * 0.88,
           fontSize: Math.max(20, Math.round(width * 0.038)),
-          fontWeight: "700",
+          fontWeight: "400",
           fill: CHALK_WHITE,
           shadow: chalkGlow("rgba(243, 241, 231, 0.5)"),
           charSpacing: 24,
@@ -528,5 +584,28 @@ export class BoardRenderer {
     this.disposed = true;
     this.byId.clear();
     void this.canvas.dispose();
+  }
+}
+
+/**
+ * What an op *says*, independent of the id it was emitted under.
+ *
+ * Ids are per-turn, so they cannot detect a repeat; the content can. Returns
+ * `null` for ops that are meaningless to compare — a `highlight` targets an
+ * element rather than adding content, and two `draw` ops with the same points
+ * are usually a deliberate overlay rather than a mistake.
+ */
+function contentSignature(op: BoardOp): string | null {
+  switch (op.kind) {
+    case "heading":
+      return `heading:${op.text.trim()}`;
+    case "bullets":
+      return `bullets:${op.items.map((item) => item.trim()).join("\u0000")}`;
+    case "math":
+      return `math:${op.latex.trim()}`;
+    case "image":
+      return `image:${op.reference}`;
+    default:
+      return null;
   }
 }
