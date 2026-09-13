@@ -31,7 +31,7 @@
 //! tests exercise, so it must keep working.
 
 use std::sync::Once;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Query, State};
@@ -328,6 +328,10 @@ async fn handle_socket(mut socket: WebSocket, state: AppState, user_id: UserId) 
     // failure on every turn.
     let mut audit = board_audit::BoardAudit::disabled();
     let mut recorded_session = false;
+    // Barge-in diagnostics; see the `Message::Binary` arm.
+    let mut student_frames_in_turn: u32 = 0;
+    let mut last_frame_report = Instant::now();
+
     // The turn the model is currently narrating. `AudioChunk` events from
     // the stub don't carry their own `seq` (per the `LiveModelEvent`
     // contract), so it is tracked from the most recent accepted `board_ops`.
@@ -688,6 +692,26 @@ speak.",
                         // charged but dropped is honest, whereas one sent but
                         // uncharged is a quota hole.
                         meter.note_audio_frame().await;
+
+                        // Barge-in diagnostics. Interruption depends on the
+                        // student's audio actually reaching Gemini while the
+                        // tutor is mid-turn, and "it does not stop" has three
+                        // possible causes that look identical from outside:
+                        // the browser withholding frames, the gateway not
+                        // forwarding them, or Gemini not acting on them. This
+                        // says which, once a second, and only while a turn is
+                        // in flight — so it is silent in normal operation.
+                        student_frames_in_turn += 1;
+                        if current_seq.is_some() && last_frame_report.elapsed() >= Duration::from_secs(1) {
+                            tracing::info!(
+                                frames = student_frames_in_turn,
+                                turn = ?current_seq.map(|s| s.get()),
+                                "student audio forwarded upstream during an active tutor turn"
+                            );
+                            last_frame_report = Instant::now();
+                            student_frames_in_turn = 0;
+                        }
+
                         match live_client.as_mut() {
                             Some(client) => {
                                 if let Err(err) = client.send_audio_frame(data).await {

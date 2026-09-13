@@ -287,11 +287,22 @@ const PREFIX_PADDING_MS: i64 = 300;
 
 /// Turn detection, tuned to answer questions rather than noises.
 ///
-/// `START_SENSITIVITY_LOW` demands stronger evidence before treating sound as
-/// the start of speech — a cough, a keyboard, a chair, someone talking in the
-/// next room. `END_SENSITIVITY_LOW` makes it slower to declare the student
-/// finished, which together with `silenceDurationMs` is what stops the tutor
-/// interrupting a sentence that was still being formed.
+/// The two sensitivities pull in opposite directions and are set accordingly.
+///
+/// `startOfSpeechSensitivity` is **HIGH**, i.e. quick to notice speech. It is
+/// tempting to set it LOW so coughs and background noise do not start a turn,
+/// and that was tried — but noticing speech is also what *interrupts* the
+/// tutor, and when a student talks over it their voice is already attenuated by
+/// the browser's echo cancellation (double-talk). Demanding strong evidence on
+/// top of that meant genuine interruptions were never registered, and the tutor
+/// talked over the student indefinitely. Being interruptible matters more than
+/// never reacting to a noise.
+///
+/// `endOfSpeechSensitivity` stays **LOW**, and with `silenceDurationMs` it is
+/// what actually protects against replying to fragments: the model waits out a
+/// thinking pause instead of answering half a sentence. That guard costs
+/// nothing on the interruption side, because it applies after speech has
+/// already been detected.
 ///
 /// `activityHandling` is deliberately left at its default (interruption
 /// enabled). Barge-in is how a student stops a tutor that is talking too long,
@@ -299,7 +310,7 @@ const PREFIX_PADDING_MS: i64 = 300;
 fn realtime_input_config() -> Value {
     json!({
         "automaticActivityDetection": {
-            "startOfSpeechSensitivity": "START_SENSITIVITY_LOW",
+            "startOfSpeechSensitivity": "START_SENSITIVITY_HIGH",
             "endOfSpeechSensitivity": "END_SENSITIVITY_LOW",
             "prefixPaddingMs": PREFIX_PADDING_MS,
             "silenceDurationMs": SILENCE_BEFORE_REPLY_MS
@@ -750,7 +761,8 @@ mod tests {
         let setup = setup_message(&GeminiLiveConfig::new("k", "grounded instruction"));
         let vad = &setup["setup"]["realtimeInputConfig"]["automaticActivityDetection"];
 
-        assert_eq!(vad["startOfSpeechSensitivity"], "START_SENSITIVITY_LOW");
+        // HIGH, deliberately: detecting speech is what interrupts the tutor.
+        assert_eq!(vad["startOfSpeechSensitivity"], "START_SENSITIVITY_HIGH");
         assert_eq!(vad["endOfSpeechSensitivity"], "END_SENSITIVITY_LOW");
         assert_eq!(vad["silenceDurationMs"], 1200);
         assert_eq!(vad["prefixPaddingMs"], 300);
