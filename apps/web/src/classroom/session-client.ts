@@ -68,6 +68,16 @@ export interface SessionClientHandlers {
    * device-agnostic where it can).
    */
   onFlushAudio?: () => void;
+  /**
+   * The board ops for a turn, raised as they arrive and before they are
+   * rendered.
+   *
+   * Purely observational — it exists so the classroom can keep the op-log for
+   * note export (`pedagogy.md`: a note is a client-side render of the op-log,
+   * not a server artifact). It must stay synchronous and cheap: it runs inside
+   * the NN-1 hold window, and anything slow here delays the ACK.
+   */
+  onBoardOps?: (msg: BoardOpsMessage) => void;
   onQuotaWarning?: (remainingMs: number) => void;
   onSessionEnd?: (reason: string) => void;
   onError?: (code: string, message: string) => void;
@@ -200,6 +210,7 @@ export class SessionClient {
         this.options.handlers.onSessionReady(msg);
         break;
       case "board_ops":
+        this.options.handlers.onBoardOps?.(msg);
         this.renderTurn(msg);
         break;
       case "turn_state":

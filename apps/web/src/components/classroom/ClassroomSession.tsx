@@ -13,7 +13,8 @@
  * so the first turn's ops have something to paint onto.
  */
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { createPortal } from "react-dom";
 import Link from "next/link";
 
 import { API_BASE_URL } from "@/lib/api";
@@ -22,7 +23,13 @@ import { AudioPlayback } from "@/classroom/audio-playback";
 import { BoardRenderer, HOLD_MAX_MS } from "@/classroom/board-renderer";
 import { SessionClient } from "@/classroom/session-client";
 import type { ConnectionState } from "@/classroom/session-client";
-import type { BoardOp, SessionReady, Transcript, TurnState } from "@/classroom/protocol";
+import type {
+  BoardOp,
+  BoardOpsMessage,
+  SessionReady,
+  Transcript,
+  TurnState,
+} from "@/classroom/protocol";
 import { buttonClass } from "@/components/ui/Button";
 import { Logo } from "@/components/ui/Logo";
 
@@ -52,6 +59,11 @@ const PLAYBACK_GATE_S = 0.05;
  */
 const PREROLL_MS = 300;
 const PREROLL_FRAMES = Math.ceil(PREROLL_MS / 20);
+
+/** `document.body` never changes identity, so there is nothing to subscribe to. */
+function subscribeNever(): () => void {
+  return () => {};
+}
 
 /** `http(s)://host/api/v1` -> `ws(s)://host/ws/session`. */
 function webSocketUrl(): string {
@@ -86,6 +98,13 @@ interface TurnLogEntry {
   seq: number;
   ackMs: number;
   violation: boolean;
+}
+
+/** One `board_ops` frame plus the citation that arrived with its turn. */
+interface BoardLogEntry {
+  seq: number;
+  ops: BoardOp[];
+  turn: TurnState | null;
 }
 
 export function ClassroomSession({ blockId }: { blockId: string }) {
@@ -140,11 +159,22 @@ export function ClassroomSession({ blockId }: { blockId: string }) {
    * would offer to expand something already collapsed.
    */
   const [fullscreen, setFullscreen] = useState(false);
+  const [notesOpen, setNotesOpen] = useState(true);
+  /**
+   * The board op-log, kept for note export.
+   *
+   * `pedagogy.md`: an exported note is a client-side render of the ops, not a
+   * server artifact — so there is nothing to fetch and nothing to keep in sync,
+   * but it does mean the ops have to be retained here as they go past. Each
+   * entry carries the citation that was current when it was written, because
+   * that is what makes the export a study note rather than a wall of text.
+   */
+  const [boardLog, setBoardLog] = useState<BoardLogEntry[]>([]);
   // Captions. The Live service can repeat the last partial output chunk when
   // a turn ends (observed live), so consecutive identical entries from the
   // same speaker are collapsed rather than shown twice.
   const [captions, setCaptions] = useState<Transcript[]>([]);
-  const captionsScrollRef = useRef<HTMLDivElement | null>(null);
+  const notesScrollRef = useRef<HTMLDivElement | null>(null);
   // Whether the tutor currently has audio queued — drives both the "hearing
   // you" vs "tutor speaking" indicator and whether the manual Interrupt
   // button is shown. `AudioPlayback.queuedSeconds` is imperative, so this is
@@ -307,6 +337,21 @@ export function ClassroomSession({ blockId }: { blockId: string }) {
         onTurnState: (msg) => {
           setTurn(msg);
           setBoardReady(true);
+          // Attaches the citation to the ops already logged for this turn: the
+          // gateway sends `board_ops` first and `turn_state` after it, so the
+          // page number is not known at the moment the ops are captured.
+          setBoardLog((prev) =>
+            prev.map((entry) =>
+              entry.seq === msg.seq && entry.turn === null ? { ...entry, turn: msg } : entry,
+            ),
+          );
+        },
+        onBoardOps: (msg: BoardOpsMessage) => {
+          setBoardLog((prev) => {
+            const next = msg.clear_first ? [] : prev;
+            if (msg.ops.length === 0) return next;
+            return [...next, { seq: msg.seq, ops: msg.ops, turn: null }];
+          });
         },
         onTranscript: (msg) => {
           setCaptions((prev) => {
@@ -349,6 +394,7 @@ export function ClassroomSession({ blockId }: { blockId: string }) {
     setStarted(true);
     setBoardReady(false);
     setCaptions([]);
+    setBoardLog([]);
     try {
       await client.connect();
     } finally {
@@ -403,7 +449,7 @@ export function ClassroomSession({ blockId }: { blockId: string }) {
     // suspect for the board content observed shifted and clipped on one
     // side — `scrollTop` on the caption panel directly can only ever affect
     // that one element.
-    const el = captionsScrollRef.current;
+    const el = notesScrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [captions]);
 
@@ -433,6 +479,51 @@ export function ClassroomSession({ blockId }: { blockId: string }) {
     void document.documentElement.requestFullscreen().catch(() => {});
   }, []);
 
+  /**
+   * Exports the lesson as a PDF through the browser's own print pipeline.
+   *
+   * Deliberately not a PDF library. Every candidate needs the font embedded to
+   * write Malayalam at all, and an export that silently drops the script the
+   * lesson is taught in is worse than no export. The print path uses the fonts
+   * already loaded on the page, so what is saved is what was on the board —
+   * conjuncts and all — and "Save as PDF" is a destination in every browser's
+   * print dialogue.
+   *
+   * The printable document is rendered into the page behind `@media print`
+   * rules rather than opened in a new window, which a pop-up blocker would
+   * eat.
+   */
+  const downloadNotes = useCallback(() => {
+    window.print();
+  }, []);
+
+  /** Plain-text fallback: the same notes on the clipboard, for a chat or an email. */
+  const copyNotes = useCallback(async () => {
+    const text = notesAsText(boardLog, captions, turn);
+    try {
+      await navigator.clipboard.writeText(text);
+      setDetail("Notes copied to the clipboard.");
+    } catch {
+      setDetail("The browser would not let the page write to the clipboard.");
+    }
+  }, [boardLog, captions, turn]);
+
+  /**
+   * The portal target for the printable notes, resolved after mount.
+   *
+   * `document.body` cannot be read during render without breaking SSR, so it
+   * is reached through `useSyncExternalStore`: the server snapshot is `null`
+   * and the client snapshot is the body, which is exactly the split React
+   * wants and which hydrates without a mismatch warning. The store never
+   * changes, hence the no-op subscribe.
+   */
+  const printHost = useSyncExternalStore(
+    subscribeNever,
+    () => document.body as HTMLElement | null,
+    () => null,
+  );
+
+  const lastCaption = captions[captions.length - 1] ?? null;
   const connected = state === "ready";
   const worstAck = turns.reduce((max, entry) => Math.max(max, entry.ackMs), 0);
   const violations = turns.filter((entry) => entry.violation).length;
@@ -484,6 +575,26 @@ export function ClassroomSession({ blockId }: { blockId: string }) {
           </span>
         ) : null}
         <div className="ml-auto flex items-center gap-2">
+          {/*
+            The microphone state moved here when the caption strip became a
+            three-line glance surface. It is genuinely load-bearing: the mic is
+            gated closed while the tutor speaks (half-duplex), and without this
+            a student talking into a closed gate has no way to tell why nothing
+            is being heard.
+          */}
+          {connected && micOn ? (
+            <span
+              className={`hidden rounded-full px-2.5 py-1 text-[12px] font-medium sm:inline ${
+                tutorSpeaking
+                  ? "bg-white/5 text-gray-400"
+                  : speaking
+                    ? "bg-emerald-500/15 text-emerald-300"
+                    : "bg-white/5 text-gray-400"
+              }`}
+            >
+              {tutorSpeaking ? "tutor speaking" : speaking ? "hearing you" : "listening"}
+            </span>
+          ) : null}
           {connected ? (
             <button
               type="button"
@@ -501,14 +612,46 @@ export function ClassroomSession({ blockId }: { blockId: string }) {
             still called on a real barge-in; only the manual affordance is
             gone.
           */}
+          {started ? (
+            <button
+              type="button"
+              onClick={copyNotes}
+              className={buttonClass("ghost", "px-3 py-1.5 text-[13px]")}
+            >
+              Copy notes
+            </button>
+          ) : null}
+          {started ? (
+            <button
+              type="button"
+              onClick={downloadNotes}
+              className={buttonClass("outline", "px-3 py-1.5 text-[13px]")}
+            >
+              Download PDF
+            </button>
+          ) : null}
+          {/*
+            Two buttons rather than one that changes label, so the state the
+            student is in is readable from which one is live rather than from
+            reading the text on a single toggle.
+          */}
           <button
             type="button"
             onClick={toggleFullscreen}
-            aria-pressed={fullscreen}
-            title={fullscreen ? "Leave fullscreen (Esc)" : "Fill the screen"}
-            className={buttonClass("outline", "px-3 py-1.5 text-[13px]")}
+            disabled={fullscreen}
+            title="Fill the screen"
+            className={buttonClass("outline", `px-3 py-1.5 text-[13px] ${fullscreen ? "opacity-40" : ""}`)}
           >
-            {fullscreen ? "Minimise" : "Fullscreen"}
+            Fullscreen
+          </button>
+          <button
+            type="button"
+            onClick={toggleFullscreen}
+            disabled={!fullscreen}
+            title="Back to the window (Esc)"
+            className={buttonClass("outline", `px-3 py-1.5 text-[13px] ${!fullscreen ? "opacity-40" : ""}`)}
+          >
+            Minimise
           </button>
           {started ? (
             <button
@@ -533,7 +676,7 @@ export function ClassroomSession({ blockId }: { blockId: string }) {
         </p>
       ) : null}
 
-      <div className="flex min-h-0 flex-1 flex-col p-3 sm:p-4">
+      <div className="dg-stage flex min-h-0 flex-1 gap-3 p-3 sm:p-4">
         {/*
           The slate and its wooden surround. The frame is CSS chrome and the
           canvas is only the green field inside it — keeping the woodwork out
@@ -607,41 +750,28 @@ export function ClassroomSession({ blockId }: { blockId: string }) {
               bar, and the renderer pages the board at `FLOW_BOTTOM` (0.72), so
               a line of chalk is never written behind a caption.
             */}
-            {started ? (
+            {/*
+              The live caption strip: the most recent thing said, clamped to
+              three lines.
+
+              It is a glance surface, not a record — the full conversation is
+              in the notebook beside the board. Scrolling it back was the wrong
+              affordance on the slate: a student reading upward through history
+              is a student not watching the board the audio is waiting on. The
+              clamp also fixes the band's height, so the chalk above it never
+              shifts as captions arrive.
+            */}
+            {started && lastCaption ? (
               <div
-                ref={captionsScrollRef}
                 aria-live="polite"
-                className="pointer-events-none absolute inset-x-0 bottom-0 max-h-[32%] overflow-y-auto scroll-smooth bg-gradient-to-t from-black/70 via-black/45 to-transparent px-4 pb-3 pt-10 sm:px-6"
+                className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 via-black/50 to-transparent px-4 pb-3 pt-10 sm:px-6"
               >
-                {captions.length === 0 ? (
-                  <p className="text-[13px] text-white/45">
-                    {!micOn
-                      ? "Microphone off."
-                      : tutorSpeaking
-                        ? "Tutor speaking — your microphone is muted."
-                        : speaking
-                          ? "Hearing you…"
-                          : "Listening. What you both say appears here."}
-                  </p>
-                ) : (
-                  <ul className="space-y-1">
-                    {captions.map((entry, index) => (
-                      <li
-                        key={index}
-                        className={`text-[15px] leading-snug ${
-                          entry.source === "tutor"
-                            ? "text-white/95"
-                            : "text-white/60"
-                        }`}
-                      >
-                        <span className="mr-1.5 align-[1px] text-[10px] font-semibold uppercase tracking-[0.12em] text-white/40">
-                          {entry.source === "tutor" ? "Tutor" : "You"}
-                        </span>
-                        {entry.text}
-                      </li>
-                    ))}
-                  </ul>
-                )}
+                <p className="dg-caption-clamp text-[15px] leading-snug text-white/95">
+                  <span className="mr-1.5 align-[1px] text-[10px] font-semibold uppercase tracking-[0.12em] text-white/40">
+                    {lastCaption.source === "tutor" ? "Tutor" : "You"}
+                  </span>
+                  {lastCaption.text}
+                </p>
               </div>
             ) : null}
           </div>
@@ -652,9 +782,262 @@ export function ClassroomSession({ blockId }: { blockId: string }) {
             <span />
           </div>
         </div>
+
+        {/*
+          The notebook. Shown only in the windowed view: fullscreen is the
+          "just the board" mode, and a panel taking a fifth of the screen there
+          would defeat the reason for asking for fullscreen in the first place.
+          The three-line caption strip on the slate carries the conversation
+          while it is hidden.
+        */}
+        {started && notesOpen && !fullscreen ? (
+          <aside className="dg-notes flex w-full max-w-sm shrink-0 flex-col overflow-hidden rounded-xl border border-white/10 bg-[#101512] lg:w-80">
+            <div className="flex items-center gap-2 border-b border-white/10 px-3 py-2">
+              <h2 className="text-[11px] font-semibold uppercase tracking-[0.14em] text-gray-500">
+                Notebook
+              </h2>
+              <button
+                type="button"
+                onClick={() => setNotesOpen(false)}
+                className="ml-auto text-[12px] text-gray-500 hover:text-gray-300"
+              >
+                Hide
+              </button>
+            </div>
+            <div ref={notesScrollRef} className="min-h-0 flex-1 overflow-y-auto px-3 py-3">
+              {captions.length === 0 ? (
+                <p className="text-[13px] text-gray-500">
+                  Everything said in this lesson is collected here, and the board is written
+                  up underneath it. Use Download PDF to keep it.
+                </p>
+              ) : (
+                <ul className="space-y-3">
+                  {captions.map((entry, index) => (
+                    <li key={index}>
+                      <p
+                        className={`text-[10px] font-semibold uppercase tracking-[0.12em] ${
+                          entry.source === "tutor" ? "text-emerald-400/70" : "text-indigo-300/70"
+                        }`}
+                      >
+                        {entry.source === "tutor" ? "Tutor" : "You"}
+                      </p>
+                      <p className="mt-0.5 text-[14px] leading-relaxed text-gray-200">
+                        {entry.text}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              {boardLog.length > 0 ? (
+                <section className="mt-5 border-t border-white/10 pt-4">
+                  <h3 className="text-[10px] font-semibold uppercase tracking-[0.14em] text-gray-500">
+                    From the board
+                  </h3>
+                  <div className="mt-2 space-y-3">
+                    {boardLog.map((entry) => (
+                      <BoardNote key={entry.seq} entry={entry} />
+                    ))}
+                  </div>
+                </section>
+              ) : null}
+            </div>
+          </aside>
+        ) : null}
+
+        {started && !notesOpen && !fullscreen ? (
+          <button
+            type="button"
+            onClick={() => setNotesOpen(true)}
+            className="dg-notes shrink-0 self-start rounded-xl border border-white/10 bg-[#101512] px-3 py-2 text-[12px] text-gray-400 hover:text-gray-200"
+          >
+            Notebook
+          </button>
+        ) : null}
       </div>
+
+      {/*
+        The printable document. In the page rather than in a pop-up so no
+        blocker can eat it, and hidden except under `@media print` — see
+        `downloadNotes` for why this goes through the browser's print pipeline
+        instead of a PDF library.
+
+        Portalled to `<body>` deliberately. The print stylesheet hides
+        `body > *` and re-shows this one node; while it was nested inside
+        `<main>` it was hidden along with its ancestor, and the export came out
+        as a blank page. A portal makes it a sibling of the classroom rather
+        than a descendant, so exactly one rule governs what prints.
+      */}
+      {printHost
+        ? createPortal(
+            <article className="dg-print-notes" aria-hidden>
+        <h1>{turn?.topic ?? "Digi Guru lesson"}</h1>
+        <p className="dg-print-meta">{lessonMeta(session, turn)}</p>
+
+        {boardLog.length > 0 ? (
+          <>
+            <h2>Notes from the board</h2>
+            {boardLog.map((entry) => (
+              <PrintableBoardNote key={entry.seq} entry={entry} />
+            ))}
+          </>
+        ) : null}
+
+        {captions.length > 0 ? (
+          <>
+            <h2>What was said</h2>
+            {captions.map((entry, index) => (
+              <p key={index} className="dg-print-line">
+                <b>{entry.source === "tutor" ? "Tutor" : "You"}:</b> {entry.text}
+              </p>
+            ))}
+          </>
+              ) : null}
+            </article>,
+            printHost,
+          )
+        : null}
     </main>
   );
+}
+
+/**
+ * The breadcrumb line under the export's title.
+ *
+ * `session_ready.context` is `Record<string, unknown>` on the wire — the
+ * gateway is free to add keys to it without a client change — so each field is
+ * narrowed here rather than trusted. A key that is missing or the wrong type is
+ * left out of the line instead of printing "undefined" onto a study note.
+ */
+function lessonMeta(session: SessionReady | null, turn: TurnState | null): string {
+  const context = session?.context ?? {};
+  const text = (key: string): string | null => {
+    const value = context[key];
+    return typeof value === "string" && value.trim() !== "" ? value : null;
+  };
+  const num = (key: string, label: string): string | null => {
+    const value = context[key];
+    return typeof value === "number" ? `${label} ${value}` : null;
+  };
+  return [
+    text("program"),
+    num("semester", "Semester"),
+    num("block_no", "Block"),
+    turn?.chapter ? `Chapter ${turn.chapter}` : null,
+    turn?.page != null ? `Page ${turn.page}` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+/** One turn of the board, rendered as notebook lines. */
+function BoardNote({ entry }: { entry: BoardLogEntry }) {
+  return (
+    <div>
+      {entry.turn?.page != null ? (
+        <p className="text-[11px] text-gray-500">
+          {entry.turn.chapter ? `${entry.turn.chapter} · ` : ""}p{entry.turn.page}
+        </p>
+      ) : null}
+      {entry.ops.map((op, index) => (
+        <BoardOpText key={index} op={op} />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * The text an op carries, or nothing.
+ *
+ * `draw` and `highlight` have no words of their own — a shape and an emphasis
+ * on an element written earlier — so they contribute nothing to a note and are
+ * skipped rather than rendered as a placeholder.
+ */
+function BoardOpText({ op }: { op: BoardOp }) {
+  switch (op.kind) {
+    case "heading":
+      return <p className="text-[14px] font-semibold text-white">{op.text}</p>;
+    case "bullets":
+      return (
+        <ul className="mt-1 space-y-0.5">
+          {op.items.map((item, index) => (
+            <li key={index} className="text-[13px] leading-relaxed text-gray-300">
+              — {item}
+            </li>
+          ))}
+        </ul>
+      );
+    case "math":
+      return (
+        <p className="mt-1 font-mono text-[13px] text-emerald-200/90">{op.latex}</p>
+      );
+    case "image":
+      return <p className="mt-1 text-[12px] italic text-gray-500">figure {op.reference}</p>;
+    default:
+      return null;
+  }
+}
+
+/** The same turn, with no Tailwind — the print stylesheet owns this typography. */
+function PrintableBoardNote({ entry }: { entry: BoardLogEntry }) {
+  return (
+    <section className="dg-print-turn">
+      {entry.ops.map((op, index) => {
+        switch (op.kind) {
+          case "heading":
+            return <h3 key={index}>{op.text}</h3>;
+          case "bullets":
+            return (
+              <ul key={index}>
+                {op.items.map((item, i) => (
+                  <li key={i}>{item}</li>
+                ))}
+              </ul>
+            );
+          case "math":
+            return <pre key={index}>{op.latex}</pre>;
+          case "image":
+            return <p key={index}>[figure {op.reference}]</p>;
+          default:
+            return null;
+        }
+      })}
+      {entry.turn?.page != null ? (
+        <p className="dg-print-cite">
+          {entry.turn.chapter ? `${entry.turn.chapter}, ` : ""}page {entry.turn.page}
+        </p>
+      ) : null}
+    </section>
+  );
+}
+
+/** The clipboard version of what `Download PDF` prints. */
+function notesAsText(
+  boardLog: BoardLogEntry[],
+  captions: Transcript[],
+  turn: TurnState | null,
+): string {
+  const lines: string[] = [];
+  if (turn?.topic) lines.push(turn.topic, "");
+  if (boardLog.length > 0) {
+    lines.push("NOTES FROM THE BOARD", "");
+    for (const entry of boardLog) {
+      for (const op of entry.ops) {
+        if (op.kind === "heading") lines.push(op.text);
+        else if (op.kind === "bullets") lines.push(...op.items.map((item) => `  - ${item}`));
+        else if (op.kind === "math") lines.push(`  ${op.latex}`);
+      }
+      if (entry.turn?.page != null) lines.push(`  (page ${entry.turn.page})`);
+      lines.push("");
+    }
+  }
+  if (captions.length > 0) {
+    lines.push("WHAT WAS SAID", "");
+    for (const entry of captions) {
+      lines.push(`${entry.source === "tutor" ? "Tutor" : "You"}: ${entry.text}`);
+    }
+  }
+  return lines.join("\n");
 }
 
 function StatusPill({

@@ -355,6 +355,136 @@ body {
   background: linear-gradient(180deg, #2a2f33 0%, #171a1d 55%, #3d332a 55%, #2b241d 100%);
 }
 
+/*
+ * The live caption strip on the slate: at most three lines, ever.
+ *
+ * A fixed clamp rather than a max-height, so the band's height does not change
+ * as a sentence grows and shove the chalk above it around mid-lesson.
+ */
+.dg-caption-clamp {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}
+
+/*
+ * The printable notes.
+ *
+ * Hidden on screen and revealed only for print — see `downloadNotes` for why
+ * the export goes through the browser's print pipeline rather than a PDF
+ * library (Malayalam needs the font, and the page already has it).
+ */
+.dg-print-notes {
+  display: none;
+}
+
+@media print {
+  /*
+   * Print the notes and nothing else. `body > *` is hidden wholesale rather
+   * than the classroom being restyled for paper: the board is a canvas, the
+   * captions are an overlay, and neither paginates.
+   */
+  body > * {
+    display: none !important;
+  }
+
+  /* The app paints a near-black ground; on paper that is a full-bleed black
+     page under the notes, and on a printer it is a cartridge. */
+  html,
+  body {
+    background: #fff !important;
+    color: #000 !important;
+    min-height: 0 !important;
+  }
+
+  body > .dg-print-notes {
+    display: block !important;
+    position: static;
+    margin: 0;
+    padding: 0;
+    color: #000;
+    background: #fff;
+    font-family: "Noto Sans Malayalam", ui-sans-serif, system-ui, sans-serif;
+    font-size: 11.5pt;
+    line-height: 1.55;
+  }
+
+  .dg-print-notes h1 {
+    margin: 0 0 2pt;
+    font-size: 18pt;
+    font-weight: 700;
+  }
+
+  .dg-print-notes h2 {
+    margin: 18pt 0 6pt;
+    font-size: 13pt;
+    font-weight: 700;
+    border-bottom: 0.5pt solid #999;
+    padding-bottom: 2pt;
+  }
+
+  .dg-print-notes h3 {
+    margin: 10pt 0 3pt;
+    font-size: 12pt;
+    font-weight: 700;
+  }
+
+  .dg-print-meta {
+    margin: 0 0 6pt;
+    color: #555;
+    font-size: 9.5pt;
+  }
+
+  .dg-print-notes ul {
+    margin: 0 0 4pt;
+    padding-left: 16pt;
+    list-style: disc;
+  }
+
+  .dg-print-notes pre {
+    margin: 4pt 0;
+    font-family: ui-monospace, monospace;
+    font-size: 10.5pt;
+    white-space: pre-wrap;
+  }
+
+  /* A turn is a unit of the lesson; splitting one across a page break makes a
+     heading land alone at the foot of a page, away from what it introduces. */
+  .dg-print-turn {
+    margin-bottom: 8pt;
+    break-inside: avoid;
+  }
+
+  .dg-print-cite {
+    margin: 2pt 0 0;
+    color: #666;
+    font-size: 9pt;
+    font-style: italic;
+  }
+
+  .dg-print-line {
+    margin: 0 0 4pt;
+    break-inside: avoid;
+  }
+
+  @page {
+    margin: 16mm;
+  }
+}
+
+@media (max-width: 1023px) {
+  .dg-stage {
+    flex-direction: column;
+  }
+  /* Capped so the board keeps the larger half of a short window. */
+  .dg-notes {
+    max-height: 34vh;
+    max-width: none;
+  }
+}
+
 @media (max-width: 640px) {
   .dg-chalkboard {
     padding: 8px 8px 20px;
