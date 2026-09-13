@@ -34,107 +34,32 @@ import { buttonClass } from "@/components/ui/Button";
 import { Logo } from "@/components/ui/Logo";
 
 /**
- * Mic frames are withheld while at least this much tutor audio is queued.
- * Small and non-zero: `queuedSeconds` briefly reads a tiny positive number
- * even right as a turn finishes, and treating that as "still speaking" for a
- * moment is harmless, whereas gating on `> 0` exactly would flap on/off with
- * every scheduling jitter.
+ * Mic capture is **continuous**: every frame goes upstream, including while the
+ * tutor is talking.
+ *
+ * This matches the reference Live API client, and it is what makes interruption
+ * work at all. Gemini ends its own turn when it hears the student — so the
+ * student's voice has to reach it. Every scheme that withheld frames to stop the
+ * model hearing its own echo also stopped it hearing a genuine interruption, and
+ * no amount of tuning inside that design could have both.
+ *
+ * The echo that half-duplex was protecting against is handled where it should
+ * be: `getUserMedia` acoustic echo cancellation, plus the playback flush on an
+ * interrupted turn (`onFlushAudio`) so the speakers go quiet immediately. On
+ * speakers in a live room some bleed can still reach the model; headphones
+ * remove it entirely, which is what the reference client assumes.
  */
-const PLAYBACK_GATE_S = 0.05;
 
 /**
- * How much of the student's speech to hold back while the tutor is talking, so
- * that the moment the gate opens it can be sent ahead of the live frames.
+ * Queued tutor audio above which the header shows "tutor speaking".
  *
- * Without this, a student who starts answering before the tutor has quite
- * finished loses the front of their own sentence: the gate is closed, those
- * frames are dropped, and the model receives a fragment starting mid-word.
- * That was the "sentences are not connected" symptom. 300 ms covers a normal
- * overlap without hoarding enough audio to matter if it is discarded.
- *
- * Sending this pre-roll cannot revive the echo bug it sits next to: the echo
- * problem was Gemini interrupting its OWN in-flight stream on hearing itself.
- * By the time this is flushed the tutor's stream has already ended, so a little
- * echo tail at the head of the student's turn has nothing to interrupt.
+ * A display threshold only — it no longer gates anything. `queuedSeconds`
+ * reads a tiny positive number for a moment as a turn ends, and treating that
+ * as speech briefly is harmless where flapping on `> 0` would not be.
  */
-/*
- * Sized to cover the barge-in window as well as an ordinary overlap. Barge-in
- * only fires after 500 ms of the student talking, so a 300 ms buffer had
- * already discarded the first syllable of the very sentence being used to
- * interrupt — Gemini would receive "...go back" and have to guess at the rest.
- */
-const PREROLL_MS = 700;
-const PREROLL_FRAMES = Math.ceil(PREROLL_MS / 20);
+const TUTOR_SPEAKING_GATE_S = 0.05;
 
-/**
- * How long the student must keep talking, while the tutor is talking, before
- * the tutor is cut off.
- *
- * This is the escape hatch from a deadlock that made the classroom unusable:
- * mic frames are withheld whenever tutor audio is queued (to stop Gemini
- * hearing its own echo and self-interrupting), the playback queue holds whole
- * turns, and the tutor was told to work through a unit paragraph by paragraph.
- * Together that meant the mic was shut for the entire turn — the student could
- * not be heard at all, so the tutor never stopped, so the mic never reopened.
- *
- * 350 ms is long enough that a syllable of leaked echo does not trigger it, and
- * short enough to feel like interrupting a person. On trigger, playback is
- * flushed immediately, which also removes the echo source — so even a false
- * positive cannot loop: it stops the tutor once, and the student says
- * "continue".
- */
-const BARGE_IN_MS = 500;
-const BARGE_IN_FRAMES = Math.ceil(BARGE_IN_MS / 20);
-
-/**
- * How much louder than the tutor's own bleed the student has to be before the
- * tutor is cut off.
- *
- * The first version of barge-in counted *any* sustained speech while the tutor
- * was talking — and while the tutor is talking, the mic hears the tutor through
- * the speakers. That is sustained speech by every measure the VAD has, so a
- * small sound, or nothing at all, could cut the lesson off. It reintroduced the
- * self-interrupting echo problem that withholding mic frames exists to prevent.
- *
- * Level is what separates the two. Speaker bleed arrives attenuated by the room;
- * the person holding the microphone does not. Requiring a clear multiple of the
- * *measured* bleed — rather than a fixed threshold, which cannot know the
- * volume setting or whether headphones are plugged in — is what makes "talk
- * over it" work without "sneeze over it" working.
- */
-const BARGE_IN_OVER_ECHO = 3.5;
-
-/** Floor for that comparison, so near-silence cannot make any sound qualify. */
-const BARGE_IN_MIN_LEVEL = 0.03;
-
-/**
- * Gated frames spent measuring the bleed before barge-in may fire at all.
- *
- * Without it the estimate starts at zero, so for the first moments of every
- * tutor turn the bleed itself clears the threshold and — because the estimate
- * is frozen while a candidate is in progress — it never catches up. Simulated
- * before shipping: with loud bleed and a silent student, that fired a false
- * interrupt every single turn.
- */
-const BARGE_IN_WARMUP_FRAMES = 20;
-
-/**
- * How long the mic gate is held open after a barge-in.
- *
- * This is what actually stops the tutor, and the previous version did not do
- * it. Flushing local playback only drops what is already buffered — the model
- * keeps generating, more audio arrives, and the tutor carries on mid-sentence.
- * The only thing that stops Gemini is Gemini *hearing* the student, and while
- * the gate is closed it never can.
- *
- * So a barge-in unlatches the gate and holds it open long enough for the whole
- * interrupting sentence to reach the model, rather than for the single frame
- * that triggered it. Long enough to say "wait, go back" without being so long
- * that the tutor's next turn is talking into an open microphone.
- */
-const BARGE_IN_HOLD_MS = 2500;
-
-/** `document.body` never changes identity, so there is nothing to subscribe to. */
+/** `subscribeNever` has no store to subscribe to; `document.body` never changes. */
 function subscribeNever(): () => void {
   return () => {};
 }
@@ -198,31 +123,13 @@ export function ClassroomSession({
   const clientRef = useRef<SessionClient | null>(null);
   const captureRef = useRef<AudioCapture | null>(null);
   const playbackRef = useRef<AudioPlayback | null>(null);
-  /** Student speech captured while the mic was gated — see `PREROLL_MS`. */
-  const prerollRef = useRef<Int16Array[]>([]);
-  /** Consecutive gated frames loud enough to be the student — see `BARGE_IN_MS`. */
-  const bargeInRef = useRef(0);
   /**
-   * Running estimate of how loud the tutor's own audio arrives back at the mic.
+   * Live mirror of the VAD's speech state.
    *
-   * Learned only while the gate is closed, which is exactly when everything the
-   * mic hears is the tutor. It rises slowly so a student talking over the tutor
-   * cannot drag it up to their own level within the barge-in window, and it is
-   * reset whenever the tutor stops, because the next turn may be at a different
-   * volume or through different speakers.
+   * Only the held `hearing` label reads it now — the barge-in that used to
+   * depend on it is gone with the gate, because Gemini's own turn detection
+   * does that job once the audio actually reaches it.
    */
-  const echoLevelRef = useRef(0);
-  /** Gated frames so far this turn; barge-in is deaf until the warm-up passes. */
-  const gatedFramesRef = useRef(0);
-  /**
-   * When the barge-in hold expires (`performance.now()` ms), or 0 for "closed".
-   *
-   * While this is in the future the half-duplex gate is bypassed, so the
-   * student's voice reaches Gemini and its own turn detection cuts the tutor
-   * off. Without it, barge-in was purely cosmetic.
-   */
-  const bargeOpenUntilRef = useRef(0);
-  /** Live mirror of `speaking`, readable from the per-frame callback. */
   const speakingRef = useRef(false);
   /**
    * Re-entrancy latch for `start()`, set SYNCHRONOUSLY before its first
@@ -316,7 +223,7 @@ export function ClassroomSession({
     // `setState` directly on entry.
     if (!started) return;
     const id = setInterval(() => {
-      setTutorSpeaking((playbackRef.current?.queuedSeconds ?? 0) > PLAYBACK_GATE_S);
+      setTutorSpeaking((playbackRef.current?.queuedSeconds ?? 0) > TUTOR_SPEAKING_GATE_S);
     }, 150);
     return () => clearInterval(id);
   }, [started]);
@@ -368,7 +275,6 @@ export function ClassroomSession({
   const stopMic = useCallback(async () => {
     await captureRef.current?.stop();
     captureRef.current = null;
-    prerollRef.current = [];
     setMicOn(false);
     // The mic is off, so nothing is being heard — including the held display
     // value and any timer still waiting to clear it.
@@ -400,72 +306,10 @@ export function ClassroomSession({
       // TTS streams from the model, heard locally as doubled, glitchy audio.
       // Withholding the send while the tutor is speaking means Gemini never
       // hears its own echo, so it never has a reason to self-interrupt.
-      onFrame: (frame, level) => {
-        // A barge-in holds the gate open even while the tutor still has audio
-        // queued — that is the whole point of it.
-        const holdingOpen = performance.now() < bargeOpenUntilRef.current;
-        const gated =
-          !holdingOpen && (playbackRef.current?.queuedSeconds ?? 0) > PLAYBACK_GATE_S;
-        if (gated) {
-          // Hold the tail end of what the student is saying rather than
-          // discarding it outright.
-          const roll = prerollRef.current;
-          roll.push(frame);
-          if (roll.length > PREROLL_FRAMES) roll.shift();
-
-          gatedFramesRef.current += 1;
-          const warmingUp = gatedFramesRef.current <= BARGE_IN_WARMUP_FRAMES;
-
-          // Barge-in: sustained speech that is also clearly louder than the
-          // tutor's own bleed. Both conditions are required — speech alone is
-          // what the tutor's voice looks like, and loudness alone is what a
-          // door slam looks like.
-          const overEcho =
-            level > Math.max(echoLevelRef.current * BARGE_IN_OVER_ECHO, BARGE_IN_MIN_LEVEL);
-
-          // Learn the bleed level, but only from frames that are not already
-          // candidates — otherwise the student's own voice trains the estimate
-          // upward and silences their interrupt before it completes. Simulated
-          // before shipping: without this freeze, a genuine barge-in never
-          // fired at all. During warm-up everything trains it, because nothing
-          // is allowed to fire yet.
-          if (warmingUp || !overEcho) {
-            echoLevelRef.current = echoLevelRef.current * 0.97 + level * 0.03;
-          }
-
-          if (!warmingUp && speakingRef.current && overEcho) {
-            bargeInRef.current += 1;
-            if (bargeInRef.current >= BARGE_IN_FRAMES) {
-              bargeInRef.current = 0;
-              // Stop the tutor locally first — that silences the speakers, and
-              // with them the bleed.
-              playbackRef.current?.stop();
-              clientRef.current?.interrupt();
-              // Then open the gate, which is what actually ends the turn: the
-              // student's voice now reaches Gemini, whose own turn detection
-              // stops generating. A local flush alone left the model talking.
-              bargeOpenUntilRef.current = performance.now() + BARGE_IN_HOLD_MS;
-              gatedFramesRef.current = 0;
-              echoLevelRef.current = 0;
-            }
-          } else {
-            bargeInRef.current = 0;
-          }
-          return;
-        }
-
-        bargeInRef.current = 0;
-        // The tutor has stopped, so there is no bleed to measure any more and
-        // the next turn may be at a different volume.
-        echoLevelRef.current = 0;
-        gatedFramesRef.current = 0;
-        // Gate just opened: lead with whatever the student had already started
-        // saying, in order, before the live frames.
-        const roll = prerollRef.current;
-        if (roll.length > 0) {
-          prerollRef.current = [];
-          for (const held of roll) clientRef.current?.sendAudio(held);
-        }
+      // Every frame, always. See the note at the top of this file: withholding
+      // audio while the tutor speaks is what broke interruption, and it is the
+      // one thing the working reference client never does.
+      onFrame: (frame) => {
         clientRef.current?.sendAudio(frame);
       },
       onVad: (event) => {
