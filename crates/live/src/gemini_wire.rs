@@ -653,8 +653,6 @@ mod tests {
         assert_eq!(ctx["clientContent"]["turnComplete"], false);
     }
 
-    use super::*;
-
     #[test]
     fn setup_declares_board_ops_as_a_function_tool() {
         let setup = setup_message(&GeminiLiveConfig::new("k", "grounded instruction"));

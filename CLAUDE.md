@@ -163,6 +163,12 @@ pnpm --filter web lint
 docker compose -f infra/docker-compose.yml up -d   # local deps
 sqlx migrate run                # apply migrations
 
+# Full local database setup -- migrations, the bootstrap admin, and both
+# seeders -- is documented end to end in docs/DATABASE.md. It also explains why
+# no pg_dump is committed (PII, and a second unreviewed copy of the schema) and
+# what is deliberately NOT reproducible from the repo (the Qdrant corpus, the
+# Gemini key, the NN-3 quota ledger).
+
 # First login: create the bootstrap super-admin. Nothing in migrations/ or
 # migrations/seed/ inserts an admin — a committed credential is a published
 # credential (security.md) — so the admin console cannot be signed into until
@@ -181,4 +187,9 @@ cargo run -p gateway --bin create_admin -- \
 ADMIN_PASSWORD=... cargo run -p gateway --bin create_admin -- ...   # or --password-stdin
 
 cargo run -p evals              # RAGAs golden-set harness
+
+# Fill a local database with a working dataset: catalogue, students, 30 days of
+# tutoring activity, and the MCQ question pool the exam engine samples. Run
+# create_admin first -- the document and question stages need a real owner.
+cargo run -p gateway --bin seed_dev
 ```

@@ -3,7 +3,7 @@
 //! `student_courses`" (`CLAUDE.md`).
 
 use chrono::{DateTime, Utc};
-use dg_core::{CourseId, EnrollmentStatus, StudentId};
+use dg_core::{CourseId, EnrollmentStatus, SemesterId, StudentId};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -32,6 +32,41 @@ pub async fn assign(pool: &PgPool, student_id: StudentId, course_id: CourseId) -
     .fetch_one(pool)
     .await
     .map_err(Error::from_sqlx)
+}
+
+/// Enrols a student in every course of one semester, returning how many rows
+/// were created.
+///
+/// This is what makes self-registration usable without an administrator: a
+/// student reaches content only through `student_courses` (`CLAUDE.md`), so a
+/// signed-up student with no rows here has a dashboard with nothing on it and
+/// no classroom they may enter. The semester is the right granularity because
+/// it is what the student chose at signup, and courses hang off it.
+///
+/// One statement, not a loop: the set is decided and inserted by the database
+/// in a single round trip, so it cannot half-apply, and a course added to the
+/// semester between the read and the write cannot produce a partial enrolment.
+/// `ON CONFLICT DO NOTHING` makes it idempotent — re-running for a student who
+/// is already enrolled is a no-op rather than a unique violation, which matters
+/// because an administrator may have assigned some of these by hand.
+pub async fn enroll_in_semester(
+    pool: &PgPool,
+    student_id: StudentId,
+    semester_id: SemesterId,
+) -> Result<u64> {
+    let result = sqlx::query!(
+        r#"
+        INSERT INTO student_courses (student_id, course_id)
+        SELECT $1, c.id FROM courses c WHERE c.semester_id = $2
+        ON CONFLICT (student_id, course_id) DO NOTHING
+        "#,
+        student_id.into_uuid(),
+        semester_id.into_uuid()
+    )
+    .execute(pool)
+    .await
+    .map_err(Error::from_sqlx)?;
+    Ok(result.rows_affected())
 }
 
 pub async fn list_by_student(pool: &PgPool, student_id: StudentId) -> Result<Vec<StudentCourse>> {

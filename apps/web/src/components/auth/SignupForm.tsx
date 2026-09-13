@@ -24,7 +24,14 @@ import { SelectInput } from "@/components/ui/SelectInput";
 import { SubmitButton } from "@/components/ui/SubmitButton";
 import { TextInput } from "@/components/ui/TextInput";
 
-type SignupResponse = { user_id: string; student_id: string };
+type SignupResponse = {
+  user_id: string;
+  student_id: string;
+  role: string;
+  is_first_login: boolean;
+  /** Courses auto-assigned from the chosen semester; 0 means the dashboard will be bare. */
+  enrolled_courses: number;
+};
 
 export function SignupForm() {
   const router = useRouter();
@@ -112,7 +119,7 @@ export function SignupForm() {
 
     setPending(true);
     try {
-      await apiFetch<SignupResponse>("/auth/signup", {
+      const created = await apiFetch<SignupResponse>("/auth/signup", {
         method: "POST",
         body: JSON.stringify({
           full_name,
@@ -127,10 +134,18 @@ export function SignupForm() {
         }),
       });
 
-      // Signup returns ids only and sets no cookies
-      // (`apps/gateway/src/auth/signup.rs`), so the student is not logged in
-      // yet — send them to sign in rather than pretending they have a session.
-      router.push("/login?registered=1");
+      // Registration is complete on its own: no administrator approves it,
+      // the gateway issues the same session cookies `/auth/login` does, and it
+      // enrols the student in their semester's courses
+      // (`apps/gateway/src/auth/signup.rs`). So the student goes to their
+      // dashboard rather than being sent to a login form to retype the
+      // password they just chose.
+      //
+      // `refresh()` first: the session cookies arrived on this response, and
+      // without discarding the router cache the dashboard can be served from a
+      // copy rendered while the student was still anonymous.
+      router.refresh();
+      router.push(created.enrolled_courses > 0 ? "/dashboard" : "/portal");
     } catch (error) {
       if (error instanceof ApiError) {
         setFormError(error.isValidation ? "Please correct the highlighted fields." : error.message);

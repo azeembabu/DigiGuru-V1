@@ -109,6 +109,49 @@ pub async fn find_by_roll_number(pool: &PgPool, roll_number: &str) -> Result<Opt
     .map_err(Error::from_sqlx)
 }
 
+/// Points a student at the first block of their semester, returning whether one
+/// was found.
+///
+/// `current_block_id` is what `/me/context` reports as `current_block`, and it
+/// is what the classroom opens. Nothing else writes it for a brand-new student,
+/// so a self-registered student would otherwise reach a dashboard they cannot
+/// study from: enrolled in courses, with no block to enter.
+///
+/// "First" is the lowest-numbered active block of the lowest-coded course in the
+/// semester. The ordering is total and deterministic, so two students who
+/// register into the same semester start in the same place — and a course or
+/// block added later cannot retroactively change where an existing student was
+/// put, because this runs once at signup.
+///
+/// Only `active` blocks are eligible: an inactive block is one an administrator
+/// has deliberately taken out of circulation, and starting a student on it would
+/// route around that decision.
+pub async fn start_at_semester(
+    pool: &PgPool,
+    student_id: StudentId,
+    semester_id: SemesterId,
+) -> Result<bool> {
+    let result = sqlx::query!(
+        r#"
+        UPDATE students SET current_block_id = (
+            SELECT b.id
+            FROM blocks b
+            JOIN courses c ON c.id = b.course_id
+            WHERE c.semester_id = $2 AND b.status = 'active'
+            ORDER BY c.code, b.block_no
+            LIMIT 1
+        ), updated_at = now()
+        WHERE id = $1 AND current_block_id IS NULL
+        "#,
+        student_id.into_uuid(),
+        semester_id.into_uuid()
+    )
+    .execute(pool)
+    .await
+    .map_err(Error::from_sqlx)?;
+    Ok(result.rows_affected() > 0)
+}
+
 pub async fn roll_number_taken(pool: &PgPool, roll_number: &str) -> Result<bool> {
     let row = sqlx::query!(
         r#"SELECT 1 as present FROM students WHERE roll_number = $1"#,

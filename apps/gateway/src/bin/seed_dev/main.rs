@@ -21,6 +21,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 mod activity;
+mod assessment;
 mod catalogue;
 
 #[path = "../../auth/password.rs"]
@@ -124,6 +125,7 @@ async fn main() {
 
     let cat = catalogue::seed(&pool, &opts).await;
     activity::seed(&pool, &cat, &opts).await;
+    assessment::seed(&pool, &cat).await;
 
     println!(
         "\nSeeded program {} -- {} semesters, {} courses, {} blocks, {} students, {} documents.",

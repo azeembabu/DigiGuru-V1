@@ -68,6 +68,49 @@ page count reads the header.
 - CORS: `X-Total-Count` must stay on the gateway's `expose_headers` allow-list, or a
   browser client cannot read it.
 
+## Student self-registration
+
+`POST /api/v1/auth/signup` is the **only** way a student account is created —
+`POST /admin/users` rejects `role: "student"` — and it completes onboarding on
+its own. **No administrator approves a registration.** `users.status` defaults
+to `active`, so there is no pending state to clear.
+
+Registration does three things, not one, because any of them left undone leaves
+the student unable to study:
+
+1. Creates the `users` + `students` rows.
+2. Enrols the student in **every course of the semester they chose**. A student
+   reaches content only through `student_courses` (`CLAUDE.md`), so without this
+   the dashboard has no courses and no classroom may be entered.
+3. Sets `students.current_block_id` to the first active block of that semester —
+   the lowest `block_no` of the lowest `code` course. This is what `/me/context`
+   returns as `current_block` and what the classroom opens.
+
+The response carries the **same session cookies `/auth/login` issues** (`dg_access`,
+`dg_refresh`, both httpOnly/SameSite=Strict), so the client routes straight to the
+dashboard rather than to a login form. `201 Created`:
+
+```json
+{ "user_id": "uuid", "student_id": "uuid", "role": "student",
+  "is_first_login": true, "enrolled_courses": 3 }
+```
+
+`role` and `is_first_login` mirror `LoginResponse` so post-auth routing is one
+code path on both. `enrolled_courses` lets a client distinguish an empty
+dashboard caused by an empty semester from one caused by a bug; `0` means the
+semester has no courses yet.
+
+Steps 2 and 3 are **best-effort**: they are logged at error level on failure and
+do not fail the request. The account already exists by then, and returning an
+error for an email that is now registered would leave the student able neither to
+retry nor to sign in.
+
+This is not a relaxation of authorization. `student_courses` remains the single
+enforcement point for content access; only the writer of the row changed. An
+admin retains control afterwards — enrolments can be updated or dropped, and
+`users.status` set to `inactive`/`suspended`, which `/auth/login` already
+refuses with `403`.
+
 ## Admin console endpoints
 
 | Method | Path | Capability |

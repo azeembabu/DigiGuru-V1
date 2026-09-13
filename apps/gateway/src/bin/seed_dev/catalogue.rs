@@ -81,7 +81,7 @@ const DOC_STATES: [&str; 16] = [
 /// Hand-rolled rather than `Uuid::new_v5` because the workspace `uuid` is
 /// declared with only the `v4` feature, and this file does not get to widen a
 /// shared dependency. The bit-fiddling makes it a well-formed v5-shaped UUID.
-fn det_id(kind: &str, key: &str) -> Uuid {
+pub(crate) fn det_id(kind: &str, key: &str) -> Uuid {
     let mut hasher = Sha256::new();
     hasher.update(b"digiguru-seed-dev\0");
     hasher.update(kind.as_bytes());
