@@ -323,29 +323,51 @@ would isolate it.
 }
 ```
 
-### 9.2 Tailwind config extension
+### 9.2 Tailwind theme
 
-```js
-// tailwind.config.js — extend, do not replace, the default theme
-module.exports = {
-  theme: {
-    extend: {
-      colors: {
-        ink:      { 950: '#0A0C16', 900: '#12141F', 800: '#1C1F2E', 700: '#2A2E42' },
-        lime:     { 300: '#C7F26B', 400: '#A6E635', 500: '#8FC91E', 950: '#12190A' },
-        indigo:   { 300: '#9EA3F2', 400: '#6E74E8', 500: '#5A5FD1', 950: '#171A33' },
-        lavender: { 50:  '#F4F4FC', 100: '#E4E5F8', 200: '#D2D3F0' },
-      },
-      fontFamily: {
-        display: ['Sora', 'sans-serif'],
-        sans: ['Inter', 'sans-serif'],
-        malayalam: ['"Noto Sans Malayalam"', 'sans-serif'],
-      },
-      borderRadius: {
-        lg2: '28px',
-      },
-    },
-  },
+`apps/web` is on Tailwind v4, which reads theme tokens from CSS, not a JS config — this is the
+actual block in `apps/web/src/app/globals.css`. (A `tailwind.config.js` `theme.extend` object with
+the same values is the equivalent for a v3 project, if one is ever needed.)
+
+```css
+@theme {
+  --color-ink-950: #0a0c16;
+  --color-ink-900: #12141f;
+  --color-ink-800: #1c1f2e;
+  --color-ink-700: #2a2e42;
+
+  --color-lime-300: #c7f26b;
+  --color-lime-400: #a6e635;
+  --color-lime-500: #8fc91e;
+  --color-lime-950: #12190a;
+
+  --color-indigo-300: #9ea3f2;
+  --color-indigo-400: #6e74e8;
+  --color-indigo-500: #5a5fd1;
+  --color-indigo-950: #171a33;
+
+  --color-lavender-50: #f4f4fc;
+  --color-lavender-100: #e4e5f8;
+  --color-lavender-200: #d2d3f0;
+
+  /* previously missing from this section — the CSS vars in §9.1 already had
+     these, but this Tailwind mapping didn't expose them, so `gray-*` classes
+     silently fell back to Tailwind's stock gray scale (different hex values) */
+  --color-gray-300: #b6b9c9;
+  --color-gray-500: #6c6f82;
+  --color-gray-900: #15161f;
+
+  --color-success: #3fcf7f;
+  --color-danger: #f1503d;
+  --color-warning: #f5b84a;
+
+  --font-display: "Sora", sans-serif;
+  --font-sans: "Inter", sans-serif;
+  --font-malayalam: "Noto Sans Malayalam", sans-serif;
+
+  --radius-sm: 8px;
+  --radius-md: 16px;
+  --radius-lg: 28px;
 }
 ```
 

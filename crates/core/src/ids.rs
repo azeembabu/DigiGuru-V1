@@ -77,7 +77,13 @@ define_id!(CourseId);
 define_id!(BlockId);
 define_id!(LscId);
 define_id!(DocumentId);
-/// A `learning_sessions` row — the classroom session. Kept distinct from an
-/// `auth_sessions` row (refresh-token/device session), which has no newtype
-/// of its own and is addressed as a bare `Uuid` alongside its opaque token.
+// A `learning_sessions` row — the classroom session. Kept distinct from an
+// `auth_sessions` row (refresh-token/device session), which has no newtype
+// of its own and is addressed as a bare `Uuid` alongside its opaque token.
+// Not a doc comment: rustdoc does not attach one to a macro invocation, so
+// `///` here is dead text that trips `unused_doc_comments` under -D warnings.
 define_id!(SessionId);
+// An `exams` row — a block-level assessment. Its attempts are addressed by
+// `ExamAttemptId`, which is what a student's dashboard card links to.
+define_id!(ExamId);
+define_id!(ExamAttemptId);

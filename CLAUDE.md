@@ -26,8 +26,16 @@ Never weaken these. If a change makes one harder to guarantee, stop and raise it
    board ops for turn *N* (or the 400 ms hold ceiling expires). Enforcement lives in the gateway
    `SyncGate`, not in the prompt.
 2. **NN-2 First-login logic.** The greeting plays only when `students.is_first_login = true`.
-3. **NN-3 Hard 20-minute cap.** Server-authoritative, Redis-backed, counted only while voice is
-   active. Client clocks are never trusted.
+3. **NN-3 Daily 20-minute voice quota.** Twenty minutes of *active voice* per student per
+   calendar day, server-authoritative and Redis-backed, counted only while voice is active.
+   The day boundary is midnight in the **student's own timezone** (`students.timezone`), not
+   UTC and not the server's — a student in a different zone must not lose minutes to a reset
+   that happens mid-afternoon for them. Client clocks are never trusted for either the elapsed
+   time or the date.
+
+   *Changed 2026-09-13 from a per-session hard cap to a daily resetting quota, on the product
+   owner's instruction. The enforcement point is unchanged: the ledger is server-side, and a
+   session still ends with `end_reason = 'quota'` when the remaining allowance reaches zero.*
 4. **NN-4 RAG-only.** Below the similarity floor the tutor abstains. No world knowledge, ever.
 5. **NN-5 Jailbreak termination.** Tier-0 guard mutes the upstream mid-utterance; Tier-1 tears the
    socket down. Incidents are always persisted.
@@ -104,28 +112,25 @@ conflicting agent behavior — treat every `.claude/`/`CLAUDE.md` edit as incomp
 
 ## Machine ownership (2-developer split)
 
-To avoid both developers editing the same files, each computer owns a fixed half of the repo.
-This assignment is fixed per machine — it does not rotate per task. If the split needs to change,
-edit this section (which pushes live to both machines via the sync hooks above) and both developers
-switch together, not unilaterally.
+**This machine owns the whole repo, frontend included** (changed 2026-09-13 by the backend
+developer, deliberately, so one machine can ship a vertical slice end to end without waiting on
+a contract hand-off). The split below is therefore currently *inactive*. Restoring it is a
+two-person decision: edit this section, push, and both developers switch together.
 
 | Machine | Owns | Must not touch |
 |---|---|---|
-| **This machine (backend)** | `apps/gateway/`, `crates/*`, `migrations/`, `infra/` | `apps/web/` |
-| **Other machine (frontend)** | `apps/web/` (Next.js) | `apps/gateway/`, `crates/*`, `migrations/`, `infra/` |
+| **This machine (backend + frontend)** | everything: `apps/gateway/`, `apps/web/`, `crates/*`, `migrations/`, `infra/` | — |
+| **Other machine (frontend)** | coordinate before editing `apps/web/` — pull first, and say what you are taking | — |
 
-- The contract between the two halves is `.claude/rules/api-conventions.md` — the frontend builds
-  against that documented REST/WebSocket contract; it does not need the backend to be running or
-  even implemented yet to start.
-- If a task genuinely requires touching the other side (e.g. a schema change that shifts an API
-  response shape), change `api-conventions.md` first, push it (per the mandatory sync rule above),
-  and let the other machine pick it up on its next pull — don't reach across and edit their files
-  directly.
-- Each machine should add a local, non-synced guard for its own boundary in
-  `.claude/settings.local.json` (gitignored, so this doesn't get pushed and doesn't affect the other
-  machine): a `permissions.deny` rule blocking `Edit`/`Write` on the other side's paths, so an
-  accidental cross-boundary edit is caught immediately rather than surfacing later as a merge
-  conflict.
+Because both halves now land from one machine, the coordination cost moves to the merge:
+
+- `.claude/rules/api-conventions.md` is still the contract of record. Update it in the **same
+  commit** as the change it describes — it is now documentation of what shipped rather than a
+  hand-off artifact, and a stale contract is worse than none.
+- The other developer must `git pull origin main --rebase` before touching `apps/web/`, since
+  frontend commits can now arrive from either machine.
+- If a `.claude/settings.local.json` `permissions.deny` guard on `apps/web/` was added on this
+  machine under the old split, remove it — it will block legitimate edits now.
 
 ## Working agreements
 
@@ -141,11 +146,39 @@ switch together, not unilaterally.
 ## Commands
 
 ```bash
+# Run everything in one go: local deps (docker compose --wait), migrations,
+# gateway on :8080 and the web app on :3000, streaming into one window.
+# Ctrl-C stops both processes; the containers are left up deliberately.
+./dev.ps1
+./dev.ps1 -WebOnly      # frontend only - no Docker, no Rust toolchain needed
+./dev.ps1 -NoDeps       # deps already running
+# Prerequisite for anything but -WebOnly: Docker Desktop installed and its engine
+# reachable. dev.ps1 preflights both and stops with the fix rather than letting the
+# gateway panic later on a Postgres connect.
+
 cargo test --workspace          # Rust tests
 cargo clippy --all-targets -- -D warnings
 pnpm --filter web test          # frontend tests
 pnpm --filter web lint
 docker compose -f infra/docker-compose.yml up -d   # local deps
 sqlx migrate run                # apply migrations
+
+# First login: create the bootstrap super-admin. Nothing in migrations/ or
+# migrations/seed/ inserts an admin — a committed credential is a published
+# credential (security.md) — so the admin console cannot be signed into until
+# this is run once. Prompts for the password (twice, not echoed); never takes
+# it as an argument, so it cannot land in shell history.
+cargo run -p gateway --bin create_admin -- \
+  --email you@example.com --full-name "Your Name" --role super_admin
+
+# A scoped sub-admin. --scope is repeatable and takes a program UUID; it
+# refuses to create a sub-admin with no scopes (which would see nothing).
+cargo run -p gateway --bin create_admin -- \
+  --email sub@example.com --full-name "Sub Admin" --role sub_admin --scope <PROGRAM_UUID>
+
+# Non-interactive (CI, containers): supply the password out of band, never
+# as an argument.
+ADMIN_PASSWORD=... cargo run -p gateway --bin create_admin -- ...   # or --password-stdin
+
 cargo run -p evals              # RAGAs golden-set harness
 ```

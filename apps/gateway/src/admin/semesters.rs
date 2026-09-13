@@ -72,6 +72,21 @@ pub async fn create_semester(
     Ok(Json(semester.into()))
 }
 
+pub async fn get_semester(
+    State(state): State<AppState>,
+    AuthenticatedActor(actor): AuthenticatedActor,
+    Path(id): Path<Uuid>,
+) -> Result<Json<SemesterResponse>, PublicError> {
+    let semester = semesters::find_by_id(&state.pool, dg_core::SemesterId::from(id))
+        .await
+        .map_err(PublicError::from)?
+        .ok_or(PublicError::NotFound)?;
+
+    actor.require_scoped(Capability::ManagePrograms, semester.program_id)?;
+
+    Ok(Json(semester.into()))
+}
+
 pub async fn list_semesters_for_program(
     State(state): State<AppState>,
     AuthenticatedActor(actor): AuthenticatedActor,
@@ -125,4 +140,44 @@ pub async fn update_semester(
     .await;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use dg_core::{Actor, Capability, ProgramId, Role, UserId};
+
+    /// The rule `get_semester` applies once the row's owning program is
+    /// resolved — identical to its create/list/update siblings, which is the
+    /// property this matrix pins.
+    fn authorize(actor: &Actor, program_id: ProgramId) -> Result<(), dg_core::PublicError> {
+        actor.require_scoped(Capability::ManagePrograms, program_id)
+    }
+
+    #[test]
+    fn super_admin_may_read_any_semester() {
+        let actor = Actor::new(UserId::new(), Role::SuperAdmin, vec![]);
+        assert!(authorize(&actor, ProgramId::new()).is_ok());
+    }
+
+    #[test]
+    fn sub_admin_may_read_a_semester_in_its_scope() {
+        let scoped = ProgramId::new();
+        let actor = Actor::new(UserId::new(), Role::SubAdmin, vec![scoped]);
+        assert!(authorize(&actor, scoped).is_ok());
+    }
+
+    #[test]
+    fn sub_admin_is_forbidden_a_semester_outside_its_scope() {
+        let actor = Actor::new(UserId::new(), Role::SubAdmin, vec![ProgramId::new()]);
+        let err = authorize(&actor, ProgramId::new()).expect_err("out of scope");
+        assert_eq!(err.code(), "FORBIDDEN");
+    }
+
+    #[test]
+    fn student_is_forbidden_every_semester() {
+        let program_id = ProgramId::new();
+        let actor = Actor::new(UserId::new(), Role::Student, vec![program_id]);
+        let err = authorize(&actor, program_id).expect_err("students never read admin rows");
+        assert_eq!(err.code(), "FORBIDDEN");
+    }
 }

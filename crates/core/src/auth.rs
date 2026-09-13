@@ -21,6 +21,19 @@ pub enum Role {
     Student,
 }
 
+impl Role {
+    /// The `user_role` label this maps to in Postgres. Used to bind the role
+    /// through a `$n::text::user_role` cast — sqlx's query macros cannot infer
+    /// a Rust type for a user-defined Postgres enum used as a parameter.
+    pub const fn as_db_str(self) -> &'static str {
+        match self {
+            Role::SuperAdmin => "super_admin",
+            Role::SubAdmin => "sub_admin",
+            Role::Student => "student",
+        }
+    }
+}
+
 /// A single, named permission a handler can require of the caller.
 ///
 /// Deliberately flat — scoping (e.g. "manage programs, but only within
@@ -42,6 +55,11 @@ pub enum Capability {
     UploadDocuments,
     /// Read one's own `/me/context` payload.
     ViewOwnContext,
+    /// Read one's own exam attempts (`/api/v1/student/exam-attempts`).
+    /// Self-only by construction: the handler resolves the student row from
+    /// the caller's own token, never from a path or query parameter, so this
+    /// capability can never widen to another student's results.
+    ViewOwnExams,
     /// `PATCH /me/profile` — self-service, allow-listed fields only.
     UpdateOwnProfile,
     /// List/revoke one's own `auth_sessions`.
@@ -76,9 +94,12 @@ impl Actor {
 
             (SubAdmin, ManagePrograms | ManageStudents | UploadDocuments) => true,
             (SubAdmin, ViewOwnContext | UpdateOwnProfile | ManageOwnSessions) => true,
+            // An admin has no `students` row, so there is nothing self-only
+            // for it to read here; the admin view is `/admin/exams/{id}/attempts`.
+            (SubAdmin, ViewOwnExams) => false,
             (SubAdmin, ManageUsers) => false,
 
-            (Student, ViewOwnContext | UpdateOwnProfile | ManageOwnSessions) => true,
+            (Student, ViewOwnContext | UpdateOwnProfile | ManageOwnSessions | ViewOwnExams) => true,
             (Student, ManageUsers | ManagePrograms | ManageStudents | UploadDocuments) => false,
         }
     }

@@ -4,15 +4,29 @@ version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
+# Without this, adding the `create_admin` bootstrap binary made the documented
+# `cargo run -p gateway` ambiguous and it stopped working. The server is the
+# default; the bootstrap CLI is opt-in via `--bin create_admin`.
+default-run = "gateway"
 
 [[bin]]
 name = "gateway"
 path = "src/main.rs"
 
+# First-super-admin bootstrap. A binary rather than a route precisely so it
+# cannot be reached over the network — see the module doc comment.
+[[bin]]
+name = "create_admin"
+path = "src/bin/create_admin.rs"
+
 [dependencies]
 dg-core = { workspace = true }
 dg-db = { workspace = true }
 dg-live = { workspace = true }
+
+# The `seed_dev` dev-only seeder writes rows directly with compile-time checked
+# `sqlx::query!` macros; the gateway proper goes through `dg-db`.
+sqlx = { workspace = true }
 
 tokio = { workspace = true }
 # `ws` enables axum's built-in WebSocket upgrade extractor/`Message` type,
@@ -44,3 +58,13 @@ sha2 = { workspace = true }
 base64 = { workspace = true }
 regex = { workspace = true }
 time = "0.3"
+# No-echo password prompt for the `create_admin` bootstrap binary. Added so
+# the first admin password is never a command-line argument (shell history)
+# and never echoed to the terminal; `rpassword` is the standard minimal
+# crate for exactly that and pulls in no runtime.
+rpassword = "7"
+
+[dev-dependencies]
+# `tower::ServiceExt::oneshot` drives the router in `me::tests` without a
+# live listener or an `AppState`.
+tower = { workspace = true, features = ["util"] }

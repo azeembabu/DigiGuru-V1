@@ -23,3 +23,5 @@ rand = { workspace = true }
 sqlx = { workspace = true }
 lopdf = { workspace = true }
 qdrant-client = { workspace = true }
+redis = { workspace = true }
+sha2 = { workspace = true }

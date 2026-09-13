@@ -3,20 +3,23 @@
 //! "WebSocket", `.claude/rules/whiteboard-sync.md`).
 //!
 //! This module owns the transport and the per-connection loop that *uses*
-//! `dg_live::SyncGate` to enforce NN-1 (whiteboard-first). It does not own
+//! `live::SyncGate` to enforce NN-1 (whiteboard-first). It does not own
 //! the SyncGate state machine, the board-op schema/validator, or the Gemini
-//! Live client itself — those live in `crates/live` (owned by the other
-//! developer per `CLAUDE.md` "Machine ownership"; this machine only calls
-//! into that crate's public interface).
+//! Live client itself — those live in `crates/live`.
+//!
+//! NN-1 in this file, concretely: **every** outbound audio frame goes through
+//! [`live::SyncGate::push_audio`] and is written to the socket only on
+//! `AudioDisposition::Forward`. There is no bypass and no fast path. Held
+//! audio leaves only through a release edge — `board_ack`, `board_error`, or
+//! the 400 ms hold ceiling surfaced by `poll_timeouts`.
 //!
 //! Scope of this pass: `session_init`, `board_ack`, `board_error`, and
 //! `end_session` are fully wired. `skip_recap` and the real Gemini Live
 //! upstream (student mic audio forwarding) are stubbed with `// TODO`
-//! markers — see the acceptance note in the PR description. The core
-//! deliverable of this pass is demonstrating the whiteboard-first ordering
-//! end-to-end against `dg_live::StubLiveSessionClient`'s scripted turn.
+//! markers. The core deliverable is demonstrating the whiteboard-first
+//! ordering end-to-end against `live::StubLiveSessionClient`'s scripted
+//! turn.
 
-use std::collections::HashMap;
 use std::time::Duration;
 
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
@@ -26,8 +29,9 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use dg_core::UserId;
-use dg_live::{
-    LiveModelEvent, LiveSessionClient, SyncGate, SyncGateAction, StubLiveSessionClient,
+use live::{
+    AckOutcome, AudioDisposition, BoardOp, Clock, DrawShape, LiveModelEvent, LiveSessionClient,
+    Point, ReleasedAudio, StubLiveSessionClient, SyncGate, SystemClock, TurnSeq,
 };
 
 use crate::auth::jwt::verify_access_token;
@@ -86,6 +90,18 @@ struct SessionReadyMsg {
     quota_remaining_ms: u64,
 }
 
+/// Server -> client `board_ops`. Built from `live::BoardOpsAccepted`, so
+/// what goes on the wire is exactly the set of ops the gate validated — never
+/// the raw model output.
+#[derive(Debug, Serialize)]
+struct BoardOpsMsg<'a> {
+    #[serde(rename = "type")]
+    kind: &'static str,
+    seq: u32,
+    clear_first: bool,
+    ops: &'a [BoardOp],
+}
+
 #[derive(Debug, Serialize)]
 struct ErrorMsg<'a> {
     #[serde(rename = "type")]
@@ -132,44 +148,46 @@ async fn close_unauthenticated(mut socket: WebSocket) {
         .await;
 }
 
-/// Internal event fed back into the main select loop when a spawned hold
-/// timer fires. A simple `HashMap<seq, JoinHandle>` plus an mpsc channel is
-/// the "keep it simple" pattern called out in the task brief — no
-/// `DelayQueue` dependency needed for one timer per pending turn.
-enum InternalEvent {
-    HoldTimeout(u32),
-}
-
 /// The per-connection loop. One tokio task per socket
 /// (`.claude/rules/realtime-audio.md` "Gateway"): no `block_in_place`, no
 /// blocking calls in the audio path.
 async fn handle_socket(mut socket: WebSocket, state: AppState, user_id: UserId) {
-    let mut sync_gate = SyncGate::new();
+    // The gate reads time through this same clock, so the socket's sleep and
+    // the gate's deadlines share one monotonic epoch.
+    let clock = SystemClock::new();
+    let mut sync_gate = SyncGate::new(clock.clone());
+
     // Owns the demo scripted turn (BoardOps -> AudioChunk* -> TurnComplete)
     // used to prove the whiteboard-first ordering end-to-end. Real Gemini
     // Live wiring is out of scope for this pass.
-    //
-    // `SyncGate` has no `Default` impl (only `new()`), and
-    // `StubLiveSessionClient` requires its script up front rather than
-    // implementing `Default` — fixed here at merge time; the demo script
-    // below is a placeholder standing in for what a real Gemini Live
-    // session would emit for one turn.
     let mut live_client = StubLiveSessionClient::new(demo_script());
 
     let mut session_id: Option<Uuid> = None;
     // The turn the model is currently narrating. `AudioChunk` events from
     // the stub don't carry their own `seq` (per the `LiveModelEvent`
-    // contract), so it is tracked from the most recent `BoardOps.seq`.
-    let mut current_seq: Option<u32> = None;
+    // contract), so it is tracked from the most recent accepted `board_ops`.
+    let mut current_seq: Option<TurnSeq> = None;
     // Set once `session_init` has been handled — gates when we start
     // draining the stub's scripted turn, so nothing is sent before the
     // client is ready to receive `session_ready`.
     let mut driving_turn = false;
 
-    let (timer_tx, mut timer_rx) = tokio::sync::mpsc::unbounded_channel::<InternalEvent>();
-    let mut hold_timers: HashMap<u32, tokio::task::JoinHandle<()>> = HashMap::new();
-
     loop {
+        // NN-1 hold timer: sleep exactly until the earliest outstanding hold
+        // deadline the gate reports, never on a fixed tick. `None` means
+        // nothing is holding, so this branch simply never fires.
+        let hold_deadline = sync_gate.next_hold_deadline_ms();
+        let hold_timer = async {
+            match hold_deadline {
+                Some(deadline_ms) => {
+                    let remaining = deadline_ms.saturating_sub(clock.now_ms());
+                    tokio::time::sleep(Duration::from_millis(remaining)).await;
+                }
+                None => std::future::pending::<()>().await,
+            }
+        };
+        tokio::pin!(hold_timer);
+
         tokio::select! {
             biased;
 
@@ -204,17 +222,16 @@ async fn handle_socket(mut socket: WebSocket, state: AppState, user_id: UserId) 
                                 driving_turn = true;
                             }
                             Ok(ClientMessage::BoardAck { seq }) => {
-                                abort_hold_timer(&mut hold_timers, seq);
-                                let action = sync_gate.on_board_ack(seq);
-                                if apply_action(&mut socket, action).await.is_err() {
+                                let outcome = sync_gate.on_board_ack(TurnSeq(seq));
+                                if flush_outcome(&mut socket, &mut sync_gate, outcome).await.is_err() {
                                     break;
                                 }
                             }
                             Ok(ClientMessage::BoardError { seq, reason }) => {
-                                tracing::warn!(seq, %reason, "client reported board_error; degrading to text-fallback for this turn");
-                                abort_hold_timer(&mut hold_timers, seq);
-                                let action = sync_gate.on_board_error(seq);
-                                if apply_action(&mut socket, action).await.is_err() {
+                                // The gate logs the degrade-to-text-fallback
+                                // decision and counts it; teaching continues.
+                                let outcome = sync_gate.on_board_error(TurnSeq(seq), &reason);
+                                if flush_outcome(&mut socket, &mut sync_gate, outcome).await.is_err() {
                                     break;
                                 }
                             }
@@ -254,52 +271,74 @@ async fn handle_socket(mut socket: WebSocket, state: AppState, user_id: UserId) 
                 }
             }
 
-            Some(event) = timer_rx.recv() => {
-                match event {
-                    InternalEvent::HoldTimeout(seq) => {
-                        hold_timers.remove(&seq);
-                        let action = sync_gate.on_hold_timeout(seq);
-                        if apply_action(&mut socket, action).await.is_err() {
-                            break;
-                        }
+            () = &mut hold_timer => {
+                // HOLD_MAX reached for at least one turn. The gate counts the
+                // wb_violation and logs the seq; the socket's job is only to
+                // get the released audio out, in order.
+                let released = sync_gate.poll_timeouts();
+                let mut send_failed = false;
+                for audio in released {
+                    if flush_released(&mut socket, &mut sync_gate, audio).await.is_err() {
+                        send_failed = true;
+                        break;
                     }
+                }
+                if send_failed {
+                    break;
                 }
             }
 
             event = live_client.poll_event(), if driving_turn => {
                 match event {
                     Ok(LiveModelEvent::BoardOps(msg)) => {
-                        if let Err(err) = dg_live::validate(&msg) {
-                            tracing::warn!(?err, "dropping invalid board_ops from model");
-                            continue;
-                        }
-                        let seq = msg.seq;
-                        current_seq = Some(seq);
-                        let action = sync_gate.on_board_ops(seq);
+                        let seq = TurnSeq(msg.seq);
+                        let ops = to_gate_ops(&msg);
+                        let accepted = match sync_gate.on_board_ops(seq, msg.clear_first, ops) {
+                            Ok(accepted) => accepted,
+                            Err(err) => {
+                                // Not fatal: no turn was opened, so no audio
+                                // is stranded behind a board that never went
+                                // out. The gate already logged the detail.
+                                tracing::warn!(%err, "board_ops rejected by SyncGate; nothing forwarded");
+                                continue;
+                            }
+                        };
+                        current_seq = Some(accepted.seq);
 
-                        if send_json(&mut socket, &msg).await.is_err() {
+                        // Only the validated ops go on the wire.
+                        let out = BoardOpsMsg {
+                            kind: "board_ops",
+                            seq: accepted.seq.get(),
+                            clear_first: accepted.clear_first,
+                            ops: &accepted.ops,
+                        };
+                        if send_json(&mut socket, &out).await.is_err() {
                             break;
                         }
-
-                        if let SyncGateAction::StartHoldTimer { seq, hold_ms } = action {
-                            let tx = timer_tx.clone();
-                            let handle = tokio::spawn(async move {
-                                tokio::time::sleep(Duration::from_millis(hold_ms)).await;
-                                let _ = tx.send(InternalEvent::HoldTimeout(seq));
-                            });
-                            hold_timers.insert(seq, handle);
-                        }
+                        // The hold timer for this turn is picked up on the
+                        // next loop iteration via `next_hold_deadline_ms()`.
                     }
                     Ok(LiveModelEvent::AudioChunk(frame)) => {
-                        if let Some(seq) = current_seq {
-                            let action = sync_gate.buffer_audio(seq, frame);
-                            if apply_action(&mut socket, action).await.is_err() {
-                                break;
-                            }
-                        } else {
-                            // No board_ops has been seen yet this connection
-                            // — NN-1 forbids sending this audio at all.
+                        let Some(seq) = current_seq else {
+                            // No board_ops has been accepted yet on this
+                            // connection — NN-1 forbids sending this audio.
                             tracing::warn!("dropping audio chunk with no preceding board_ops turn");
+                            continue;
+                        };
+                        match sync_gate.push_audio(seq, &frame) {
+                            AudioDisposition::Forward => {
+                                if socket.send(Message::Binary(frame)).await.is_err() {
+                                    break;
+                                }
+                            }
+                            AudioDisposition::Buffered { .. }
+                            | AudioDisposition::BufferedEvictingOldest { .. } => {
+                                // Held behind the board. Released later by an
+                                // ack, a board_error, or the hold ceiling.
+                            }
+                            AudioDisposition::UnknownTurn => {
+                                tracing::warn!(seq = %seq, "audio chunk for unknown/retired turn; dropped");
+                            }
                         }
                     }
                     Ok(LiveModelEvent::TurnComplete) => {
@@ -323,67 +362,83 @@ async fn handle_socket(mut socket: WebSocket, state: AppState, user_id: UserId) 
         }
     }
 
-    for (_, handle) in hold_timers.drain() {
-        handle.abort();
+    let metrics = sync_gate.metrics();
+    if metrics.wb_violation > 0 {
+        // `whiteboard-sync.md`: wb_violation must be 0 in CI E2E runs.
+        tracing::error!(
+            wb_violation = metrics.wb_violation,
+            ops_dropped = metrics.ops_dropped,
+            frames_evicted = metrics.frames_evicted,
+            "session closed with NN-1 violations"
+        );
+    } else {
+        tracing::debug!(?metrics, "session closed");
     }
-    sync_gate.reset_session();
 
     // Per IMPLEMENTATION_PLAN.md §6.1/A-8, `sess:{id}` in Redis SURVIVES a
     // disconnect so a reconnect resumes rather than restarts — it is
     // deliberately not deleted here, on `end_session`, or on any socket
-    // error. Only the in-memory, task-local state above (SyncGate, timer
-    // handles) is torn down with this task.
+    // error. Only the in-memory, task-local state above (the SyncGate) is
+    // torn down with this task.
     //
     // TODO(phase3-reconnect): full resume needs more than the Redis hash
-    // surviving. This pass's story is honest but partial: a fresh
-    // `session_init { resume: true }` after reconnect can rehydrate
-    // `block_id` (and, once wired, other `ctx:`/`sess:` fields) from Redis,
-    // but the in-flight `SyncGate` turn state (which seq was PENDING_ACK,
-    // any buffered-but-unreleased audio) lives only in this task and is
-    // lost when it exits. A genuinely resumable mid-turn requires
-    // persisting SyncGate state (or at minimum the last never-acked seq)
-    // somewhere durable and replaying it on reconnect — real design work,
-    // not a small addition, and explicitly out of scope here. The honest
-    // behavior today is: the session continues, but its current turn
-    // restarts.
+    // surviving. A fresh `session_init { resume: true }` after reconnect can
+    // rehydrate `block_id` from Redis, but the in-flight `SyncGate` turn
+    // state (which seq was PENDING_ACK, any buffered-but-unreleased audio)
+    // lives only in this task and is lost when it exits.
     let _ = session_id;
 }
 
-fn abort_hold_timer(timers: &mut HashMap<u32, tokio::task::JoinHandle<()>>, seq: u32) {
-    if let Some(handle) = timers.remove(&seq) {
-        handle.abort();
+/// Writes a release's frames out in arrival order, then hands the buffers
+/// back to the gate's pool. This is the only path by which held audio reaches
+/// the client.
+async fn flush_released(
+    socket: &mut WebSocket,
+    sync_gate: &mut SyncGate<SystemClock>,
+    audio: ReleasedAudio,
+) -> Result<(), axum::Error> {
+    let ReleasedAudio {
+        seq,
+        reason,
+        held_ms,
+        frames,
+    } = audio;
+    tracing::debug!(seq = %seq, ?reason, held_ms, frames = frames.len(), "releasing held audio");
+
+    let mut result = Ok(());
+    for frame in &frames {
+        if let Err(err) = socket
+            .send(Message::Binary(bytes::Bytes::copy_from_slice(frame)))
+            .await
+        {
+            result = Err(err);
+            break;
+        }
     }
+    // Return the buffers to the gate's pool so a warm session stops
+    // allocating per held frame (`realtime-audio.md`, "Gateway").
+    sync_gate.recycle(frames);
+    result
 }
 
-/// Applies a `SyncGateAction` produced by `on_board_ack` / `on_board_error`
-/// / `on_hold_timeout` / `buffer_audio`. `StartHoldTimer` is only ever
-/// returned from `on_board_ops` in practice and is handled at that call
-/// site, not here.
-async fn apply_action(socket: &mut WebSocket, action: SyncGateAction) -> Result<(), axum::Error> {
-    match action {
-        SyncGateAction::ForwardImmediately(frame) => {
-            socket.send(Message::Binary(frame)).await?;
+/// Applies the outcome of a `board_ack` / `board_error`. Both non-release
+/// outcomes are ignored, not fatal, per the forward-compatibility rule.
+async fn flush_outcome(
+    socket: &mut WebSocket,
+    sync_gate: &mut SyncGate<SystemClock>,
+    outcome: AckOutcome,
+) -> Result<(), axum::Error> {
+    match outcome {
+        AckOutcome::Released(audio) => flush_released(socket, sync_gate, *audio).await,
+        AckOutcome::AlreadyReleased(seq) => {
+            tracing::debug!(seq = %seq, "turn already released; ignoring");
+            Ok(())
         }
-        SyncGateAction::ReleaseBuffered(frames) => {
-            for frame in frames {
-                socket.send(Message::Binary(frame)).await?;
-            }
-        }
-        SyncGateAction::ReleaseBufferedWithViolation(frames) => {
-            // NN-1 / whiteboard-sync.md invariant: `wb_violation` must be 0
-            // in CI end-to-end runs. A real counter/metric is out of scope
-            // for this pass; this log line is the minimum required signal.
-            tracing::warn!(count = frames.len(), "wb_violation: releasing buffered audio without an ack");
-            for frame in frames {
-                socket.send(Message::Binary(frame)).await?;
-            }
-        }
-        SyncGateAction::Buffered | SyncGateAction::NoOp => {}
-        SyncGateAction::StartHoldTimer { .. } => {
-            tracing::debug!("unexpected StartHoldTimer outside on_board_ops handling");
+        AckOutcome::UnknownTurn(seq) => {
+            tracing::debug!(seq = %seq, "control frame for unknown turn; ignoring");
+            Ok(())
         }
     }
-    Ok(())
 }
 
 async fn send_json<T: Serialize>(socket: &mut WebSocket, value: &T) -> Result<(), axum::Error> {
@@ -394,6 +449,70 @@ async fn send_json<T: Serialize>(socket: &mut WebSocket, value: &T) -> Result<()
             Ok(())
         }
     }
+}
+
+/// Bridge from the Gemini client's legacy `board::BoardOp` (which carries no
+/// element ids) to the `ops::BoardOp` the `SyncGate` validates.
+///
+/// Ids are synthesised as `s{seq}-op{index}`: stable within a turn and unique
+/// across a session, because `seq` is monotonic — so a later `highlight` can
+/// still target an element emitted earlier. An op the legacy schema can
+/// express but the validated one cannot (an unknown `draw` shape) is dropped
+/// here rather than mistranslated; everything else that fails the schema is
+/// dropped and logged by the gate.
+fn to_gate_ops(msg: &live::board::BoardOpsMessage) -> Vec<BoardOp> {
+    msg.ops
+        .iter()
+        .enumerate()
+        .filter_map(|(index, op)| {
+            let id = format!("s{}-op{}", msg.seq, index);
+            match op {
+                live::board::BoardOp::Heading { text, .. } => Some(BoardOp::Heading {
+                    id,
+                    text: text.clone(),
+                }),
+                live::board::BoardOp::Bullets { items } => Some(BoardOp::Bullets {
+                    id,
+                    items: items.clone(),
+                }),
+                live::board::BoardOp::Math { latex } => Some(BoardOp::Math {
+                    id,
+                    latex: latex.clone(),
+                }),
+                live::board::BoardOp::Draw { shape, from, to } => {
+                    let shape = match shape.as_str() {
+                        "line" => DrawShape::Line,
+                        "arrow" => DrawShape::Arrow,
+                        "rect" => DrawShape::Rect,
+                        "ellipse" => DrawShape::Ellipse,
+                        "polyline" => DrawShape::Polyline,
+                        other => {
+                            tracing::warn!(shape = other, "unknown draw shape from model; op dropped");
+                            return None;
+                        }
+                    };
+                    Some(BoardOp::Draw {
+                        id,
+                        shape,
+                        points: vec![
+                            Point {
+                                x: from[0],
+                                y: from[1],
+                            },
+                            Point { x: to[0], y: to[1] },
+                        ],
+                    })
+                }
+                live::board::BoardOp::Image { image_ref } => Some(BoardOp::Image {
+                    id,
+                    reference: image_ref.clone(),
+                }),
+                live::board::BoardOp::Highlight { target } => Some(BoardOp::Highlight {
+                    target: target.clone(),
+                }),
+            }
+        })
+        .collect()
 }
 
 /// `session_init` handling for this pass: persist minimal session state to
@@ -473,22 +592,20 @@ async fn init_session(state: &AppState, user_id: UserId, block_id: Uuid, resume:
 }
 
 /// A hardcoded scripted turn standing in for what a real Gemini Live session
-/// would emit — this is the fixture that lets `StubLiveSessionClient`
-/// demonstrate the whiteboard-first (NN-1) ordering end-to-end without a
-/// real Gemini API key/connection (`TODO(phase3-gemini-api)` in
-/// `crates/live/src/gemini_client.rs`). Replace this with the real Gemini
-/// Live client once that's wired.
+/// would emit — the fixture that lets `StubLiveSessionClient` demonstrate the
+/// whiteboard-first (NN-1) ordering end-to-end without a real Gemini
+/// connection (`TODO(phase3-gemini-api)` in `crates/live/src/gemini_client.rs`).
 fn demo_script() -> Vec<LiveModelEvent> {
-    let board_ops = dg_live::BoardOpsMessage {
+    let board_ops = live::board::BoardOpsMessage {
         msg_type: "board_ops".to_string(),
         seq: 1,
         clear_first: false,
         ops: vec![
-            dg_live::BoardOp::Heading {
+            live::board::BoardOp::Heading {
                 text: "Demo lesson".to_string(),
                 page: 1,
             },
-            dg_live::BoardOp::Bullets {
+            live::board::BoardOp::Bullets {
                 items: vec!["This is a scripted Phase 3 demo turn.".to_string()],
             },
         ],

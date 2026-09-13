@@ -39,8 +39,11 @@
 
 use std::collections::HashMap;
 
-use qdrant_client::client::QdrantClient;
-use qdrant_client::qdrant::{value::Kind as QdrantValueKind, Condition, Filter, ScoredPoint, SearchPoints, Value as QdrantValue};
+use qdrant_client::qdrant::{
+    value::Kind as QdrantValueKind, Condition, Filter, Query, QueryPointsBuilder, ScoredPoint,
+    Value as QdrantValue, VectorInput,
+};
+use qdrant_client::Qdrant;
 
 use dg_core::{CourseId, DocumentId, ProgramId};
 
@@ -112,7 +115,7 @@ fn normalise_and_detect_language(question: &str) -> (String, &'static str) {
 
 /// Runs the full retrieval pipeline for one student question.
 pub async fn retrieve(
-    client: &QdrantClient,
+    client: &Qdrant,
     query: &RetrievalQuery,
     embedder: &dyn Embedder,
 ) -> Result<RetrievalOutcome, RagError> {
@@ -153,21 +156,21 @@ fn mandatory_filter(query: &RetrievalQuery) -> Filter {
 }
 
 async fn search_dense(
-    client: &QdrantClient,
+    client: &Qdrant,
     filter: &Filter,
     dense_vector: Vec<f32>,
 ) -> Result<Vec<RetrievedChunk>, RagError> {
-    let request = SearchPoints {
-        collection_name: COLLECTION.to_string(),
-        vector: dense_vector,
-        vector_name: Some("dense".to_string()),
-        filter: Some(filter.clone()),
-        limit: TOP_K,
-        with_payload: Some(true.into()),
-        ..Default::default()
-    };
+    let response = client
+        .query(
+            QueryPointsBuilder::new(COLLECTION)
+                .query(Query::new_nearest(dense_vector))
+                .using(crate::qdrant::DENSE_VECTOR_NAME)
+                .filter(filter.clone())
+                .limit(TOP_K)
+                .with_payload(true),
+        )
+        .await?;
 
-    let response = client.search_points(&request).await?;
     Ok(response
         .result
         .into_iter()
@@ -176,7 +179,7 @@ async fn search_dense(
 }
 
 async fn search_sparse(
-    client: &QdrantClient,
+    client: &Qdrant,
     filter: &Filter,
     question: &str,
     _lang: &str,
@@ -187,17 +190,20 @@ async fn search_sparse(
     // useless.
     let sparse = crate::sparse::sparse_encode(question);
 
-    let request = SearchPoints {
-        collection_name: COLLECTION.to_string(),
-        sparse_vector: Some(sparse),
-        vector_name: Some("bm25".to_string()),
-        filter: Some(filter.clone()),
-        limit: TOP_K,
-        with_payload: Some(true.into()),
-        ..Default::default()
-    };
+    let response = client
+        .query(
+            QueryPointsBuilder::new(COLLECTION)
+                .query(Query::new_nearest(VectorInput::new_sparse(
+                    sparse.indices,
+                    sparse.values,
+                )))
+                .using(crate::qdrant::SPARSE_VECTOR_NAME)
+                .filter(filter.clone())
+                .limit(TOP_K)
+                .with_payload(true),
+        )
+        .await?;
 
-    let response = client.search_points(&request).await?;
     Ok(response
         .result
         .into_iter()

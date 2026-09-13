@@ -5,6 +5,17 @@
 //! `documents`/`blocks`/`courses` join the caller already did before
 //! ingestion started (Phase 1 tables) — they are not derivable from the PDF
 //! itself, so they're passed in rather than inferred here.
+//!
+//! Every field of [`EnrichedChunk`] that the payload schema requires is a
+//! non-`Option` `String`/number. That is deliberate: `.claude/rules/rag-pipeline.md`
+//! makes a chunk missing any of `program_id`, `semester`, `block_no`,
+//! `document_id`, `chapter`, `topic`, `page`, `para_index`, `lang` a *bug*,
+//! and an `Option` here would let one reach the upsert boundary and be
+//! silently `unwrap_or_default()`-ed into an empty payload string — which
+//! retrieval would then happily cite as an empty chapter. Where a value
+//! cannot be derived from the document, enrichment substitutes an explicit,
+//! meaningful fallback (the document title) rather than nothing, and
+//! [`validate`](crate::payload::validate_chunk) rejects anything still blank.
 
 use dg_core::{CourseId, DocumentId, ProgramId};
 
@@ -23,34 +34,35 @@ pub struct EnrichedChunk {
     pub block_no: i16,
     pub document_id: DocumentId,
 
-    /// Best-effort: the most recent heading-like line seen before this
-    /// chunk. `None` if no heading has been seen yet in the document.
-    pub chapter: Option<String>,
-    /// Real topic extraction is out of scope for this pass.
-    pub topic: Option<String>,
+    /// The most recent heading-like line seen before this chunk, falling
+    /// back to the document title when the document has no heading yet.
+    pub chapter: String,
+    /// Best available topic label. Falls back to the chapter, which itself
+    /// falls back to the document title — never blank.
+    pub topic: String,
     pub page: i32,
     pub para_index: usize,
-    /// `ml` | `en`. Stubbed to `"ml"` for every chunk in this pass.
-    // TODO(phase2-langdetect): run real per-chunk language detection
-    // (the corpus is expected to be mostly Malayalam with some English
-    // technical terms) instead of a fixed default.
+    /// `ml` | `en`, detected per chunk from Malayalam codepoint density.
     pub lang: String,
 }
 
 /// Caller-supplied context that doesn't come from the PDF (Phase 1 join).
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct EnrichContext {
     pub program_id: ProgramId,
     pub semester_no: i16,
     pub course_id: CourseId,
     pub block_no: i16,
     pub document_id: DocumentId,
+    /// `documents.title`. Used as the last-resort `chapter`/`topic` label so
+    /// no chunk is ever upserted with a blank citation field.
+    pub document_title: String,
 }
 
-/// A line is treated as a heading if it's short, has no terminal sentence
-/// punctuation, and is not itself a table/verse chunk. This is a best-effort
-/// heuristic, not a layout-derived heading detector (that needs the real
-/// pdfium layout boxes `parse.rs` doesn't extract yet).
+/// A line is treated as a heading if it's short and has no terminal sentence
+/// punctuation. This is a best-effort heuristic, not a layout-derived heading
+/// detector (that needs real pdfium layout boxes, which `parse.rs` does not
+/// extract — see its module docs).
 fn looks_like_heading(text: &str) -> bool {
     let trimmed = text.trim();
     if trimmed.is_empty() {
@@ -62,17 +74,55 @@ fn looks_like_heading(text: &str) -> bool {
     word_count <= 8 && !ends_with_sentence_punct
 }
 
+/// Malayalam occupies the Unicode block U+0D00–U+0D7F. A chunk is tagged
+/// `ml` when Malayalam codepoints outnumber ASCII letters, else `en` — the
+/// corpus is majority Malayalam but carries English technical terms, and a
+/// fixed `"ml"` would mislabel a wholly-English page.
+pub fn detect_lang(text: &str) -> &'static str {
+    let mut malayalam = 0usize;
+    let mut latin = 0usize;
+    for c in text.chars() {
+        if ('\u{0D00}'..='\u{0D7F}').contains(&c) {
+            malayalam += 1;
+        } else if c.is_ascii_alphabetic() {
+            latin += 1;
+        }
+    }
+    if malayalam > latin {
+        "ml"
+    } else {
+        "en"
+    }
+}
+
 /// Enriches chunks in reading order, tracking the most recent heading-like
 /// chunk as `chapter` for every chunk after it.
-pub fn enrich_chunks(chunks: Vec<Chunk>, ctx: EnrichContext) -> Vec<EnrichedChunk> {
+pub fn enrich_chunks(chunks: Vec<Chunk>, ctx: &EnrichContext) -> Vec<EnrichedChunk> {
+    let fallback = {
+        let trimmed = ctx.document_title.trim();
+        if trimmed.is_empty() {
+            // `documents.title` is NOT NULL but not checked non-blank; keep
+            // the invariant "never blank" true regardless.
+            "Untitled document".to_string()
+        } else {
+            trimmed.to_string()
+        }
+    };
+
     let mut current_chapter: Option<String> = None;
     let mut enriched = Vec::with_capacity(chunks.len());
 
     for chunk in chunks {
-        if matches!(chunk.kind, crate::chunk::ChunkKind::Prose) && looks_like_heading(&chunk.text)
-        {
+        if matches!(chunk.kind, crate::chunk::ChunkKind::Prose) && looks_like_heading(&chunk.text) {
             current_chapter = Some(chunk.text.trim().to_string());
         }
+
+        let chapter = current_chapter.clone().unwrap_or_else(|| fallback.clone());
+        // Topic extraction proper (a real section-label model) is out of
+        // scope; the chapter is the most specific real label available, and
+        // is always non-blank.
+        let topic = chapter.clone();
+        let lang = detect_lang(&chunk.text).to_string();
 
         enriched.push(EnrichedChunk {
             text: chunk.text,
@@ -83,11 +133,11 @@ pub fn enrich_chunks(chunks: Vec<Chunk>, ctx: EnrichContext) -> Vec<EnrichedChun
             course_id: ctx.course_id,
             block_no: ctx.block_no,
             document_id: ctx.document_id,
-            chapter: current_chapter.clone(),
-            topic: None,
+            chapter,
+            topic,
             page: chunk.page,
             para_index: chunk.para_index,
-            lang: "ml".to_string(),
+            lang,
         });
     }
 
@@ -107,33 +157,63 @@ mod tests {
             course_id: CourseId::from_uuid(Uuid::nil()),
             block_no: 1,
             document_id: DocumentId::from_uuid(Uuid::nil()),
+            document_title: "Malayalam Poetry Reader".to_string(),
+        }
+    }
+
+    fn prose(text: &str, para_index: usize) -> Chunk {
+        Chunk {
+            token_count: text.split_whitespace().count(),
+            text: text.to_string(),
+            kind: ChunkKind::Prose,
+            page: 1,
+            para_index,
         }
     }
 
     #[test]
     fn tracks_most_recent_heading_as_chapter() {
         let chunks = vec![
-            Chunk {
-                text: "Chapter One".to_string(),
-                token_count: 2,
-                kind: ChunkKind::Prose,
-                page: 1,
-                para_index: 0,
-            },
-            Chunk {
-                text: "Some real paragraph content that is not a heading at all.".to_string(),
-                token_count: 10,
-                kind: ChunkKind::Prose,
-                page: 1,
-                para_index: 1,
-            },
+            prose("Chapter One", 0),
+            prose("Some real paragraph content that is not a heading at all.", 1),
         ];
 
-        let enriched = enrich_chunks(chunks, ctx());
+        let enriched = enrich_chunks(chunks, &ctx());
 
-        assert_eq!(enriched[0].chapter.as_deref(), Some("Chapter One"));
-        assert_eq!(enriched[1].chapter.as_deref(), Some("Chapter One"));
-        assert_eq!(enriched[1].lang, "ml");
-        assert_eq!(enriched[1].topic, None);
+        assert_eq!(enriched[0].chapter, "Chapter One");
+        assert_eq!(enriched[1].chapter, "Chapter One");
+    }
+
+    #[test]
+    fn falls_back_to_document_title_before_any_heading() {
+        // A chunk that appears before any heading still must carry a
+        // non-blank chapter/topic — blank would pass straight through to a
+        // citation the tutor reads out.
+        let enriched = enrich_chunks(
+            vec![prose("Body text arriving before any heading is seen.", 0)],
+            &ctx(),
+        );
+
+        assert_eq!(enriched[0].chapter, "Malayalam Poetry Reader");
+        assert_eq!(enriched[0].topic, "Malayalam Poetry Reader");
+    }
+
+    #[test]
+    fn never_emits_a_blank_chapter_or_topic() {
+        let enriched = enrich_chunks(
+            vec![prose("a", 0), prose("Some longer body sentence here.", 1)],
+            &ctx(),
+        );
+        for chunk in &enriched {
+            assert!(!chunk.chapter.trim().is_empty());
+            assert!(!chunk.topic.trim().is_empty());
+            assert!(!chunk.lang.trim().is_empty());
+        }
+    }
+
+    #[test]
+    fn detects_malayalam_and_english() {
+        assert_eq!(detect_lang("ഇത് ഒരു മലയാളം വാക്യമാണ്"), "ml");
+        assert_eq!(detect_lang("This is an English sentence."), "en");
     }
 }

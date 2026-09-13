@@ -23,6 +23,28 @@ pub enum RagError {
 
     #[error("database error: {0}")]
     Db(#[from] dg_db::Error),
+
+    /// Redis prompt-cache (`pcache:{block_id}`) failure.
+    #[error("prompt cache error: {0}")]
+    Cache(String),
+
+    /// A chunk reached the upsert boundary missing a mandatory payload field
+    /// (`.claude/rules/rag-pipeline.md`: "A chunk missing any of these is a
+    /// bug — reject it at upsert"). Carries the offending field names.
+    #[error("chunk {para_index} (page {page}) is missing mandatory payload fields: {fields}")]
+    MissingMetadata {
+        page: i32,
+        para_index: usize,
+        fields: String,
+    },
+}
+
+/// Lets `?` compose against `qdrant-client` calls without every call site
+/// writing the same `map_err`.
+impl From<qdrant_client::QdrantError> for RagError {
+    fn from(err: qdrant_client::QdrantError) -> Self {
+        RagError::Qdrant(err.to_string())
+    }
 }
 
 /// Never leak parse-library internals, Qdrant client errors, or SQL detail

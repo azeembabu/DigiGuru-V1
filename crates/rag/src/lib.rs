@@ -10,6 +10,8 @@ pub mod enrich;
 pub mod error;
 pub mod ingest;
 pub mod parse;
+pub mod payload;
+pub mod preamble;
 pub mod qdrant;
 pub mod rerank;
 pub mod retrieve;

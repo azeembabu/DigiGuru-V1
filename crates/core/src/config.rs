@@ -26,7 +26,21 @@ pub struct Config {
     /// available in this environment (`// TODO(phase2-api-key)` in
     /// `crates/rag/src/embed.rs`).
     pub gemini_api_key: Option<String>,
+    /// Hard cap on a document-upload request body, in bytes.
+    ///
+    /// `.claude/rules/security.md` requires an explicit size cap on uploads;
+    /// without one the effective cap is axum's 2 MiB `DEFAULT_BODY_LIMIT`,
+    /// which is a framework default nobody chose and which rejects every
+    /// real textbook. Applied to the upload route only — raising it globally
+    /// would widen the DoS surface on `/auth/*` and every JSON endpoint.
+    pub max_upload_bytes: usize,
 }
+
+/// 64 MiB. A born-digital textbook PDF is a few MB; a 300-page scanned
+/// Malayalam book at 300 dpi lands in the 30-50 MB range, so this clears the
+/// realistic worst case with headroom while still bounding what one request
+/// can make the gateway buffer in memory.
+pub const DEFAULT_MAX_UPLOAD_BYTES: usize = 64 * 1024 * 1024;
 
 /// A single missing or invalid environment variable.
 #[derive(Debug, thiserror::Error)]
@@ -50,6 +64,14 @@ impl Config {
                 .and_then(|p| p.parse().ok())
                 .unwrap_or(8080),
             gemini_api_key: std::env::var("GEMINI_API_KEY").ok(),
+            // Optional, like PORT: a deployment that needs a different cap
+            // sets it, and an unparseable value falls back to the default
+            // rather than aborting startup over a tuning knob.
+            max_upload_bytes: std::env::var("MAX_UPLOAD_BYTES")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .filter(|n| *n > 0)
+                .unwrap_or(DEFAULT_MAX_UPLOAD_BYTES),
         })
     }
 }

@@ -3,44 +3,86 @@
 //! (`dg_core::Actor::require`/`require_scoped`); sub-admin routes
 //! additionally filter through `sub_admin_scopes`.
 //!
-//! `blocks` has no admin CRUD routes in this pass: neither
-//! `IMPLEMENTATION_PLAN.md` §4.2's deliverable list nor this task's endpoint
-//! list mentions one, even though the `blocks` table itself is fully
-//! modelled in `dg_db::models::blocks` (needed for `/me/context` and for
-//! `students.current_block_id`). Noted as a gap, not silently added.
+//! Paginated list routes (`programs`, `lscs`, `students`, `users`) share the
+//! `page` helper below and report their unfiltered total in an
+//! `X-Total-Count` response header — see `.claude/rules/api-conventions.md`.
+//! The header, rather than an envelope object, is deliberate: these routes
+//! have already shipped a bare JSON array body, and reshaping that body
+//! would break every existing caller.
 
+pub mod analytics;
+pub mod blocks;
+pub mod board_events;
 pub mod courses;
 pub mod documents;
+pub mod enrollments;
+pub mod exams;
 pub mod lscs;
 pub mod programs;
+pub mod safety_incidents;
 pub mod semesters;
+pub mod sessions;
+pub mod stats;
 pub mod students;
 pub mod users;
 
 use axum::{
+    extract::DefaultBodyLimit,
+    http::{header::HeaderName, HeaderMap, HeaderValue},
     routing::{get, patch, post},
     Router,
 };
 
+use dg_core::PublicError;
+
 use crate::state::AppState;
 
-pub fn router() -> Router<AppState> {
+/// `max_upload_bytes` is applied as a `DefaultBodyLimit` to the document
+/// upload route **only**. Raising axum's global 2 MiB default instead would
+/// let every JSON endpoint — `/auth/login` included — buffer a body that
+/// large, which is a DoS surface, not a fix.
+pub fn router(max_upload_bytes: usize) -> Router<AppState> {
     Router::new()
         .route("/programs", post(programs::create_program).get(programs::list_programs))
         .route("/programs/{id}", get(programs::get_program).patch(programs::update_program))
         .route("/semesters", post(semesters::create_semester))
-        .route("/semesters/{id}", patch(semesters::update_semester))
+        .route("/semesters/{id}", get(semesters::get_semester).patch(semesters::update_semester))
         .route("/programs/{program_id}/semesters", get(semesters::list_semesters_for_program))
         .route("/courses", post(courses::create_course))
-        .route("/courses/{id}", patch(courses::update_course))
+        .route("/courses/{id}", get(courses::get_course).patch(courses::update_course))
         .route("/semesters/{semester_id}/courses", get(courses::list_courses_for_semester))
+        .route("/programs/{program_id}/courses", get(courses::list_courses_for_program))
         .route("/lscs", post(lscs::create_lsc).get(lscs::list_lscs))
         .route("/lscs/{id}", patch(lscs::update_lsc))
         .route("/students", get(students::list_students))
         .route("/students/{id}", get(students::get_student))
         .route("/students/{id}/academic", patch(students::update_student_academic))
         .route("/students/{id}/current-block", patch(students::set_current_block))
-        .route("/blocks/{block_id}/documents", post(documents::upload))
+        .route("/blocks", post(blocks::create_block))
+        .route("/blocks/{id}", get(blocks::get_block).patch(blocks::update_block))
+        .route("/courses/{course_id}/blocks", get(blocks::list_blocks_for_course))
+        .route(
+            "/blocks/{block_id}/documents",
+            post(documents::upload)
+                .get(documents::list_documents_for_block)
+                // Applies to the GET too, harmlessly: it has no body.
+                .layer(DefaultBodyLimit::max(max_upload_bytes)),
+        )
+        .route("/documents/{id}", get(documents::get_document))
+        // Exams hang off a block, like documents do; scope is resolved
+        // `exam -> block -> course -> program_id`.
+        .route("/exams", post(exams::create_exam))
+        .route("/exams/{id}", get(exams::get_exam))
+        .route("/exams/{exam_id}/attempts", get(exams::list_attempts_for_exam))
+        .route("/blocks/{block_id}/exams", get(exams::list_exams_for_block))
+        .route("/stats", get(stats::get_stats))
+        .route("/analytics", get(analytics::get_analytics))
+        // Drill-downs behind the dashboard tiles: each opens the records
+        // behind one number. All four are plain paginated admin lists.
+        .route("/enrollments", get(enrollments::list_enrollments))
+        .route("/sessions", get(sessions::list_sessions))
+        .route("/board-events", get(board_events::list_board_events))
+        .route("/safety-incidents", get(safety_incidents::list_safety_incidents))
         .route("/users", get(users::list_users).post(users::create_admin))
         .route("/users/{id}/status", patch(users::set_user_status))
         .route("/users/{id}/scopes", get(users::list_scopes).post(users::add_scope))
@@ -58,4 +100,96 @@ pub(crate) async fn session_active_stub(
     _student_id: dg_core::StudentId,
 ) -> Result<bool, dg_core::PublicError> {
     Ok(false)
+}
+
+/// The ceiling every paginated admin list shares.
+pub(crate) const MAX_PAGE_LIMIT: i64 = 200;
+
+/// A validated `limit`/`offset` pair.
+#[derive(Debug)]
+pub(crate) struct Page {
+    pub limit: i64,
+    pub offset: i64,
+}
+
+/// Validate `limit`/`offset` from a list query.
+///
+/// Out-of-range values are rejected as `400 VALIDATION_ERROR` rather than
+/// clamped: a silent clamp hands the caller a page it did not ask for and
+/// a `X-Total-Count` it cannot reconcile with the rows it got back, which
+/// reads as a pagination bug on the client side rather than as a rejected
+/// request.
+pub(crate) fn page(
+    limit: Option<i64>,
+    offset: Option<i64>,
+    default_limit: i64,
+) -> Result<Page, PublicError> {
+    let limit = limit.unwrap_or(default_limit);
+    if !(1..=MAX_PAGE_LIMIT).contains(&limit) {
+        return Err(PublicError::validation(
+            "limit",
+            format!("must be between 1 and {MAX_PAGE_LIMIT}"),
+        ));
+    }
+
+    let offset = offset.unwrap_or(0);
+    if offset < 0 {
+        return Err(PublicError::validation("offset", "must be zero or greater"));
+    }
+
+    Ok(Page { limit, offset })
+}
+
+/// Normalise a free-text search parameter: a blank or whitespace-only `q`
+/// means "no filter", not "match rows containing an empty string".
+pub(crate) fn search_term(q: Option<&str>) -> Option<&str> {
+    q.map(str::trim).filter(|s| !s.is_empty())
+}
+
+/// The `X-Total-Count` header carrying a list's total before pagination.
+pub(crate) fn total_count(total: i64) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        HeaderName::from_static("x-total-count"),
+        HeaderValue::from(total),
+    );
+    headers
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn page_defaults_when_unspecified() {
+        let p = page(None, None, 50).expect("defaults are valid");
+        assert_eq!(p.limit, 50);
+        assert_eq!(p.offset, 0);
+    }
+
+    #[test]
+    fn page_rejects_limit_above_the_ceiling() {
+        let err = page(Some(MAX_PAGE_LIMIT + 1), None, 50).expect_err("over the ceiling");
+        assert_eq!(err.code(), "VALIDATION_ERROR");
+    }
+
+    #[test]
+    fn page_rejects_zero_and_negative_limit() {
+        assert!(page(Some(0), None, 50).is_err());
+        assert!(page(Some(-1), None, 50).is_err());
+    }
+
+    #[test]
+    fn page_rejects_negative_offset() {
+        let err = page(None, Some(-1), 50).expect_err("negative offset");
+        assert_eq!(err.code(), "VALIDATION_ERROR");
+    }
+
+    #[test]
+    fn blank_search_term_is_no_filter() {
+        assert_eq!(search_term(Some("   ")), None);
+        assert_eq!(search_term(Some("")), None);
+        assert_eq!(search_term(None), None);
+        assert_eq!(search_term(Some("  malayalam ")), Some("malayalam"));
+    }
 }

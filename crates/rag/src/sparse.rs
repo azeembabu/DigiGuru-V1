@@ -27,9 +27,18 @@ pub fn sparse_encode(text: &str) -> SparseVector {
         *term_counts.entry(index).or_insert(0.0) += 1.0;
     }
 
-    let mut indices: Vec<u32> = Vec::with_capacity(term_counts.len());
-    let mut values: Vec<f32> = Vec::with_capacity(term_counts.len());
-    for (index, value) in term_counts {
+    // Sorted by index, not left in `HashMap` iteration order: that order
+    // varies run to run (the hasher is randomly seeded), so the same text
+    // would otherwise encode to a differently-ordered vector on each call.
+    // Qdrant pairs `indices[i]` with `values[i]`, so the pairing stays correct
+    // either way — but an unstable order makes the encoding untestable and
+    // makes two encodings of the same text impossible to compare.
+    let mut pairs: Vec<(u32, f32)> = term_counts.into_iter().collect();
+    pairs.sort_unstable_by_key(|(index, _)| *index);
+
+    let mut indices: Vec<u32> = Vec::with_capacity(pairs.len());
+    let mut values: Vec<f32> = Vec::with_capacity(pairs.len());
+    for (index, value) in pairs {
         indices.push(index);
         values.push(value);
     }

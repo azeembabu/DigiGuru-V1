@@ -34,7 +34,7 @@ pub async fn create(
         VALUES ($1, $2, $3)
         RETURNING id, user_id, token_hash, expires_at, used_at, created_at
         "#,
-        user_id,
+        user_id.into_uuid(),
         token_hash,
         expires_at
     )
@@ -73,7 +73,7 @@ pub async fn mark_used(pool: &PgPool, id: Uuid) -> Result<()> {
 pub async fn invalidate_all_for_user(pool: &PgPool, user_id: UserId) -> Result<()> {
     sqlx::query!(
         r#"UPDATE password_resets SET used_at = now() WHERE user_id = $1 AND used_at IS NULL"#,
-        user_id
+        user_id.into_uuid()
     )
     .execute(pool)
     .await

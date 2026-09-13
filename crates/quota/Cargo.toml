@@ -9,4 +9,20 @@ publish.workspace = true
 name = "quota"
 path = "src/lib.rs"
 
+[features]
+default = ["redis-store"]
+# The Redis-backed `QuotaStore`. Off in a pure-logic build; the ledger itself
+# never needs it, which is what keeps the NN-3 tests hermetic.
+redis-store = ["dep:redis"]
+
 [dependencies]
+dg-core = { workspace = true }
+chrono = { workspace = true }
+chrono-tz = "0.10"
+async-trait = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+redis = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

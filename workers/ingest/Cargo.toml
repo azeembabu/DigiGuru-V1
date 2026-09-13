@@ -10,4 +10,18 @@ name = "ingest-worker"
 path = "src/main.rs"
 
 [dependencies]
+dg-core = { workspace = true }
+dg-db = { workspace = true }
+dg-rag = { workspace = true }
+
 tokio = { workspace = true }
+sqlx = { workspace = true }
+qdrant-client = { workspace = true }
+redis = { workspace = true }
+uuid = { workspace = true }
+# `anyhow` only in the binary (`.claude/rules/code-style.md`); the library
+# crates it calls expose typed `thiserror` enums.
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+dotenvy = { workspace = true }

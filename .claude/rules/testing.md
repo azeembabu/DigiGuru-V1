@@ -7,7 +7,7 @@
 | RBAC | Full role × endpoint matrix; every forbidden combination asserts 403 |
 | NN-1 whiteboard-first | `SyncGate` unit tests: audio never released before ACK or hold expiry |
 | NN-2 first login | Two consecutive logins emit the greeting exactly once |
-| NN-3 quota | Cap fires at 1200 s of active voice with a skewed client clock |
+| NN-3 quota | Cap fires at 1200 s of active voice with a skewed client clock; the ledger resets at midnight in the student's own timezone, not UTC; a session spanning that boundary is charged to the correct day |
 | NN-4 RAG-only | Out-of-syllabus golden set returns abstention 100 % of the time |
 | NN-5 guardrails | Red-team corpus (en + ml) terminates the session every time |
 | Metadata isolation | 1 000 randomised queries never retrieve another program or semester |

@@ -2,9 +2,7 @@
 //! access token. The old `auth_sessions` row is revoked (never reused), and
 //! a new one is inserted, so a replayed old refresh token is detectable.
 
-use std::net::SocketAddr;
-
-use axum::extract::{ConnectInfo, State};
+use axum::extract::State;
 use axum_extra::extract::CookieJar;
 use chrono::{Duration, Utc};
 
@@ -14,11 +12,12 @@ use dg_db::models::{auth_sessions, users};
 use super::cookies::{access_cookie, refresh_cookie, REFRESH_COOKIE, REFRESH_TOKEN_TTL_DAYS};
 use super::jwt::issue_access_token;
 use super::tokens::{generate_token, hash_token};
+use crate::extractors::ClientIp;
 use crate::state::AppState;
 
 pub async fn refresh(
     State(state): State<AppState>,
-    connect_info: Option<ConnectInfo<SocketAddr>>,
+    ClientIp(ip_address): ClientIp,
     jar: CookieJar,
 ) -> Result<CookieJar, PublicError> {
     let raw_refresh = jar
@@ -47,7 +46,6 @@ pub async fn refresh(
 
     let new_raw_refresh = generate_token();
     let new_refresh_hash = hash_token(&state.config.jwt_refresh_secret, &new_raw_refresh);
-    let ip_address = connect_info.map(|c| c.0.ip());
 
     auth_sessions::create(
         &state.pool,

@@ -10,11 +10,16 @@ name = "live"
 path = "src/lib.rs"
 
 [dependencies]
+# Union of both Phase 3 passes: dg-core/tokio/async-trait/bytes are the Gemini
+# client and turn FSM merged from main; uuid is the board-op schema validated
+# by SyncGate. Nothing here is unused -- see lib.rs for why both live side by
+# side.
 dg-core = { workspace = true }
 tokio = { workspace = true }
+async-trait = { workspace = true }
+bytes = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
-async-trait = { workspace = true }
-bytes = { workspace = true }
+uuid = { workspace = true }

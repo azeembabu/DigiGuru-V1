@@ -9,16 +9,22 @@
 //! phases that write to them land.
 
 pub mod admins;
+pub mod analytics;
 pub mod audit_logs;
 pub mod auth_sessions;
 pub mod blocks;
 pub mod content;
 pub mod courses;
 pub mod documents;
+pub mod drilldown;
+pub mod drilldown_sessions;
+pub mod exams;
+pub mod ingestion_jobs;
 pub mod lscs;
 pub mod password_resets;
 pub mod programs;
 pub mod semesters;
+pub mod stats;
 pub mod student_courses;
 pub mod students;
 pub mod sub_admin_scopes;
