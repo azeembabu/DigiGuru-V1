@@ -26,8 +26,16 @@ Never weaken these. If a change makes one harder to guarantee, stop and raise it
    board ops for turn *N* (or the 400 ms hold ceiling expires). Enforcement lives in the gateway
    `SyncGate`, not in the prompt.
 2. **NN-2 First-login logic.** The greeting plays only when `students.is_first_login = true`.
-3. **NN-3 Hard 20-minute cap.** Server-authoritative, Redis-backed, counted only while voice is
-   active. Client clocks are never trusted.
+3. **NN-3 Daily 20-minute voice quota.** Twenty minutes of *active voice* per student per
+   calendar day, server-authoritative and Redis-backed, counted only while voice is active.
+   The day boundary is midnight in the **student's own timezone** (`students.timezone`), not
+   UTC and not the server's — a student in a different zone must not lose minutes to a reset
+   that happens mid-afternoon for them. Client clocks are never trusted for either the elapsed
+   time or the date.
+
+   *Changed 2026-09-13 from a per-session hard cap to a daily resetting quota, on the product
+   owner's instruction. The enforcement point is unchanged: the ledger is server-side, and a
+   session still ends with `end_reason = 'quota'` when the remaining allowance reaches zero.*
 4. **NN-4 RAG-only.** Below the similarity floor the tutor abstains. No world knowledge, ever.
 5. **NN-5 Jailbreak termination.** Tier-0 guard mutes the upstream mid-utterance; Tier-1 tears the
    socket down. Incidents are always persisted.

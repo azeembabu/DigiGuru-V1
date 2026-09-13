@@ -129,6 +129,177 @@ has no program and every admin may already list them all.
   "documents": { "total": 0, "pending_review": 0, "embedded": 0, "failed": 0 } }
 ```
 
+### `GET /api/v1/admin/analytics` — dashboard metrics and chart series
+
+Capability `ManagePrograms`. **Additive: `GET /admin/stats` is unchanged and still
+served**, because the existing dashboard tiles read it; this is a second, richer
+endpoint rather than a breaking expansion of the first.
+
+Scoping follows `/admin/stats` exactly — the caller's role decides *which query
+runs*, never a filter applied to a platform-wide result. A `sub_admin` sees only
+its `sub_admin_scopes` programs, reached by `blocks -> courses -> program_id`,
+`documents -> blocks -> courses -> program_id`, `learning_sessions -> courses ->
+program_id`, `board_events -> learning_sessions -> courses -> program_id`, and
+`safety_incidents -> students -> program_id`. `lscs` stays platform-wide for both
+roles, for the reason given under `/admin/stats`.
+
+A sub-admin with no scopes gets zeroes and empty series — the correct answer, not
+a reason to fall back to the unscoped query.
+
+Every counter is a non-negative integer and every series is present (possibly
+empty), so a client never has to null-check a metric. Averages and percentiles
+are `null` when there is nothing to average — `0` would read as a real measured
+zero, which is a different and wrong claim.
+
+```json
+{
+  "catalogue": { "programs": 0, "semesters": 0, "courses": 0, "blocks": 0,
+                 "blocks_active": 0, "blocks_inactive": 0, "lscs": 0,
+                 "blocks_without_documents": 0, "courses_without_blocks": 0,
+                 "semesters_without_courses": 0 },
+
+  "students":  { "total": 0, "active": 0, "inactive": 0, "suspended": 0,
+                 "first_login_pending": 0, "new_last_30d": 0,
+                 "without_enrollment": 0, "enrollments_active": 0,
+                 "enrollments_completed": 0, "enrollments_dropped": 0 },
+
+  "documents": { "total": 0, "pending": 0, "parsing": 0, "pending_review": 0,
+                 "embedded": 0, "failed": 0, "total_pages": 0,
+                 "avg_ocr_confidence": null,
+                 "jobs_pending": 0, "jobs_processing": 0, "jobs_completed": 0,
+                 "jobs_failed": 0, "jobs_retried": 0 },
+
+  "sessions":  { "total": 0, "in_progress": 0, "completed": 0, "abandoned": 0,
+                 "last_7d": 0, "active_voice_ms_total": 0,
+                 "active_voice_ms_avg": null,
+                 "ended_quota": 0, "ended_idle": 0, "ended_user": 0,
+                 "ended_jailbreak": 0, "ended_error": 0 },
+
+  "whiteboard": { "ops_total": 0, "ops_acked": 0, "ops_unacked": 0,
+                  "ack_p50_ms": null, "ack_p95_ms": null,
+                  "violation_rate": null },
+
+  "safety":    { "total": 0, "tier0": 0, "tier1": 0, "tier2": 0, "last_7d": 0,
+                 "jailbreak": 0, "toxicity": 0, "out_of_scope": 0 },
+
+  "series": {
+    "sessions_daily":      [ { "day": "2026-09-13", "count": 0, "voice_ms": 0 } ],
+    "students_daily":      [ { "day": "2026-09-13", "count": 0 } ],
+    "documents_daily":     [ { "day": "2026-09-13", "count": 0 } ],
+    "incidents_daily":     [ { "day": "2026-09-13", "count": 0 } ],
+    "documents_by_status": [ { "label": "embedded", "count": 0 } ],
+    "session_end_reasons": [ { "label": "quota", "count": 0 } ],
+    "ack_latency_buckets": [ { "label": "0-100ms", "count": 0 } ],
+    "top_blocks":          [ { "label": "Block 3 - Prosody", "count": 0 } ]
+  }
+}
+```
+
+Rules the series obey, so a chart can render them without post-processing:
+
+- The four `*_daily` series are **gap-filled**: exactly 30 rows, oldest first,
+  ending today in UTC, with `count: 0` for days that had no rows. A chart that
+  has to infer missing days draws a misleading line.
+- `documents_by_status`, `session_end_reasons` and `ack_latency_buckets` return a
+  **fixed set of labels in a fixed order**, zeros included, so a legend and its
+  colours stay stable between refreshes instead of reordering as data arrives.
+- `ack_latency_buckets` are `0-100ms`, `100-250ms`, `250-400ms`, `>400ms` —
+  the last bucket is past the NN-1 `HOLD_MAX` ceiling, so a non-zero count there
+  is a whiteboard-first violation and the UI marks it as such.
+- `whiteboard.violation_rate` is `ops_unacked / ops_total` as a 0..1 float, the
+  same quantity `wb_violation` tracks in CI.
+- `top_blocks` is at most 10 rows, descending by `count`.
+
+### Drill-down list endpoints
+
+The dashboard's metrics are clickable: each opens the records behind the number.
+Four groups had no list API, so these add one each. All four follow the existing
+paginated-list conventions exactly — capability `ManagePrograms`, a bare JSON
+**array** body, the total before pagination in `X-Total-Count`, `limit` 1-200
+(default 50) and `offset` >= 0 validated rather than clamped, and the caller's
+role selecting the scoped or unscoped query as `/admin/analytics` does.
+
+Scoping paths are the same as `/admin/analytics`: enrolments via
+`student_courses -> courses -> program_id`, sessions via
+`learning_sessions -> courses -> program_id`, board events via
+`board_events -> learning_sessions -> courses -> program_id`, incidents via
+`safety_incidents -> students -> program_id`. A sub-admin with no scopes gets an
+empty array, never a platform-wide fallback.
+
+Every row is denormalised enough to render without a second request — a drill-down
+that has to re-fetch a name per row is an N+1 in the browser.
+
+#### `GET /api/v1/admin/enrollments`
+
+Filters: `status` (`active|completed|dropped`), `course_id`, `student_id`,
+`q` (student name, roll number, course code, course name). Ordered by
+`assigned_at` descending.
+
+```json
+[ { "id": "uuid", "student_id": "uuid", "student_name": "string",
+    "roll_number": "string", "course_id": "uuid", "course_code": "string",
+    "course_name": "string", "semester_number": 1,
+    "status": "active|completed|dropped", "assigned_at": "RFC3339" } ]
+```
+
+#### `GET /api/v1/admin/sessions`
+
+Filters: `status` (`in_progress|completed|abandoned`), `end_reason`
+(`quota|idle|user|jailbreak|error`), `student_id`, `block_id`, `course_id`,
+`from`/`to` (RFC3339, filtering `started_at`). Ordered by `started_at`
+descending.
+
+`active_voice_ms` is the NN-3 server-authoritative figure and never exceeds
+1200000. `end_reason` is `null` while a session is still running.
+
+```json
+[ { "id": "uuid", "student_id": "uuid", "student_name": "string",
+    "roll_number": "string", "course_id": "uuid", "course_code": "string",
+    "block_id": "uuid", "block_no": 1, "block_title": "string",
+    "started_at": "RFC3339", "ended_at": "RFC3339|null",
+    "active_voice_ms": 0, "status": "in_progress|completed|abandoned",
+    "end_reason": "quota|idle|user|jailbreak|error|null",
+    "last_topic": "string|null", "last_page": 0,
+    "board_ops": 0, "board_violations": 0 } ]
+```
+
+`board_ops` and `board_violations` are per-session roll-ups so the list can flag
+a bad session without opening it. A violation is an op with `acked_ms` NULL or
+above the 400 ms `HOLD_MAX`.
+
+#### `GET /api/v1/admin/board-events`
+
+Filters: `session_id`, `violations_only` (`true` = `acked_ms IS NULL OR
+acked_ms > 400`), `bucket` (`0-100ms|100-250ms|250-400ms|>400ms`, matching the
+analytics buckets). Ordered by `emitted_at` descending, or by `turn_seq`
+ascending when `session_id` is given — a single session reads as a transcript,
+not a reverse feed.
+
+`op_kind` is lifted out of the `op` JSONB so a list can render without parsing
+it; `op` carries the full validated payload for a detail view.
+
+```json
+[ { "id": 1, "session_id": "uuid", "turn_seq": 1,
+    "op_kind": "heading|bullets|math|draw|image|highlight",
+    "op": { }, "emitted_at": "RFC3339", "acked_ms": 148,
+    "is_violation": false } ]
+```
+
+#### `GET /api/v1/admin/safety-incidents`
+
+Filters: `tier` (`0|1|2`), `kind` (`jailbreak|toxicity|out_of_scope`),
+`student_id`, `session_id`, `from`/`to`. Ordered by `created_at` descending.
+
+`excerpt` is already PII-redacted at write time (`security.md`) and is returned
+as stored — this endpoint neither re-redacts nor un-redacts it.
+
+```json
+[ { "id": "uuid", "session_id": "uuid|null", "student_id": "uuid",
+    "student_name": "string", "roll_number": "string",
+    "kind": "jailbreak|toxicity|out_of_scope", "tier": 0,
+    "excerpt": "string", "created_at": "RFC3339" } ]
+```
+
 ### Course responses
 
 `CourseResponse` carries `semester_number` and `semester_name` alongside the
