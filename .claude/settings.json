@@ -49,7 +49,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "NX='let d=\"\";process.stdin.on(\"data\",c=>d+=c);process.stdin.on(\"end\",()=>{try{const j=JSON.parse(d);process.stdout.write((j.tool_input&&j.tool_input.file_path)||\"\")}catch(e){process.stdout.write(\"\")}})'; f=$(node -e \"$NX\" | tr '\\\\' '/'); case \"$f\" in *CLAUDE.md|*/.claude/*) cd 'D:/Digi Guru-Sep-2026' 2>/dev/null && (git pull origin main --rebase >&2 || echo '[claude-sync] pull failed (offline or conflict) - continuing with local state' >&2) ;; esac; exit 0",
+            "command": "NX='let d=\"\";process.stdin.on(\"data\",c=>d+=c);process.stdin.on(\"end\",()=>{try{const j=JSON.parse(d);process.stdout.write((j.tool_input&&j.tool_input.file_path)||\"\")}catch(e){process.stdout.write(\"\")}})'; f=$(node -e \"$NX\" | tr '\\' '/'); case \"$f\" in *CLAUDE.md|*/.claude/*) cd 'D:/Digi Guru-Sep-2026' 2>/dev/null || exit 0; if [ -e .git/rebase-merge ] || [ -e .git/rebase-apply ] || [ -e .git/MERGE_HEAD ]; then echo '[claude-sync] a rebase/merge is already in progress - skipping pull' >&2; exit 0; fi; b=$(git symbolic-ref --quiet --short HEAD); if [ -z \"$b\" ]; then echo '[claude-sync] detached HEAD - skipping pull' >&2; exit 0; fi; git pull origin \"$b\" --rebase >&2 || echo \"[claude-sync] pull of $b failed (offline, no upstream, or conflict) - continuing with local state\" >&2 ;; esac; exit 0",
             "timeout": 30,
             "statusMessage": "Syncing CLAUDE.md/.claude rules from origin..."
           }
@@ -62,7 +62,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "NX='let d=\"\";process.stdin.on(\"data\",c=>d+=c);process.stdin.on(\"end\",()=>{try{const j=JSON.parse(d);process.stdout.write((j.tool_input&&j.tool_input.file_path)||\"\")}catch(e){process.stdout.write(\"\")}})'; f=$(node -e \"$NX\" | tr '\\\\' '/'); case \"$f\" in *CLAUDE.md|*/.claude/*) cd 'D:/Digi Guru-Sep-2026' 2>/dev/null && git add -- \"$f\" 2>/dev/null && (git commit -m \"docs(claude): auto-sync $(basename \"$f\")\" --quiet 2>/dev/null || true) && (git push origin main >&2 || echo '[claude-sync] push failed (offline?) - committed locally, push manually when back online' >&2) ;; esac; exit 0",
+            "command": "NX='let d=\"\";process.stdin.on(\"data\",c=>d+=c);process.stdin.on(\"end\",()=>{try{const j=JSON.parse(d);process.stdout.write((j.tool_input&&j.tool_input.file_path)||\"\")}catch(e){process.stdout.write(\"\")}})'; f=$(node -e \"$NX\" | tr '\\' '/'); case \"$f\" in *CLAUDE.md|*/.claude/*) cd 'D:/Digi Guru-Sep-2026' 2>/dev/null || exit 0; b=$(git symbolic-ref --quiet --short HEAD); if [ -z \"$b\" ]; then echo '[claude-sync] detached HEAD - not committing' >&2; exit 0; fi; git add -- \"$f\" 2>/dev/null || exit 0; if git diff --cached --quiet -- \"$f\"; then exit 0; fi; git commit -m \"docs(claude): auto-sync $(basename \\\"$f\\\")\" --quiet 2>/dev/null || true; git push origin \"$b\" >&2 || echo \"[claude-sync] push of $b failed (offline?) - committed locally, push manually\" >&2 ;; esac; exit 0",
             "timeout": 30,
             "statusMessage": "Pushing CLAUDE.md/.claude rule change live..."
           }
