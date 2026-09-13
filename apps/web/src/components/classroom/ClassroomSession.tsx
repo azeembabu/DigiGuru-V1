@@ -51,19 +51,41 @@ import { Logo } from "@/components/ui/Logo";
  * waveform.
  */
 
-/** Mic level must clear this multiple of the measured bleed to count as the student. */
-const SPEECH_OVER_BLEED = 3.0;
+/**
+ * Mic level must clear this multiple of the measured bleed to count as the
+ * student.
+ *
+ * Deliberately close to 1. The first version demanded 3x, which in practice
+ * meant the student had to raise their voice to interrupt at all — reported as
+ * "I need to be loud to ask anything". Speaker bleed reaching a laptop
+ * microphone is already well below a person speaking normally at it, so a
+ * modest margin is enough to separate them; the work of rejecting noise is done
+ * by `SPEECH_OPEN_FRAMES` below, which costs nothing in volume.
+ */
+const SPEECH_OVER_BLEED = 1.8;
 
 /** Absolute floor for that test, so near-silence cannot qualify as speech. */
-const SPEECH_MIN_LEVEL = 0.02;
+const SPEECH_MIN_LEVEL = 0.012;
+
+/**
+ * Consecutive qualifying frames before a turn is declared.
+ *
+ * Four frames is 80 ms — long enough to reject a single-frame spike from a key
+ * press or a click, short enough to feel immediate. This is the right axis to
+ * be strict on: being *consistent* for 80 ms is something ordinary speech does
+ * and a transient does not, whereas being *loud* is something only a raised
+ * voice does.
+ */
+const SPEECH_OPEN_FRAMES = 4;
 
 /**
  * Frames of bleed measured before the detector will open a turn.
  *
  * The estimate starts at zero, so without this the tutor's first loud moment
- * clears the threshold and opens a turn on the tutor's own voice.
+ * clears the threshold and opens a turn on the tutor's own voice. Shortened to
+ * 200 ms so the opening of a tutor sentence is interruptible too.
  */
-const BLEED_WARMUP_FRAMES = 15;
+const BLEED_WARMUP_FRAMES = 10;
 
 /**
  * Queued tutor audio above which the header shows "tutor speaking".
@@ -140,6 +162,8 @@ export function ClassroomSession({
   const playbackRef = useRef<AudioPlayback | null>(null);
   /** True between `activity(true)` and `activity(false)` — a declared turn. */
   const turnOpenRef = useRef(false);
+  /** Consecutive qualifying frames — see `SPEECH_OPEN_FRAMES`. */
+  const speechRunRef = useRef(0);
   /** Running estimate of the tutor's bleed level, learned while it plays. */
   const bleedRef = useRef(0);
   /** Frames of bleed seen this tutor turn; the detector is deaf until warmed up. */
@@ -307,6 +331,7 @@ export function ClassroomSession({
       turnOpenRef.current = false;
       clientRef.current?.setActivity(false);
     }
+    speechRunRef.current = 0;
     bleedRef.current = 0;
     bleedFramesRef.current = 0;
     if (hearingTimer.current !== null) {
@@ -363,9 +388,10 @@ export function ClassroomSession({
           !tutorAudible ||
           (bleedFramesRef.current > BLEED_WARMUP_FRAMES &&
             level > Math.max(bleedRef.current * SPEECH_OVER_BLEED, SPEECH_MIN_LEVEL));
-        const isStudent = speakingRef.current && overBleed;
+        const qualifies = speakingRef.current && overBleed;
+        speechRunRef.current = qualifies ? speechRunRef.current + 1 : 0;
 
-        if (isStudent && !turnOpenRef.current) {
+        if (speechRunRef.current >= SPEECH_OPEN_FRAMES && !turnOpenRef.current) {
           turnOpenRef.current = true;
           // Declared before the first frame. Upstream this both opens the turn
           // and, if the tutor is mid-sentence, ends its turn.

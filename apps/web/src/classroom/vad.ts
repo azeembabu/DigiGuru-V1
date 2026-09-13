@@ -173,8 +173,12 @@ export class Vad {
     // Two thresholds fix it at the source: cross the higher one to start,
     // fall below the lower one to stop. Anything between is "carry on as you
     // were", which is what a steady noise floor now does — nothing.
-    const openAt = this.threshold ?? Math.max(this.noiseFloor * 4.5, 0.012);
-    const closeAt = this.threshold ?? Math.max(this.noiseFloor * 2.5, 0.007);
+    // Softened from 4.5x/2.5x: together with the bleed test in the classroom
+    // that made a normal speaking voice fail to register, so the student had to
+    // raise their voice to be heard at all. The hysteresis gap is what stops
+    // the flapping, not the absolute height of the pair.
+    const openAt = this.threshold ?? Math.max(this.noiseFloor * 3.2, 0.009);
+    const closeAt = this.threshold ?? Math.max(this.noiseFloor * 2.0, 0.006);
     const isSpeech = this.speaking ? energy > closeAt : energy > openAt;
 
     if (isSpeech) {
