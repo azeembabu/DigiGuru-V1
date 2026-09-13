@@ -199,6 +199,20 @@ export function ExamHistoryPanel({ history }: { history: ExamHistoryEntry[] }) {
                   {entry.weak_topics.map((topic) => (
                     <WeakTopicBadge key={topic} topic={topic} />
                   ))}
+                  {/*
+                    Only a marked attempt has a sheet. An `in_progress` one is
+                    still being sat and an `abandoned` one was never graded, so
+                    the gateway answers 409 for both — offering the link there
+                    would be offering a dead end.
+                  */}
+                  {entry.status === "submitted" || entry.status === "graded" ? (
+                    <Link
+                      href={`/exams/attempts/${entry.attempt_id}/sheet`}
+                      className="ml-auto text-[13px] font-semibold text-lime-400 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300"
+                    >
+                      Answer sheet
+                    </Link>
+                  ) : null}
                 </div>
               </li>
             ))}

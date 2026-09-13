@@ -677,6 +677,127 @@ pub async fn submit_attempt(
     }))
 }
 
+/// The student's own marked answer sheet — everything a downloadable record of
+/// one attempt needs, in one response.
+///
+/// It carries the student's name and roll number, which no other
+/// `/api/v1/student/*` payload does. That is deliberate and is not a widening:
+/// the route is self-only, so the only identity it can ever print is the
+/// caller's own, and an answer sheet without a name on it is not a document
+/// anybody can hand to anyone. Nothing here can name a different student —
+/// `own_student` resolves the subject from the access token.
+#[derive(Debug, Serialize)]
+pub struct AnswerSheetResponse {
+    pub attempt_id: Uuid,
+    pub exam_id: Uuid,
+    pub exam_title: String,
+    pub course_code: String,
+    pub course_name: String,
+    pub block_no: i16,
+    pub block_title: String,
+    pub student_name: String,
+    pub roll_number: String,
+    pub attempt_no: i16,
+    pub total_questions: i64,
+    pub correct_answers: i64,
+    pub score: f64,
+    pub max_score: f64,
+    pub score_percentage: f64,
+    pub weak_topics: Vec<String>,
+    pub started_at: DateTime<Utc>,
+    /// Never `null` here: the route refuses an attempt that was not submitted.
+    pub submitted_at: DateTime<Utc>,
+    pub review: Vec<ReviewQuestionResponse>,
+}
+
+/// `GET /api/v1/student/exam-attempts/{id}/review` — re-read a marked paper.
+///
+/// The review used to exist only as the body of `POST .../submit`, which meant
+/// a student could see their marked answers exactly once, at the moment they
+/// submitted, and never again. Losing that response — a reload, a dropped
+/// connection, coming back a week later — lost the answer sheet permanently,
+/// even though every row behind it was still in the database.
+///
+/// It re-reads; it does not re-grade. `exam_papers::grade` performs the
+/// marking `UPDATE` and is deliberately not called here: the score is read
+/// from the attempt row that submission already wrote, so downloading an
+/// answer sheet cannot alter a mark. A student refreshing this a hundred times
+/// changes nothing.
+///
+/// Disclosure is unchanged. `graded_paper`'s SQL refuses an `in_progress`
+/// attempt, so the answer key cannot reach a live paper through this route
+/// even if the status check below were wrong; the check is there to return a
+/// clear `409` rather than an empty sheet.
+pub async fn review_attempt(
+    State(state): State<AppState>,
+    AuthenticatedActor(actor): AuthenticatedActor,
+    Path(id): Path<Uuid>,
+) -> Result<Json<AnswerSheetResponse>, PublicError> {
+    actor.require(Capability::ViewOwnExams)?;
+
+    let student = super::own_student(&state, &actor).await?;
+    let attempt_id = ExamAttemptId::from(id);
+
+    // Resolved first, so another student's attempt id is `404` rather than the
+    // `409` an unsubmitted one gets — a `409` would confirm the id exists.
+    let attempt = exams::attempt_for_student(&state.pool, student.id, attempt_id)
+        .await
+        .map_err(PublicError::from)?
+        .ok_or(PublicError::NotFound)?;
+
+    // Only a paper that was actually marked has an answer sheet. An abandoned
+    // attempt was never graded, so it is refused here rather than served as a
+    // sheet full of blanks that looks like a bug.
+    let submitted_at = match attempt.status {
+        ExamAttemptStatus::Submitted | ExamAttemptStatus::Graded => attempt
+            .submitted_at
+            .ok_or_else(|| not_active(attempt.status))?,
+        other => return Err(not_active(other)),
+    };
+
+    let review: Vec<ReviewQuestionResponse> =
+        exam_papers::graded_paper(&state.pool, student.id, attempt_id)
+            .await
+            .map_err(PublicError::from)?
+            .into_iter()
+            .map(ReviewQuestionResponse::from)
+            .collect();
+
+    let weak_topics = exam_papers::weak_topics_for_attempt(&state.pool, student.id, attempt_id)
+        .await
+        .map_err(PublicError::from)?;
+
+    // Counted from the marked rows rather than read from a column: it is the
+    // same number `submit` returned, derived from the same source of truth, so
+    // the two responses cannot disagree.
+    let total_questions = review.len() as i64;
+    let correct_answers = review.iter().filter(|q| q.is_correct == Some(true)).count() as i64;
+
+    Ok(Json(AnswerSheetResponse {
+        attempt_id: attempt.id.into_uuid(),
+        exam_id: attempt.exam_id.into_uuid(),
+        exam_title: attempt.exam_title,
+        course_code: attempt.course_code,
+        course_name: attempt.course_name,
+        block_no: attempt.block_no,
+        block_title: attempt.block_title,
+        student_name: student.full_name,
+        roll_number: student.roll_number,
+        attempt_no: attempt.attempt_no,
+        total_questions,
+        correct_answers,
+        // `score` is NOT NULL once graded; fall back to the recomputed tally
+        // rather than serving `null` on a sheet that is meant to be printed.
+        score: attempt.score.unwrap_or(correct_answers as f64),
+        max_score: attempt.max_score,
+        score_percentage: score_percentage(correct_answers, total_questions),
+        weak_topics,
+        started_at: attempt.started_at,
+        submitted_at,
+        review,
+    }))
+}
+
 /// `correct / total * 100`. An empty paper is `0.0` rather than a division by
 /// zero; `start_attempt` makes that unreachable through the normal path.
 fn score_percentage(correct: i64, total: i64) -> f64 {
@@ -773,6 +894,58 @@ mod tests {
                 .code(),
             "VALIDATION_ERROR"
         );
+    }
+
+    // -- The answer sheet --------------------------------------------------
+
+    /// The sheet is only served for an attempt that was actually marked. An
+    /// abandoned one was never graded, so serving it would be a page of blanks
+    /// that reads as a broken download rather than as "there is nothing here".
+    #[test]
+    fn only_a_submitted_attempt_has_an_answer_sheet() {
+        for status in [ExamAttemptStatus::InProgress, ExamAttemptStatus::Abandoned] {
+            assert_eq!(not_active(status).code(), EXAM_ATTEMPT_NOT_ACTIVE);
+        }
+    }
+
+    /// The answer sheet is the one student-facing payload that carries a name
+    /// and roll number — it is a document meant to be printed and handed over.
+    /// The route is self-only, so the identity can only ever be the caller's
+    /// own; this asserts the fields are actually present, since a sheet with
+    /// nobody's name on it is not a record of anything.
+    #[test]
+    fn the_answer_sheet_identifies_the_student_and_discloses_the_key() {
+        let now = Utc::now();
+        let sheet = AnswerSheetResponse {
+            attempt_id: Uuid::new_v4(),
+            exam_id: Uuid::new_v4(),
+            exam_title: "Unit 3 Test".into(),
+            course_code: "BAML101".into(),
+            course_name: "Introduction to Malayalam Language".into(),
+            block_no: 3,
+            block_title: "Prosody".into(),
+            student_name: "Ananya Menon".into(),
+            roll_number: "25XHBML11450".into(),
+            attempt_no: 2,
+            total_questions: 2,
+            correct_answers: 1,
+            score: 1.0,
+            max_score: 2.0,
+            score_percentage: 50.0,
+            weak_topics: vec!["Phonology".into()],
+            started_at: now,
+            submitted_at: now,
+            review: vec![graded(1, Some(1), 1).into(), graded(2, Some(0), 2).into()],
+        };
+
+        let json = serde_json::to_value(&sheet).expect("serialises");
+        assert_eq!(json["student_name"], "Ananya Menon");
+        assert_eq!(json["roll_number"], "25XHBML11450");
+        assert_eq!(json["score_percentage"], 50.0);
+        // Unlike a live paper, a marked one is *supposed* to carry the key.
+        let first = &json["review"][0];
+        assert!(first["correct_option_index"].is_number());
+        assert!(first["explanation"].is_string());
     }
 
     // -- The answer key must not leak -------------------------------------

@@ -80,4 +80,11 @@ pub fn router() -> Router<AppState> {
         // The historical record, as distinct from sitting a paper.
         .route("/exam-attempts", get(exams::list_my_attempts))
         .route("/exam-attempts/{id}", get(exams::get_my_attempt))
+        // The marked answer sheet. Separate from `/exam-attempts/{id}`, which
+        // is the summary card: the card is what a dashboard lists, this is the
+        // document a student downloads, and only this one discloses the key.
+        .route(
+            "/exam-attempts/{id}/review",
+            get(exam_module::review_attempt),
+        )
 }

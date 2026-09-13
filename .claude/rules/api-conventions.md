@@ -935,6 +935,61 @@ The admin gradebook (`GET /admin/exams/{exam_id}/attempts`) reads the same
 `exam_attempts` rows this route writes, so a queue or a duplicate table would
 only create a way for the two to disagree. Do not add one.
 
+#### The marked answer sheet
+
+`GET /api/v1/student/exam-attempts/{id}/review` — capability `ViewOwnExams`,
+self-only. The student's own graded paper, re-readable.
+
+The review previously existed **only** as the body of `POST .../submit`, so a
+student could see their marked answers exactly once. Losing that response — a
+reload, a dropped connection, coming back next week — lost the answer sheet
+permanently, though every row behind it was still in the database.
+
+It **re-reads; it does not re-grade.** `exam_papers::grade` (which performs the
+marking `UPDATE`) is not on this path: the score comes from the attempt row that
+submission already wrote, so downloading an answer sheet can never alter a mark,
+however many times it is fetched.
+
+`404` for an attempt that does not exist or belongs to another student — never
+`403`, which would confirm the id exists. `409 EXAM_ATTEMPT_NOT_ACTIVE` for an
+attempt that was not marked: `in_progress` (still being sat) and `abandoned`
+(never graded). `graded_paper`'s SQL independently refuses an `in_progress`
+attempt, so the key cannot reach a live paper even if the status check were
+wrong.
+
+The payload is the submit result plus the identity and syllabus position that
+make it a document rather than a screen:
+
+```json
+{ "attempt_id": "uuid", "exam_id": "uuid", "exam_title": "string",
+  "course_code": "string", "course_name": "string",
+  "block_no": 1, "block_title": "string",
+  "student_name": "string", "roll_number": "string", "attempt_no": 2,
+  "total_questions": 5, "correct_answers": 1,
+  "score": 1.0, "max_score": 5.0, "score_percentage": 20.0,
+  "weak_topics": ["string"],
+  "started_at": "RFC3339", "submitted_at": "RFC3339",
+  "review": [ { "question_seq": 1, "question_id": "uuid", "topic": "string",
+    "question_text": "string", "options": ["A","B","C","D"],
+    "selected_option_index": 2, "correct_option_index": 1,
+    "is_correct": false, "explanation": "string" } ] }
+```
+
+`student_name` and `roll_number` appear on **no other** `/api/v1/student/*`
+payload. That is deliberate and is not a widening of disclosure: the route is
+self-only, so the only identity it can print is the caller's own, and a sheet
+with no name on it is not a record anybody can hand over. `submitted_at` is
+never `null` here, because an unsubmitted attempt is refused.
+
+`total_questions` and `correct_answers` are counted from the marked rows rather
+than read from a column, so this response and `submit`'s cannot disagree.
+
+The client renders it at `/exams/attempts/{id}/sheet` and downloads it through
+the browser's print pipeline (`window.print()` + a print stylesheet), not a PDF
+library — a question, option or explanation may be in Malayalam, every library
+needs the font embedded to write it, and a download that drops the script half
+the syllabus is taught in is worse than none.
+
 ### Student reports
 
 | Method | Path | Capability |

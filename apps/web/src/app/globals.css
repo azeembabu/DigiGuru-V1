@@ -370,6 +370,89 @@ body {
 }
 
 /*
+ * The printable answer sheet.
+ *
+ * Unlike the classroom notes (below), the sheet on screen *is* the document —
+ * there is no second hidden copy to reveal, because nothing on this page is a
+ * canvas or an overlay. So printing only strips the app chrome and repaints the
+ * dark theme onto paper.
+ */
+@media print {
+  .dg-sheet-chrome {
+    display: none !important;
+  }
+
+  /*
+   * Strip the app shell. The sheet is rendered inside the student layout, so
+   * the sidebar and page header would otherwise print alongside it — the first
+   * print of this page came out with a navigation rail down the left of the
+   * paper.
+   *
+   * `visibility` rather than `display` because the sheet is nested several
+   * levels inside that shell: hiding an ancestor with `display: none` takes the
+   * sheet with it, whereas `visibility: hidden` is overridden by a descendant
+   * setting itself back to `visible`. Layout is preserved either way, which is
+   * why the sheet is then lifted to the top-left corner of the page.
+   */
+  body:has(.dg-answer-sheet) * {
+    visibility: hidden !important;
+  }
+
+  body:has(.dg-answer-sheet) .dg-answer-sheet,
+  body:has(.dg-answer-sheet) .dg-answer-sheet * {
+    visibility: visible !important;
+  }
+
+  body:has(.dg-answer-sheet) .dg-answer-sheet {
+    position: absolute !important;
+    left: 0;
+    top: 0;
+    width: 100%;
+  }
+
+  .dg-answer-sheet {
+    border: 0 !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+    color: #000 !important;
+    font-size: 11pt;
+  }
+
+  /* Tailwind's palette is set for a dark UI; on paper it is illegible or
+     invisible. Everything inside the sheet is forced to black, then the two
+     marks that carry meaning are restored below. */
+  .dg-answer-sheet *,
+  .dg-answer-sheet h1,
+  .dg-answer-sheet b {
+    color: #000 !important;
+    border-color: #bbb !important;
+  }
+
+  /* The correct answer and the student's wrong one stay distinguishable in
+     colour where the printer has it — but both are also labelled in text, so a
+     greyscale print loses nothing. */
+  .dg-answer-sheet .text-emerald-300 {
+    color: #0a6b3d !important;
+    font-weight: 600;
+  }
+
+  .dg-answer-sheet .text-rose-300 {
+    color: #9b1c31 !important;
+  }
+
+  /* A question and its explanation are one unit; splitting them across a page
+     break puts the answer on a different sheet of paper from the question. */
+  .dg-sheet-question {
+    break-inside: avoid;
+  }
+
+  @page {
+    margin: 16mm;
+  }
+}
+
+/*
  * The printable notes.
  *
  * Hidden on screen and revealed only for print — see `downloadNotes` for why
@@ -385,8 +468,13 @@ body {
    * Print the notes and nothing else. `body > *` is hidden wholesale rather
    * than the classroom being restyled for paper: the board is a canvas, the
    * captions are an overlay, and neither paginates.
+   *
+   * Scoped with `:has()` to pages that actually portal a `.dg-print-notes`
+   * node into the body — i.e. the classroom. Unscoped, this rule hid the whole
+   * document on every other page too, so printing anything else in the app
+   * (the answer sheet, most obviously) produced a blank sheet of paper.
    */
-  body > * {
+  body:has(> .dg-print-notes) > * {
     display: none !important;
   }
 
@@ -399,7 +487,7 @@ body {
     min-height: 0 !important;
   }
 
-  body > .dg-print-notes {
+  body:has(> .dg-print-notes) > .dg-print-notes {
     display: block !important;
     position: static;
     margin: 0;

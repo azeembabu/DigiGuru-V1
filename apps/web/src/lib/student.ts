@@ -201,6 +201,28 @@ export const examResultSchema = z.object({
   review: z.array(reviewedQuestionSchema),
 });
 
+/**
+ * The marked answer sheet — `examResultSchema` plus who sat the paper and where
+ * it sits in the syllabus.
+ *
+ * It is a separate schema rather than an extension of the submit result because
+ * it is a *document*: a student downloads it, keeps it, and may hand it to
+ * somebody. The identity fields are what make it one, and they exist only on
+ * this payload.
+ */
+export const answerSheetSchema = examResultSchema.extend({
+  course_code: z.string(),
+  course_name: z.string(),
+  block_no: z.number().int(),
+  block_title: z.string(),
+  student_name: z.string(),
+  roll_number: z.string(),
+  attempt_no: z.number().int(),
+  started_at: rfc3339,
+});
+
+export type AnswerSheet = z.infer<typeof answerSheetSchema>;
+
 export type StudentExam = z.infer<typeof studentExamSchema>;
 export type ExamQuestion = z.infer<typeof examQuestionSchema>;
 export type ExamPaper = z.infer<typeof examPaperSchema>;
@@ -353,6 +375,21 @@ export type ExamAttemptCard = z.infer<typeof examAttemptCardSchema>;
  * attempts list to find out *which*. Returns `null` rather than throwing, so a
  * resume that cannot be located degrades to the normal error state.
  */
+/**
+ * The student's own marked paper, for review or download.
+ *
+ * Re-readable, unlike the submit response it mirrors: the gateway re-reads the
+ * stored marks rather than re-grading, so fetching this never changes a score
+ * and a student who lost the submit screen has not lost their answer sheet.
+ */
+export async function loadAnswerSheet(attemptId: string): Promise<AnswerSheet> {
+  return parse(
+    answerSheetSchema,
+    await apiFetch<unknown>(`/student/exam-attempts/${attemptId}/review`),
+    "answer sheet",
+  );
+}
+
 export async function findActiveAttemptId(examId: string): Promise<string | null> {
   try {
     const page = await apiFetchPage<unknown>("/student/exam-attempts?limit=200");
