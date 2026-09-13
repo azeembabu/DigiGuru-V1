@@ -6,6 +6,7 @@ mod health;
 mod me;
 mod reference;
 mod state;
+mod student;
 mod validation;
 
 use std::net::SocketAddr;
@@ -77,6 +78,7 @@ fn build_router(state: AppState) -> Router {
         .nest("/auth", auth::router())
         .nest("/reference", reference::router())
         .nest("/me", me::router())
+        .nest("/student", student::router())
         .nest("/admin", admin::router(max_upload_bytes));
 
     Router::new()
