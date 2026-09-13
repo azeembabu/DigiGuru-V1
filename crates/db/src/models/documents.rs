@@ -62,6 +62,40 @@ pub async fn set_status(pool: &PgPool, id: DocumentId, status: &str) -> Result<(
     Ok(())
 }
 
+/// Records the terminal status of an ingestion **together with what the parse
+/// measured**.
+///
+/// `set_status` alone was the bug: the worker computed `page_count` and
+/// `ocr_confidence`, logged both, and then wrote neither, so every successfully
+/// ingested document sat at `page_count = 0`. Students saw "0 pages · still
+/// being prepared" beside a unit the tutor could already teach from, and an
+/// admin had no way to tell a parsed 60-page PDF from an empty one.
+///
+/// `ocr_confidence` is `Option` because a born-digital PDF has no OCR score at
+/// all — that is a different fact from "scored zero", so it stays NULL rather
+/// than being flattened to a number.
+pub async fn finish_ingestion(
+    pool: &PgPool,
+    id: DocumentId,
+    status: &str,
+    page_count: i32,
+    ocr_confidence: Option<f32>,
+) -> Result<()> {
+    sqlx::query!(
+        r#"UPDATE documents
+              SET status = $2, page_count = $3, ocr_confidence = $4
+            WHERE id = $1"#,
+        id.into_uuid(),
+        status,
+        page_count,
+        ocr_confidence
+    )
+    .execute(pool)
+    .await
+    .map_err(Error::from_sqlx)?;
+    Ok(())
+}
+
 /// Mark ingestion complete: `documents.status = 'embedded'`.
 pub async fn mark_embedded(pool: &PgPool, id: DocumentId) -> Result<()> {
     set_status(pool, id, "embedded").await

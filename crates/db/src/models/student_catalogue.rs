@@ -147,6 +147,14 @@ pub struct StudentUnitRow {
     /// `true` only for an embedded document. The tutor retrieves from vectors,
     /// so a unit in any other state has nothing to teach from yet.
     pub is_ready: bool,
+    /// Where the upload has got to: `pending`, `parsing`, `pending_review`,
+    /// `embedded` or `failed`.
+    ///
+    /// Exposed to the student, not just to admins, because "still being
+    /// prepared" on its own is indistinguishable from "broken" — and a unit can
+    /// sit there for minutes while a long PDF is parsed and embedded. The stage
+    /// is what lets the UI show progress that is actually moving.
+    pub status: String,
 }
 
 pub async fn units_for_student(
@@ -161,7 +169,8 @@ pub async fn units_for_student(
             d.id                             as "document_id!: DocumentId",
             d.title                          as "title!",
             d.page_count                     as "page_count!",
-            (d.status = 'embedded')          as "is_ready!"
+            (d.status = 'embedded')          as "is_ready!",
+            d.status                         as "status!"
         FROM student_courses sc
         JOIN blocks    b ON b.course_id = sc.course_id
         JOIN documents d ON d.block_id  = b.id

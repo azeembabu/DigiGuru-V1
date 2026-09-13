@@ -38,6 +38,7 @@ import {
   type SyllabusUnit,
 } from "@/lib/student";
 import { Logo } from "@/components/ui/Logo";
+import { IngestProgress, isInFlight } from "@/components/shared/IngestProgress";
 
 type Load<T> =
   | { status: "loading" }
@@ -57,7 +58,12 @@ function message(error: unknown, fallback: string): string {
  * effect having to set state on the way in — a stale list rendered under a new
  * heading is worse than a spinner, because it looks like real data.
  */
-function useList<T>(key: string | null, load: (key: string) => Promise<T[]>): Load<T> {
+function useList<T>(
+  key: string | null,
+  load: (key: string) => Promise<T[]>,
+  /** Bumping this refetches the same key without flashing a skeleton. */
+  refreshToken = 0,
+): Load<T> {
   const [tagged, setTagged] = useState<{ key: string; state: Load<T> } | null>(null);
 
   useEffect(() => {
@@ -79,7 +85,7 @@ function useList<T>(key: string | null, load: (key: string) => Promise<T[]>): Lo
     };
     // `load` is a module-level function; the id is what decides a refetch.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key]);
+  }, [key, refreshToken]);
 
   if (key === null || tagged === null || tagged.key !== key) return { status: "loading" };
   return tagged.state;
@@ -93,7 +99,22 @@ export function SyllabusBrowser() {
 
   const courses = useList<SyllabusCourse>("all", loadSyllabusCourses);
   const blocks = useList<SyllabusBlock>(courseId, loadSyllabusBlocks);
-  const units = useList<SyllabusUnit>(blockId, loadSyllabusUnits);
+  // Declared before the list that consumes it: `tick` is what makes the list
+  // refetch, so it cannot be derived from the list.
+  const [tick, setTick] = useState(0);
+  const units = useList<SyllabusUnit>(blockId, loadSyllabusUnits, tick);
+
+  // Ingestion finishes on its own, minutes after an upload, so a unit list
+  // opened mid-processing would otherwise sit at "Queued" until the student
+  // thought to reload. Polling stops the moment nothing is in flight, so a
+  // settled block costs nothing.
+  const unitsInFlight =
+    units.status === "ready" && units.items.some((unit) => isInFlight(unit.status));
+  useEffect(() => {
+    if (!unitsInFlight) return;
+    const id = setInterval(() => setTick((n) => n + 1), 5000);
+    return () => clearInterval(id);
+  }, [unitsInFlight]);
 
   const go = useCallback(
     (next: { course?: string | null; block?: string | null }) => {
@@ -253,10 +274,16 @@ function UnitRow({ unit, blockId }: { unit: SyllabusUnit; blockId: string }) {
     <div className="flex flex-wrap items-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] p-4">
       <div className="min-w-0 flex-1">
         <p className="truncate text-[16px] font-semibold leading-snug text-white">{unit.title}</p>
-        <p className="mt-1 text-[13px] text-gray-400">
-          {unit.page_count} page{unit.page_count === 1 ? "" : "s"}
-          {unit.is_ready ? "" : " · still being prepared"}
-        </p>
+        {/*
+          The progress bar replaces the old "0 pages · still being prepared"
+          line, which could not distinguish a queue that was moving from one
+          that had stalled — or either from a PDF that failed hours ago.
+        */}
+        <IngestProgress
+          className="mt-2 max-w-sm"
+          status={unit.status}
+          pageCount={unit.page_count}
+        />
       </div>
       {unit.is_ready ? (
         <Link

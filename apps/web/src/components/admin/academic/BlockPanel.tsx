@@ -85,7 +85,12 @@ export function BlockPanel({
           </Banner>
         ) : null}
 
-        <UnitsTable units={units} loading={loading} onRemoved={onNotice} />
+        <UnitsTable
+          units={units}
+          loading={loading}
+          onRemoved={onNotice}
+          onRefresh={reload}
+        />
 
         <AddUnitForm blockId={block.id} onUploaded={handleUploaded} />
 

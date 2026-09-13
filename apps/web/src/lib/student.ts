@@ -267,6 +267,8 @@ export const syllabusUnitSchema = z.object({
   page_count: z.number().int(),
   /** Embedded, so the tutor has vectors to retrieve. */
   is_ready: z.boolean(),
+  /** Ingestion stage, for the progress indicator. */
+  status: z.string(),
 });
 
 export type SyllabusCourse = z.infer<typeof syllabusCourseSchema>;

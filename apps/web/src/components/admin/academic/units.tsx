@@ -5,8 +5,9 @@ import { StatusPill, statusTone } from "@/components/admin/primitives";
 import { Blank, formatDate } from "@/components/admin/academic/shared";
 import type { AdminDocument, DocumentStatus } from "@/lib/admin/types";
 import { RemoveDialog } from "./RemoveDialog";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AdminButton } from "@/components/admin/controls";
+import { IngestProgress, isInFlight } from "@/components/shared/IngestProgress";
 
 // A "unit" is a `documents` row. There is no separate units table on purpose:
 // a unit that did not go through ingestion (sha256 dedupe, OCR scoring,
@@ -73,9 +74,15 @@ export function unitColumns(options: { showUploaded: boolean }): Column<AdminDoc
     {
       key: "status",
       header: "Status",
-      className: "w-[160px]",
+      className: "w-[240px]",
+      // The pill names the state; the bar shows how far through the pipeline
+      // it is. Both, because "pending" and "parsing" look equally inert as
+      // words but are very different situations to be looking at.
       cell: (row) => (
-        <StatusPill tone={statusTone(row.status)}>{STATUS_LABEL[row.status]}</StatusPill>
+        <div className="space-y-1.5">
+          <StatusPill tone={statusTone(row.status)}>{STATUS_LABEL[row.status]}</StatusPill>
+          <IngestProgress status={row.status} />
+        </div>
       ),
     },
     {
@@ -119,13 +126,26 @@ export function UnitsTable({
   loading = false,
   showUploaded = false,
   onRemoved,
+  onRefresh,
 }: {
   units: AdminDocument[];
   loading?: boolean;
   showUploaded?: boolean;
   onRemoved?: (message: string) => void;
+  /** Called while any unit is still ingesting, to re-read the list. */
+  onRefresh?: () => void;
 }) {
   const [removing, setRemoving] = useState<{ id: string; name: string } | null>(null);
+
+  // An admin who has just uploaded a PDF is watching this table to see it go
+  // live. Ingestion takes minutes and finishes server-side, so without this the
+  // row stays "Queued" until they reload and assume it is stuck.
+  const anyInFlight = units.some((unit) => isInFlight(unit.status));
+  useEffect(() => {
+    if (!anyInFlight || !onRefresh) return;
+    const id = setInterval(onRefresh, 5000);
+    return () => clearInterval(id);
+  }, [anyInFlight, onRefresh]);
 
   const columns = onRemoved
     ? [

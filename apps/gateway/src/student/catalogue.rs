@@ -68,6 +68,10 @@ pub struct StudentUnitResponse {
     pub title: String,
     pub page_count: i32,
     pub is_ready: bool,
+    /// Ingestion stage — `pending|parsing|pending_review|embedded|failed`.
+    /// Drives the progress indicator; `is_ready` stays the single field a
+    /// client checks to decide whether the classroom may be opened.
+    pub status: String,
 }
 
 pub async fn list_courses(
@@ -161,6 +165,7 @@ pub async fn list_units(
                 title: row.title,
                 page_count: row.page_count,
                 is_ready: row.is_ready,
+                status: row.status,
             })
             .collect(),
     ))

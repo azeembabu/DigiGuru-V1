@@ -142,6 +142,41 @@ pub async fn fail(
     Ok(())
 }
 
+/// Requeues a job **without charging it an attempt**.
+///
+/// For a failure that says "not now" rather than "not ever": an upstream rate
+/// limit. `fail` counts every retry against `INGEST_MAX_ATTEMPTS`, which is
+/// right for a flaky Qdrant but wrong for a 429 — the worker retried three
+/// times inside one second, exhausted the budget, and marked five perfectly
+/// good PDFs permanently `failed`. Nothing was wrong with them except that the
+/// embedding quota had run out a moment earlier.
+///
+/// The attempt counter is rolled back rather than left alone, because
+/// `claim_next` increments it on the way in; without the decrement a rate limit
+/// would still consume the budget, just one attempt at a time.
+pub async fn requeue_without_attempt(
+    pool: &PgPool,
+    job_id: uuid::Uuid,
+    error: &str,
+) -> Result<()> {
+    sqlx::query!(
+        r#"
+        UPDATE ingestion_jobs
+        SET status = 'pending'::ingestion_job_status,
+            attempts = GREATEST(attempts - 1, 0),
+            last_error = $2,
+            updated_at = now()
+        WHERE id = $1
+        "#,
+        job_id,
+        error
+    )
+    .execute(pool)
+    .await
+    .map_err(Error::from_sqlx)?;
+    Ok(())
+}
+
 /// Requeues jobs stuck in `processing` past `stale_after_seconds`.
 ///
 /// A worker killed mid-document leaves its row `processing` with nothing to

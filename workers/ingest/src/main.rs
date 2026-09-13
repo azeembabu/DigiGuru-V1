@@ -48,6 +48,22 @@ const STALE_JOB_SECONDS: i64 = 900;
 /// Default retry ceiling for *transient* failures.
 const DEFAULT_MAX_ATTEMPTS: i32 = 3;
 
+/// What one pass of `process_job` decided, so the loop can react to a rate
+/// limit without inspecting errors again.
+enum JobOutcome {
+    /// Handled — completed, or failed in a way already recorded.
+    Done,
+    /// The provider is rate limiting. The job was returned to the queue
+    /// untouched; the loop must wait before claiming anything else.
+    RateLimited,
+}
+
+/// How long to stand down after the embedding provider returns a rate limit.
+///
+/// Long enough that a per-minute quota has actually rolled over; retrying
+/// sooner just collects another 429 and makes the log harder to read.
+const RATE_LIMIT_COOLDOWN: Duration = Duration::from_secs(65);
+
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
@@ -131,8 +147,22 @@ async fn main() -> Result<()> {
             }
         };
 
-        process_job(&pool, &qdrant, &mut redis, &parser, embedder.as_ref(), job, max_attempts)
-            .await?;
+        let outcome =
+            process_job(&pool, &qdrant, &mut redis, &parser, embedder.as_ref(), job, max_attempts)
+                .await?;
+
+        // A rate limit is the provider asking for time, not a reason to spin:
+        // claiming the next job immediately would collect another 429 and,
+        // before this existed, burn that document's retry budget too.
+        if matches!(outcome, JobOutcome::RateLimited) {
+            tokio::select! {
+                _ = &mut shutdown => {
+                    tracing::info!("shutdown signal received; exiting");
+                    return Ok(());
+                }
+                _ = tokio::time::sleep(RATE_LIMIT_COOLDOWN) => {}
+            }
+        }
     }
 }
 
@@ -178,7 +208,7 @@ async fn process_job(
     embedder: &dyn Embedder,
     job: ingestion_jobs::ClaimedJob,
     max_attempts: i32,
-) -> Result<()> {
+) -> Result<JobOutcome> {
     // Log identifiers only, never student PII (`security.md`). A document
     // title is admin-authored curriculum metadata, not student data.
     tracing::info!(
@@ -194,9 +224,19 @@ async fn process_job(
 
     match run_one(pool, qdrant, redis, parser, embedder, &job).await {
         Ok(outcome) => {
-            documents::set_status(pool, job.document_id, outcome.status.as_db_status())
-                .await
-                .context("recording the terminal document status")?;
+            // The page count and OCR score come from the parse and are written
+            // with the status, not discarded: they are what the admin console
+            // and the student unit list render as "N pages", and leaving them
+            // at 0 made a fully ingested document look unprepared.
+            documents::finish_ingestion(
+                pool,
+                job.document_id,
+                outcome.status.as_db_status(),
+                i32::try_from(outcome.page_count).unwrap_or(i32::MAX),
+                outcome.ocr_confidence,
+            )
+            .await
+            .context("recording the terminal document status")?;
             ingestion_jobs::complete(pool, job.job_id)
                 .await
                 .context("completing the job")?;
@@ -213,6 +253,25 @@ async fn process_job(
                 preamble = ?outcome.preamble_handle,
                 "ingestion complete"
             );
+        }
+        Err(err) if is_rate_limited(&err) => {
+            // Not a failure of this document. Put it back untouched and tell
+            // the caller to wait before claiming anything else — retrying
+            // immediately just spends the next attempt on the same 429.
+            let detail = err.to_string();
+            documents::set_status(pool, job.document_id, "pending")
+                .await
+                .context("returning the document to pending after a rate limit")?;
+            ingestion_jobs::requeue_without_attempt(pool, job.job_id, &detail)
+                .await
+                .context("requeueing the job after a rate limit")?;
+
+            tracing::warn!(
+                document_id = %job.document_id,
+                cooldown_s = RATE_LIMIT_COOLDOWN.as_secs(),
+                "embedding provider is rate limiting; requeued without charging an attempt"
+            );
+            return Ok(JobOutcome::RateLimited);
         }
         Err(err) => {
             let permanent = is_permanent(&err);
@@ -249,7 +308,7 @@ async fn process_job(
         }
     }
 
-    Ok(())
+    Ok(JobOutcome::Done)
 }
 
 async fn run_one(
@@ -301,4 +360,22 @@ fn is_permanent(err: &RagError) -> bool {
         err,
         RagError::Parse(_) | RagError::Chunk(_) | RagError::MissingMetadata { .. }
     )
+}
+
+/// Is this the embedding provider telling us to slow down?
+///
+/// Matched on the message rather than a typed variant because the rate limit
+/// arrives as an HTTP status inside the provider's error body, and `RagError`
+/// deliberately does not model every upstream's status codes.
+///
+/// It matters because a rate limit is neither of the two categories the worker
+/// had. It is not permanent — the PDF is fine and will ingest happily in a
+/// minute — but treating it as an ordinary transient failure burned all three
+/// attempts in under a second and marked the document `failed` forever. So it
+/// is a third case: requeue, do not charge an attempt, and wait.
+fn is_rate_limited(err: &RagError) -> bool {
+    let text = err.to_string();
+    text.contains("429")
+        || text.contains("Too Many Requests")
+        || text.contains("RESOURCE_EXHAUSTED")
 }
