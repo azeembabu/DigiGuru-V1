@@ -101,6 +101,10 @@ export interface VadOptions {
    * noise floor rather than fixed, because a laptop fan and a quiet room differ
    * by more than any single constant can cover.
    */
+  ///
+  /// Setting it explicitly disables the hysteresis and uses one fixed level
+  /// for both opening and closing a turn — which is what the tests want, and
+  /// almost never what a real room wants.
   threshold?: number;
   hangoverMs?: number;
   frameMs?: number;
@@ -157,8 +161,21 @@ export class Vad {
       return null;
     }
 
-    const effective = this.threshold ?? Math.max(this.noiseFloor * 3, 0.01);
-    const isSpeech = energy > effective;
+    // Hysteresis: it takes more energy to *open* a turn than to keep one open.
+    //
+    // With a single threshold, a room whose noise sits near it flips the
+    // detector on and off every few frames — a fan, a distant conversation, or
+    // the tutor's own voice through the speakers. On screen that was a
+    // "hearing you" indicator blinking continuously while the student sat in
+    // silence, and underneath it the same flapping fed the barge-in counter,
+    // so room noise could cut the tutor off.
+    //
+    // Two thresholds fix it at the source: cross the higher one to start,
+    // fall below the lower one to stop. Anything between is "carry on as you
+    // were", which is what a steady noise floor now does — nothing.
+    const openAt = this.threshold ?? Math.max(this.noiseFloor * 4.5, 0.012);
+    const closeAt = this.threshold ?? Math.max(this.noiseFloor * 2.5, 0.007);
+    const isSpeech = this.speaking ? energy > closeAt : energy > openAt;
 
     if (isSpeech) {
       this.silenceMs = 0;

@@ -172,7 +172,6 @@ export function ClassroomSession({
   const [turns, setTurns] = useState<TurnLogEntry[]>([]);
   const [micOn, setMicOn] = useState(false);
   const [micError, setMicError] = useState<string | null>(null);
-  const [speaking, setSpeaking] = useState(false);
   const [quotaMs, setQuotaMs] = useState<number | null>(null);
   const [ended, setEnded] = useState<string | null>(null);
   // Whether `start()` has run. Tracked in state rather than read off
@@ -224,6 +223,18 @@ export function ClassroomSession({
   const [tutorSpeaking, setTutorSpeaking] = useState(false);
   /** Drives the button's disabled state; `startingRef` is what actually guards. */
   const [starting, setStarting] = useState(false);
+  /**
+   * `speaking`, held on briefly after it drops.
+   *
+   * The VAD's hysteresis stops it flapping on a steady noise floor, but a real
+   * sentence still has gaps between words shorter than the hangover, and the
+   * raw signal switching off and on across them made the indicator blink while
+   * the student was simply talking. The label is a reassurance, not an
+   * instrument; holding it for a moment is the honest reading of "yes, I can
+   * hear you".
+   */
+  const [hearing, setHearing] = useState(false);
+  const hearingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     // Reset happens in `leave()` (an event handler, not here) — an effect
@@ -285,7 +296,14 @@ export function ClassroomSession({
     captureRef.current = null;
     prerollRef.current = [];
     setMicOn(false);
-    setSpeaking(false);
+    // The mic is off, so nothing is being heard — including the held display
+    // value and any timer still waiting to clear it.
+    speakingRef.current = false;
+    if (hearingTimer.current !== null) {
+      clearTimeout(hearingTimer.current);
+      hearingTimer.current = null;
+    }
+    setHearing(false);
   }, []);
 
   const startMic = useCallback(async () => {
@@ -351,8 +369,26 @@ export function ClassroomSession({
         // Mirrored into a ref because `onFrame` runs on every 20 ms frame and
         // must read the current value, not the one captured when the capture
         // was constructed.
+        // The ref is what `onFrame` reads for barge-in; `hearing` below is
+        // what the UI shows. There is deliberately no third `speaking` state:
+        // it rendered the raw, gap-by-gap VAD signal and was the blinking.
         speakingRef.current = talking;
-        setSpeaking(talking);
+
+        // Held display value — see `hearing`. Driven from the event rather
+        // than an effect, because the hold is a property of the transition,
+        // not of the rendered state.
+        if (hearingTimer.current !== null) {
+          clearTimeout(hearingTimer.current);
+          hearingTimer.current = null;
+        }
+        if (talking) {
+          setHearing(true);
+        } else {
+          hearingTimer.current = setTimeout(() => {
+            hearingTimer.current = null;
+            setHearing(false);
+          }, 600);
+        }
       },
       onError: (error) => setMicError(error.message),
     });
@@ -680,12 +716,12 @@ export function ClassroomSession({
               className={`hidden rounded-full px-2.5 py-1 text-[12px] font-medium sm:inline ${
                 tutorSpeaking
                   ? "bg-white/5 text-gray-400"
-                  : speaking
+                  : hearing
                     ? "bg-emerald-500/15 text-emerald-300"
                     : "bg-white/5 text-gray-400"
               }`}
             >
-              {tutorSpeaking ? "tutor speaking" : speaking ? "hearing you" : "listening"}
+              {tutorSpeaking ? "tutor speaking" : hearing ? "hearing you" : "listening"}
             </span>
           ) : null}
           {connected ? (
