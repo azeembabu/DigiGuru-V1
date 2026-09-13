@@ -12,6 +12,13 @@ use serde::{Deserialize, Serialize};
 /// through the control channel.
 const MAX_TEXT_LEN: usize = 2_000;
 /// A bullets op with more entries than this is a paragraph, not a bullet list.
+/// Slices or bars in one chart. Past this a chart stops being readable on a
+/// board and the labels collide; the tutor should split it or use bullets.
+const MAX_SERIES: usize = 8;
+
+/// Boxes in one flow, for the same reason.
+const MAX_FLOW_STEPS: usize = 6;
+
 const MAX_BULLETS: usize = 24;
 /// Upper bound on the vertices of a single `draw` primitive.
 const MAX_POINTS: usize = 512;
@@ -69,6 +76,29 @@ pub enum BoardOp {
     Highlight {
         target: String,
     },
+    BarChart {
+        id: String,
+        title: String,
+        series: Vec<DataPoint>,
+    },
+    PieChart {
+        id: String,
+        title: String,
+        series: Vec<DataPoint>,
+    },
+    Flow {
+        id: String,
+        title: String,
+        steps: Vec<String>,
+    },
+}
+
+/// One labelled quantity in a chart. Mirrors `board::DataPoint`; see there for
+/// why there is no percentage field.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DataPoint {
+    pub label: String,
+    pub value: f64,
 }
 
 impl BoardOp {
@@ -80,7 +110,10 @@ impl BoardOp {
             | BoardOp::Bullets { id, .. }
             | BoardOp::Math { id, .. }
             | BoardOp::Draw { id, .. }
-            | BoardOp::Image { id, .. } => Some(id.as_str()),
+            | BoardOp::Image { id, .. }
+            | BoardOp::BarChart { id, .. }
+            | BoardOp::PieChart { id, .. }
+            | BoardOp::Flow { id, .. } => Some(id.as_str()),
             BoardOp::Highlight { .. } => None,
         }
     }
@@ -94,6 +127,9 @@ impl BoardOp {
             BoardOp::Draw { .. } => "draw",
             BoardOp::Image { .. } => "image",
             BoardOp::Highlight { .. } => "highlight",
+            BoardOp::BarChart { .. } => "bar_chart",
+            BoardOp::PieChart { .. } => "pie_chart",
+            BoardOp::Flow { .. } => "flow",
         }
     }
 }
@@ -202,6 +238,58 @@ pub fn validate_op(op: &BoardOp, known_ids: &[String]) -> Result<(), OpError> {
         BoardOp::Math { id, latex } => {
             check_text("id", id)?;
             check_text("latex", latex)
+        }
+        // Charts are validated for *meaning*, not just for being present: a
+        // series that is empty, non-finite, negative or all-zero cannot be
+        // drawn into a picture that says anything true, and a silently wrong
+        // chart is worse than a missing one.
+        BoardOp::BarChart { id, title, series } | BoardOp::PieChart { id, title, series } => {
+            check_text("id", id)?;
+            check_text("title", title)?;
+            if series.is_empty() {
+                return Err(OpError::EmptyField { field: "series" });
+            }
+            if series.len() > MAX_SERIES {
+                return Err(OpError::TooManyEntries {
+                    field: "series",
+                    len: series.len(),
+                    max: MAX_SERIES,
+                });
+            }
+            for point in series {
+                check_text("series[].label", &point.label)?;
+                if !point.value.is_finite() || point.value < 0.0 {
+                    return Err(OpError::EmptyField {
+                        field: "series[].value",
+                    });
+                }
+            }
+            if series.iter().all(|point| point.value == 0.0) {
+                return Err(OpError::EmptyField {
+                    field: "series[].value",
+                });
+            }
+            Ok(())
+        }
+        BoardOp::Flow { id, title, steps } => {
+            check_text("id", id)?;
+            check_text("title", title)?;
+            // One box joined to nothing is not a flow; it is a heading that
+            // took up a quarter of the board.
+            if steps.len() < 2 {
+                return Err(OpError::EmptyField { field: "steps" });
+            }
+            if steps.len() > MAX_FLOW_STEPS {
+                return Err(OpError::TooManyEntries {
+                    field: "steps",
+                    len: steps.len(),
+                    max: MAX_FLOW_STEPS,
+                });
+            }
+            for step in steps {
+                check_text("steps[]", step)?;
+            }
+            Ok(())
         }
         BoardOp::Draw { id, shape, points } => {
             check_text("id", id)?;

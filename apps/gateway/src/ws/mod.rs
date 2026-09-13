@@ -1197,6 +1197,13 @@ async fn send_json<T: Serialize>(socket: &mut WebSocket, value: &T) -> Result<()
 /// express but the validated one cannot (an unknown `draw` shape) is dropped
 /// here rather than mistranslated; everything else that fails the schema is
 /// dropped and logged by the gate.
+fn to_gate_point(point: &live::board::DataPoint) -> live::DataPoint {
+    live::DataPoint {
+        label: point.label.clone(),
+        value: point.value,
+    }
+}
+
 fn to_gate_ops(msg: &live::board::BoardOpsMessage) -> Vec<BoardOp> {
     msg.ops
         .iter()
@@ -1246,6 +1253,25 @@ fn to_gate_ops(msg: &live::board::BoardOpsMessage) -> Vec<BoardOp> {
                 live::board::BoardOp::Image { image_ref } => Some(BoardOp::Image {
                     id,
                     reference: image_ref.clone(),
+                }),
+                // Charts pass straight through: the model supplies labelled
+                // quantities and the client decides the geometry, so there is
+                // nothing to translate and nothing the model can get wrong
+                // about pixels.
+                live::board::BoardOp::BarChart { title, series } => Some(BoardOp::BarChart {
+                    id,
+                    title: title.clone(),
+                    series: series.iter().map(to_gate_point).collect(),
+                }),
+                live::board::BoardOp::PieChart { title, series } => Some(BoardOp::PieChart {
+                    id,
+                    title: title.clone(),
+                    series: series.iter().map(to_gate_point).collect(),
+                }),
+                live::board::BoardOp::Flow { title, steps } => Some(BoardOp::Flow {
+                    id,
+                    title: title.clone(),
+                    steps: steps.clone(),
                 }),
                 live::board::BoardOp::Highlight { target } => Some(BoardOp::Highlight {
                     target: target.clone(),

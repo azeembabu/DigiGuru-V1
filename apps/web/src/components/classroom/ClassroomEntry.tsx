@@ -33,6 +33,7 @@ export function ClassroomEntry() {
   // direct visit to this URL, still opens something rather than dead-ending.
   const chosenBlock = params.get("block");
   const chosenUnit = params.get("unit");
+  const chosenCourse = params.get("course");
   const [load, setLoad] = useState<Load>({ status: "loading" });
 
   useEffect(() => {
@@ -94,9 +95,32 @@ export function ClassroomEntry() {
 
   return (
     <BoardErrorBoundary>
-      <ClassroomSession blockId={blockId} documentId={chosenUnit} />
+      <ClassroomSession
+        blockId={blockId}
+        documentId={chosenUnit}
+        // Rebuilt rather than using history: the student may have arrived here
+        // from a bookmark or a dashboard "Resume", where there is no unit list
+        // behind them to go back to.
+        backHref={backTo(chosenCourse, chosenBlock)}
+      />
     </BoardErrorBoundary>
   );
+}
+
+/**
+ * The unit list this session came from.
+ *
+ * Falls back up the tree as information runs out: block and course give the
+ * exact unit list, course alone gives its block list, and neither gives the
+ * course picker. Every step is somewhere useful, which a bare `router.back()`
+ * would not guarantee.
+ */
+function backTo(courseId: string | null, blockId: string | null): string {
+  const search = new URLSearchParams();
+  if (courseId) search.set("course", courseId);
+  if (blockId) search.set("block", blockId);
+  const qs = search.toString();
+  return qs === "" ? "/classroom" : `/classroom?${qs}`;
 }
 
 function Shell({ children }: { children: React.ReactNode }) {

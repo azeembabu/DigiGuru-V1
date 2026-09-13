@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Sora, Inter, Caveat, Chilanka } from "next/font/google";
+import { Sora, Inter, Noto_Sans_Malayalam } from "next/font/google";
 import "./globals.css";
 
 const sora = Sora({
@@ -15,28 +15,27 @@ const inter = Inter({
 });
 
 /**
- * The chalk hand for the classroom board.
+ * The board face.
  *
- * Two faces, because no single family covers both scripts in a handwritten
- * style: Caveat is the Latin hand, Chilanka is the Malayalam one — an actual
- * Malayalam handwriting face, so conjuncts shape correctly (whiteboard-sync.md
- * requires that to be verified after any font change) instead of being faked
- * by slanting a printed face.
+ * Noto Sans Malayalam, not a handwriting font. The board has to render Malayalam
+ * conjuncts, mathematical symbols, Greek letters and chart labels *correctly* —
+ * and a decorative hand that covers one script beautifully and drops everything
+ * else is worse than a plain face that draws all of it. Noto is designed for
+ * exactly that coverage, and its Malayalam shaping is the reference
+ * implementation.
  *
- * They are declared here rather than in the board module so Next hosts and
- * preloads them; the renderer only names them in its font stack and waits on
- * `document.fonts.ready` before it measures any text.
+ * It also carries the Latin glyphs, so English inside a Malayalam sentence stays
+ * in one typeface instead of switching mid-line — which is how the textbook
+ * prints technical terms and how the tutor is told to speak them.
+ *
+ * Declared here rather than in the board module so Next hosts and preloads it;
+ * the renderer only names the family and waits on `document.fonts.ready` before
+ * it measures any text.
  */
-const caveat = Caveat({
-  variable: "--font-chalk",
-  subsets: ["latin"],
-  weight: ["400", "600", "700"],
-});
-
-const chilanka = Chilanka({
-  variable: "--font-chalk-ml",
-  subsets: ["malayalam"],
-  weight: ["400"],
+const notoMalayalam = Noto_Sans_Malayalam({
+  variable: "--font-board",
+  subsets: ["malayalam", "latin"],
+  weight: ["400", "500", "600", "700"],
 });
 
 export const metadata: Metadata = {
@@ -49,7 +48,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
-      className={`${sora.variable} ${inter.variable} ${caveat.variable} ${chilanka.variable} h-full antialiased`}
+      className={`${sora.variable} ${inter.variable} ${notoMalayalam.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col bg-ink-950 text-lavender-50">{children}</body>
     </html>

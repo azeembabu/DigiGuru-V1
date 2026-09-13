@@ -64,6 +64,13 @@ pub struct AcademicContext {
     /// client, so it is validated against the block before it is trusted (see
     /// `with_unit`).
     pub unit_document_id: Option<DocumentId>,
+    /// The unit's title, resolved alongside its id.
+    ///
+    /// Named in the system instruction so the tutor knows which unit it is
+    /// teaching. Without it the model saw paragraphs with no idea which of the
+    /// block's units they came from, and could not answer "which unit is this?"
+    /// or keep its place across turns.
+    pub unit_title: Option<String>,
 }
 
 impl AcademicContext {
@@ -98,10 +105,11 @@ impl AcademicContext {
         let Some(document_id) = document_id else {
             return Ok(self);
         };
-        let belongs = dg_db::models::documents::belongs_to_block(pool, document_id, self.block_id)
-            .await?;
-        if belongs {
+        let title =
+            dg_db::models::documents::title_within_block(pool, document_id, self.block_id).await?;
+        if let Some(title) = title {
             self.unit_document_id = Some(document_id);
+            self.unit_title = Some(title);
         } else {
             tracing::warn!(
                 %document_id,
@@ -159,6 +167,7 @@ pub async fn resolve_context(
         // choice within it and is applied separately by `with_unit`, after
         // being validated against this block.
         unit_document_id: None,
+        unit_title: None,
     }))
 }
 
@@ -290,6 +299,18 @@ fn tutor_header(context: &AcademicContext, preamble: Option<&str>, locale: Optio
         "You are Digi Guru, a live voice tutor for one student. You teach only from the \
          CURRICULUM CONTEXT supplied below in this instruction.\n\n",
     );
+    // The unit is named on its own line rather than appended to the breadcrumb:
+    // it is the thing the student chose and the thing the tutor is actually
+    // inside, and burying it at the end of a four-part header made the model
+    // treat it as metadata rather than as its subject.
+    if let Some(unit) = context.unit_title.as_deref() {
+        text.push_str(&format!(
+            "YOU ARE TEACHING THIS UNIT: {unit}\n\
+             Everything below is taken from that unit. If the student asks which unit, \
+             chapter, page or part this is, answer from this line and from the citations \
+             on each excerpt — never guess and never invent a number.\n\n"
+        ));
+    }
     text.push_str(&format!(
         "Course: {} | Programme: {} | Semester: {} | Block {}: {}\n\n",
         context.course_code,
@@ -363,7 +384,37 @@ fn tutor_header(context: &AcademicContext, preamble: Option<&str>, locale: Optio
          would, and then pick the lesson back up where you left it. That is not an \
          off-syllabus question and you must not abstain from it: the abstention rule is \
          about questions on the subject matter whose answer is not in the CURRICULUM \
-         CONTEXT, not about ordinary human conversation.\n",
+         CONTEXT, not about ordinary human conversation.\n\
+         14. KNOW WHERE YOU ARE IN THE UNIT. Every excerpt below is labelled with its \
+         chapter, topic, page and paragraph number. Those labels are the truth about \
+         your position in the material: teach the paragraphs in the order they are \
+         numbered, finish one idea before moving to the next, and when you move on, say \
+         so briefly so the student can follow along in their own copy — for example \
+         'page 4, the next paragraph'. If the student asks where you are, which unit \
+         this is, or what comes next, answer from these labels. Never invent a page or \
+         paragraph number, and never claim to be somewhere the excerpts do not show.\n\
+         15. TEACH THE UNIT, NOT A SUMMARY OF IT. The student opened one unit and \
+         expects to be taken through it. Work through the material paragraph by \
+         paragraph at the pace of rule 8, rather than compressing the whole unit into \
+         one overview and stopping. When a turn ends, you are somewhere specific in the \
+         unit; begin the next turn from there.\n\
+         16. DRAW THE IDEA WHEN A PICTURE SAYS IT BETTER. The board is not only for \
+         words. You have `bar_chart` and `pie_chart` for quantities that are being \
+         compared or divided up, and `flow` for a process, a cycle or a chain of \
+         causes. Use them where the textbook itself is comparing figures or describing \
+         a sequence — a pie of how the Earth's water is divided, a bar chart of forest \
+         cover by state, a flow of the stages of the water cycle.\n\
+         Two absolute limits. Every number in a chart must come from the CURRICULUM \
+         CONTEXT above — never invent a figure, never round one to make the picture \
+         tidier, and if the material gives no numbers then do not draw a chart at all. \
+         And a picture is an explanation, not decoration: draw it because it makes the \
+         idea clearer, then talk the student through what it shows.\n\
+         17. FORMULAS AND SYMBOLS GO IN `math`, NOT IN WORDS. Any equation, formula, \
+         chemical reaction or symbolic expression belongs in a `math` op as LaTeX, so \
+         the board can set it properly — fractions as fractions, subscripts as \
+         subscripts. Writing an equation inside a heading or a bullet prints it as raw \
+         characters and the student copies down something that is not what the \
+         textbook says.\n",
     );
 
     // LANGUAGE. Anchored on the student's recorded locale rather than left to
@@ -386,12 +437,12 @@ fn tutor_header(context: &AcademicContext, preamble: Option<&str>, locale: Optio
     };
     if primary.is_empty() {
         text.push_str(
-            "         14. LANGUAGE. Speak either Malayalam or English, following the student's \
+            "         18. LANGUAGE. Speak either Malayalam or English, following the student's \
              lead. ",
         );
     } else {
         text.push_str(&format!(
-            "         14. LANGUAGE. Speak {primary} by default — that is this student's recorded \
+            "         18. LANGUAGE. Speak {primary} by default — that is this student's recorded \
              language. Switch only if the student clearly and repeatedly speaks the other \
              language to you. ",
         ));
@@ -421,11 +472,14 @@ fn grounded_instruction(
     );
     for (index, chunk) in chunks.iter().enumerate() {
         text.push_str(&format!(
-            "[{}] chapter: {} | topic: {} | page: {}\n{}\n\n",
+            "[{}] chapter: {} | topic: {} | page: {} | paragraph {}\n{}\n\n",
             index + 1,
             chunk.chapter,
             chunk.topic,
             chunk.page,
+            // The paragraph position within the unit, so the tutor can say
+            // where it is and carry on from there rather than restarting.
+            chunk.para_index + 1,
             chunk.text.trim(),
         ));
     }
@@ -471,6 +525,7 @@ mod tests {
             block_no: 3,
             block_title: "Prosody".to_string(),
             unit_document_id: None,
+            unit_title: None,
         }
     }
 
@@ -570,6 +625,37 @@ mod tests {
         assert!(text.contains("not about ordinary human conversation"), "got: {text}");
         // The abstention rule itself is still stated in full.
         assert!(text.contains("CURRICULUM CONTEXT"), "got: {text}");
+    }
+
+    /// The tutor could not say which of a block's six units it was teaching:
+    /// the unit was never named in the instruction, and `para_index` was
+    /// retrieved on every chunk and then dropped before the prompt was built.
+    #[test]
+    fn the_instruction_names_the_unit_being_taught() {
+        let mut context = context();
+        context.unit_title = Some("Unit 3 Forest Resources".to_string());
+        let text = grounded_instruction(&context, None, Some("ml-IN"), &[chunk("Vritham", 57)]);
+        assert!(text.contains("YOU ARE TEACHING THIS UNIT: Unit 3 Forest Resources"), "got: {text}");
+    }
+
+    /// A block opened without choosing a unit teaches the whole block, so there
+    /// is no unit line to print — and printing an empty one would be worse than
+    /// printing none.
+    #[test]
+    fn no_unit_line_when_the_whole_block_is_being_taught() {
+        let text = grounded_instruction(&context(), None, Some("ml-IN"), &[chunk("Vritham", 57)]);
+        assert!(!text.contains("YOU ARE TEACHING THIS UNIT"), "got: {text}");
+    }
+
+    /// Each excerpt must carry its paragraph position, or the tutor has no way
+    /// to keep its place, teach in order, or answer "where are we?".
+    #[test]
+    fn every_excerpt_is_labelled_with_its_paragraph_position() {
+        let text = grounded_instruction(&context(), None, Some("ml-IN"), &[chunk("Vritham", 57)]);
+        // `para_index` is 0-based in the payload and 1-based for a human.
+        assert!(text.contains("paragraph 1"), "got: {text}");
+        assert!(text.contains("14. KNOW WHERE YOU ARE IN THE UNIT"), "got: {text}");
+        assert!(text.contains("15. TEACH THE UNIT, NOT A SUMMARY OF IT"), "got: {text}");
     }
 
     /// The language rule must name a concrete default rather than asking the

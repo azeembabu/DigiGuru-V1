@@ -27,6 +27,9 @@ export const pointSchema = z.object({ x: z.number(), y: z.number() });
  * the former. Getting this wrong renders an empty board with no error, so the
  * discriminator is asserted by a test.
  */
+/** One labelled quantity in a chart. */
+export const dataPointSchema = z.object({ label: z.string(), value: z.number() });
+
 export const boardOpSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("heading"), id: z.string(), text: z.string() }),
   z.object({ kind: z.literal("bullets"), id: z.string(), items: z.array(z.string()) }),
@@ -41,6 +44,27 @@ export const boardOpSchema = z.discriminatedUnion("kind", [
   // `highlight` targets the `id` of an element emitted earlier and carries no
   // `id` of its own — it is a reference, not a new element.
   z.object({ kind: z.literal("highlight"), target: z.string() }),
+  // Infographics. The gateway has already rejected empty, negative,
+  // non-finite and all-zero series, so the renderer can trust the numbers and
+  // concentrate on drawing them.
+  z.object({
+    kind: z.literal("bar_chart"),
+    id: z.string(),
+    title: z.string(),
+    series: z.array(dataPointSchema),
+  }),
+  z.object({
+    kind: z.literal("pie_chart"),
+    id: z.string(),
+    title: z.string(),
+    series: z.array(dataPointSchema),
+  }),
+  z.object({
+    kind: z.literal("flow"),
+    id: z.string(),
+    title: z.string(),
+    steps: z.array(z.string()),
+  }),
 ]);
 
 export type BoardOp = z.infer<typeof boardOpSchema>;

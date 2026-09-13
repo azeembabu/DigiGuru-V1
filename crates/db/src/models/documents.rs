@@ -11,25 +11,29 @@ use sqlx::PgPool;
 use crate::error::{Error, Result};
 use crate::models::content::Document;
 
-/// Does this document belong to that block?
+/// The document's title, if it belongs to that block.
 ///
-/// Used to validate a client-supplied unit id before it narrows retrieval. The
-/// check is a existence test rather than a fetch: nothing about the document is
-/// needed beyond "yes, it is in this block".
-pub async fn belongs_to_block(
+/// Validates a client-supplied unit id before it is allowed to narrow
+/// retrieval, and returns the title in the same round trip because the tutor
+/// needs it: a prompt that says "you are teaching Unit 3 Forest Resources" lets
+/// the model place itself, and one that says nothing leaves it guessing which
+/// of six units the retrieved paragraphs came from.
+///
+/// `None` means "not in this block" — which the caller treats as "teach the
+/// whole block" rather than as an error.
+pub async fn title_within_block(
     pool: &PgPool,
     document_id: DocumentId,
     block_id: BlockId,
-) -> Result<bool> {
-    let found = sqlx::query_scalar!(
-        r#"SELECT 1 as "one!" FROM documents WHERE id = $1 AND block_id = $2"#,
+) -> Result<Option<String>> {
+    sqlx::query_scalar!(
+        r#"SELECT title FROM documents WHERE id = $1 AND block_id = $2"#,
         document_id.into_uuid(),
         block_id.into_uuid()
     )
     .fetch_optional(pool)
     .await
-    .map_err(Error::from_sqlx)?;
-    Ok(found.is_some())
+    .map_err(Error::from_sqlx)
 }
 
 pub async fn find_by_id(pool: &PgPool, id: DocumentId) -> Result<Option<Document>> {

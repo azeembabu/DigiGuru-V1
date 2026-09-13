@@ -31,7 +31,7 @@ pub mod ops;
 pub mod sync_gate;
 
 pub use clock::{Clock, SystemClock, TestClock};
-pub use ops::{parse_op, validate_op, BoardOp, DrawShape, OpError, Point};
+pub use ops::{parse_op, validate_op, BoardOp, DataPoint, DrawShape, OpError, Point};
 pub use sync_gate::{
     AckOutcome, AudioDisposition, BoardOpsAccepted, DroppedOp, GateMetrics, ReleaseReason,
     ReleasedAudio, SyncGate, SyncGateConfig, SyncGateError, TurnSeq, HOLD_MAX_MS,

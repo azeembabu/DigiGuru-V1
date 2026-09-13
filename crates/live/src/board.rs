@@ -31,6 +31,35 @@ pub enum BoardOp {
         image_ref: String,
     },
     Highlight { target: String },
+    /// A labelled bar chart. `series` is the data; the client decides the
+    /// layout, so the model never has to reason about pixels.
+    BarChart {
+        title: String,
+        series: Vec<DataPoint>,
+    },
+    /// A labelled pie chart, same shape as `bar_chart`.
+    PieChart {
+        title: String,
+        series: Vec<DataPoint>,
+    },
+    /// A left-to-right flow of boxes joined by arrows — a process, a cycle, a
+    /// chain of causes.
+    Flow {
+        title: String,
+        steps: Vec<String>,
+    },
+}
+
+/// One labelled quantity in a chart.
+///
+/// `value` is a plain number in the unit the textbook uses; there is no
+/// percentage field, because a pie that is handed pre-computed percentages
+/// cannot be checked for summing to 100 and a bar chart does not want them at
+/// all. The client derives whatever proportions it needs.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DataPoint {
+    pub label: String,
+    pub value: f64,
 }
 
 /// `{ "type": "board_ops", "seq": 42, "clear_first": false, "ops": [...] }`.
@@ -110,6 +139,37 @@ pub fn validate(msg: &BoardOpsMessage) -> crate::error::Result<()> {
                 if *page < 1 {
                     return Err(LiveError::InvalidBoardOp(
                         "heading.page must be >= 1".to_string(),
+                    ));
+                }
+            }
+            BoardOp::BarChart { series, .. } | BoardOp::PieChart { series, .. } => {
+                if series.is_empty() {
+                    return Err(LiveError::InvalidBoardOp(
+                        "chart series must be non-empty".to_string(),
+                    ));
+                }
+                // A chart is a claim about quantities. A non-finite value
+                // cannot be drawn, and a negative slice cannot exist in a pie —
+                // both would render as a silently wrong picture, which is worse
+                // than no picture.
+                if series
+                    .iter()
+                    .any(|point| !point.value.is_finite() || point.value < 0.0)
+                {
+                    return Err(LiveError::InvalidBoardOp(
+                        "chart values must be finite and non-negative".to_string(),
+                    ));
+                }
+                if series.iter().all(|point| point.value == 0.0) {
+                    return Err(LiveError::InvalidBoardOp(
+                        "chart series cannot be all zero".to_string(),
+                    ));
+                }
+            }
+            BoardOp::Flow { steps, .. } => {
+                if steps.len() < 2 {
+                    return Err(LiveError::InvalidBoardOp(
+                        "a flow needs at least two steps".to_string(),
                     ));
                 }
             }

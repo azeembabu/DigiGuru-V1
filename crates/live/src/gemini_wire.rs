@@ -96,11 +96,13 @@ pub fn board_ops_declaration() -> Value {
                         "properties": {
                             "op": {
                                 "type": "string",
-                                "enum": ["heading", "bullets", "math", "draw", "image", "highlight"],
+                                "enum": ["heading", "bullets", "math", "draw", "image",
+                                         "highlight", "bar_chart", "pie_chart", "flow"],
                                 "description": "Which kind of operation this is, and it \
     decides which other fields you MUST also set: heading needs text and page; bullets needs \
     items (a non-empty array of strings); math needs latex; draw needs shape, from and to; \
-    image needs ref; highlight needs target. An op missing its required field is discarded."
+    image needs ref; highlight needs target; bar_chart and pie_chart need title and series; \
+    flow needs title and steps. An op missing its required field is discarded."
                             },
                             "text": {
                                 "type": "string",
@@ -143,6 +145,32 @@ pub fn board_ops_declaration() -> Value {
                                 "type": "string",
                                 "description": "highlight: identifier of an element \
     emitted earlier in this session."
+                            },
+                            "title": {
+                                "type": "string",
+                                "description": "bar_chart, pie_chart, flow: a short \
+    caption saying what the picture shows, e.g. \"Forest cover by state (%)\"."
+                            },
+                            "series": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "label": { "type": "string" },
+                                        "value": { "type": "number" }
+                                    },
+                                    "required": ["label", "value"]
+                                },
+                                "description": "bar_chart, pie_chart: 2 to 8 labelled \
+    quantities. Use the real figures from the retrieved context — never invent or round a \
+    number to make a picture look tidier. Values must be zero or more; give the raw amounts \
+    and the board works out the proportions itself."
+                            },
+                            "steps": {
+                                "type": "array",
+                                "items": { "type": "string" },
+                                "description": "flow: 2 to 6 short stages of a process, \
+    in order, each a few words. The board draws them as boxes joined by arrows."
                             }
                         },
                         "required": ["op"]

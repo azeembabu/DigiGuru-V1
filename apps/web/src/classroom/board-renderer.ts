@@ -37,22 +37,27 @@ const FLOW_BOTTOM = 0.72;
 export const HOLD_MAX_MS = 400;
 
 /**
- * The chalk hand. Malayalam first in the stack, because the Latin face
- * (Caveat) declares no Malayalam coverage and the browser would otherwise fall
- * through to a printed system face for the script that carries most of the
- * lesson. Chilanka is a real Malayalam handwriting font, so conjuncts shape
- * properly rather than being faked.
+ * The board face — see `app/layout.tsx` for why this is Noto rather than a
+ * handwriting font.
  *
- * The families come from `--font-chalk-ml` / `--font-chalk`, declared in
- * `app/layout.tsx` so Next hosts and preloads them. They are named literally
- * here rather than read from the CSS variables because Fabric measures text
- * against a canvas 2D context, which does not resolve `var()`.
+ * Named literally rather than read from the `--font-board` CSS variable,
+ * because Fabric measures text against a canvas 2D context and `ctx.font` does
+ * not resolve `var()`. The fallbacks matter: if the webfont has not arrived,
+ * the next entries still shape Malayalam rather than dropping to a face that
+ * renders conjuncts as boxes.
  */
 const BOARD_FONT =
-  '"Chilanka", "Caveat", "Noto Sans Malayalam", system-ui, -apple-system, sans-serif';
+  '"Noto Sans Malayalam", "Noto Sans", "Nirmala UI", system-ui, -apple-system, sans-serif';
 
 /**
- * Resolves once the chalk faces are actually loaded.
+ * Monospace for formulas and code, chosen for symbol coverage rather than
+ * looks: a maths line that falls back to a face without Greek or operators
+ * prints boxes where the meaning is.
+ */
+const MONO_FONT = '"Cascadia Code", "Consolas", "DejaVu Sans Mono", ui-monospace, monospace';
+
+/**
+ * Resolves once the board face is actually loaded.
  *
  * Fabric lays a Textbox out the moment it is constructed, so text built before
  * the webfont arrives is measured against the fallback and keeps those wrong
@@ -60,7 +65,7 @@ const BOARD_FONT =
  * recomputed on repaint. Waiting costs nothing after the first turn (the
  * promise is already settled) and the NN-1 hold has 400 ms of headroom.
  */
-function chalkFontsReady(): Promise<unknown> {
+function boardFontsReady(): Promise<unknown> {
   if (typeof document === "undefined" || !("fonts" in document)) return Promise.resolve();
   return document.fonts.ready;
 }
@@ -171,6 +176,68 @@ function makeChalkboardTexture(width: number, height: number): fabric.Pattern {
   return new fabric.Pattern({ source: slate, repeat: "no-repeat" });
 }
 
+/**
+ * Chalk colours for chart series, in order.
+ *
+ * Chosen to stay distinguishable on green *and* in greyscale — a board gets
+ * printed and photographed, and a palette that relies on hue alone becomes one
+ * grey blob. These vary in lightness as well as hue.
+ */
+const CHART_COLOURS = [
+  "rgba(244, 228, 160, 0.85)",
+  "rgba(196, 235, 205, 0.85)",
+  "rgba(186, 214, 240, 0.85)",
+  "rgba(240, 200, 190, 0.85)",
+  "rgba(224, 210, 240, 0.85)",
+  "rgba(250, 246, 220, 0.85)",
+  "rgba(170, 205, 190, 0.85)",
+  "rgba(214, 224, 200, 0.85)",
+];
+
+/**
+ * A filled wedge, as a Fabric path.
+ *
+ * `fabric.Circle` has `startAngle`/`endAngle` but strokes an arc rather than
+ * filling a wedge to the centre, so a pie built from circles is a set of
+ * crescents. The path is the shape actually wanted: centre, line out, arc
+ * round, close.
+ */
+function pieSlice(
+  cx: number,
+  cy: number,
+  radius: number,
+  start: number,
+  end: number,
+  fill: string,
+): fabric.Path {
+  const x1 = cx + radius * Math.cos(start);
+  const y1 = cy + radius * Math.sin(start);
+  const x2 = cx + radius * Math.cos(end);
+  const y2 = cy + radius * Math.sin(end);
+  const largeArc = end - start > Math.PI ? 1 : 0;
+  // A full circle cannot be drawn as a single arc — start and end coincide and
+  // the path collapses — so it is drawn as two half circles.
+  const d =
+    end - start >= Math.PI * 2 - 1e-6
+      ? `M ${cx - radius} ${cy} A ${radius} ${radius} 0 1 1 ${cx + radius} ${cy} A ${radius} ${radius} 0 1 1 ${cx - radius} ${cy} Z`
+      : `M ${cx} ${cy} L ${x1} ${y1} A ${radius} ${radius} 0 ${largeArc} 1 ${x2} ${y2} Z`;
+
+  return new fabric.Path(d, {
+    fill,
+    stroke: "rgba(20, 48, 36, 0.35)",
+    strokeWidth: 1,
+    originX: "left",
+    originY: "top",
+    selectable: false,
+    objectCaching: false,
+  });
+}
+
+/** Whole numbers stay whole; fractions keep one decimal and no trailing zero. */
+function formatValue(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1).replace(/\.0$/, "");
+}
+
 /** Board ops use normalised 0..1 coordinates; the canvas has pixels. */
 interface Viewport {
   width: number;
@@ -252,8 +319,8 @@ export class BoardRenderer {
   async apply(ops: BoardOp[], clearFirst: boolean): Promise<void> {
     if (this.disposed) return;
 
-    // Before any text is constructed — see `chalkFontsReady`.
-    await chalkFontsReady();
+    // Before any text is constructed — see `boardFontsReady`.
+    await boardFontsReady();
     if (this.disposed) return;
 
     if (clearFirst) this.clear();
@@ -382,8 +449,8 @@ export class BoardRenderer {
           left: width * 0.06,
           top: height * this.flowY,
           width: width * 0.88,
-          fontSize: Math.max(20, Math.round(width * 0.038)),
-          fontWeight: "400",
+          fontSize: Math.max(17, Math.round(width * 0.024)),
+          fontWeight: "600",
           fill: CHALK_WHITE,
           shadow: chalkGlow("rgba(243, 241, 231, 0.5)"),
           charSpacing: 24,
@@ -408,7 +475,7 @@ export class BoardRenderer {
           left: width * 0.08,
           top: height * this.flowY,
           width: width * 0.84,
-          fontSize: Math.max(15, Math.round(width * 0.024)),
+          fontSize: Math.max(13, Math.round(width * 0.0165)),
           lineHeight: 1.6,
           fill: CHALK_BODY,
           shadow: chalkGlow("rgba(238, 236, 224, 0.35)"),
@@ -434,10 +501,10 @@ export class BoardRenderer {
           left: width * 0.08,
           top: height * this.flowY,
           width: width * 0.84,
-          fontSize: Math.max(15, Math.round(width * 0.026)),
+          fontSize: Math.max(13, Math.round(width * 0.018)),
           fill: CHALK_MINT,
           shadow: chalkGlow("rgba(196, 235, 205, 0.4)"),
-          fontFamily: '"Cascadia Code", "Consolas", ui-monospace, monospace',
+          fontFamily: MONO_FONT,
           originX: "left",
           originY: "top",
           selectable: false,
@@ -541,7 +608,7 @@ export class BoardRenderer {
           left: width * 0.1,
           top: height * (this.flowY + 0.06),
           width: width * 0.8,
-          fontSize: Math.max(12, Math.round(width * 0.018)),
+          fontSize: Math.max(11, Math.round(width * 0.013)),
           fill: "rgba(238, 236, 224, 0.6)",
           fontFamily: BOARD_FONT,
           originX: "left",
@@ -551,6 +618,24 @@ export class BoardRenderer {
         });
         this.canvas.add(label);
         this.flowY += 0.2;
+        break;
+      }
+
+      case "bar_chart": {
+        this.ensureRoom(0.34);
+        this.drawBarChart(op.id, op.title, op.series, width, height);
+        break;
+      }
+
+      case "pie_chart": {
+        this.ensureRoom(0.34);
+        this.drawPieChart(op.id, op.title, op.series, width, height);
+        break;
+      }
+
+      case "flow": {
+        this.ensureRoom(0.2);
+        this.drawFlow(op.id, op.title, op.steps, width, height);
         break;
       }
 
@@ -567,6 +652,279 @@ export class BoardRenderer {
         break;
       }
     }
+  }
+
+  /**
+   * A bar chart drawn to the widest bar, not to a round number.
+   *
+   * Scaling to the maximum value means the tallest bar always fills the plot,
+   * so two bars that differ by 5% look 5% different rather than both looking
+   * full. Every bar is labelled with its own value, because a board is read
+   * from across a room and nobody reads an axis from there.
+   */
+  private drawBarChart(
+    id: string,
+    title: string,
+    series: { label: string; value: number }[],
+    width: number,
+    height: number,
+  ): void {
+    const top = height * this.flowY;
+    const plotHeight = height * 0.2;
+    const left = width * 0.08;
+    const plotWidth = width * 0.84;
+    const label = this.chartTitle(title, left, top, width);
+
+    const max = Math.max(...series.map((point) => point.value));
+    const slot = plotWidth / series.length;
+    const barWidth = Math.min(slot * 0.62, width * 0.09);
+    const baseline = top + label.height + 8 + plotHeight;
+
+    const parts: fabric.FabricObject[] = [label];
+    series.forEach((point, index) => {
+      // `max` cannot be 0 — the gateway rejects an all-zero series — so this
+      // division is safe, and a genuine 0 renders as a hairline rather than
+      // vanishing, which is the honest depiction of "none".
+      const barHeight = Math.max(2, (point.value / max) * plotHeight);
+      const centre = left + slot * index + slot / 2;
+
+      parts.push(
+        new fabric.Rect({
+          left: centre - barWidth / 2,
+          top: baseline - barHeight,
+          width: barWidth,
+          height: barHeight,
+          fill: CHART_COLOURS[index % CHART_COLOURS.length],
+          rx: 2,
+          ry: 2,
+          originX: "left",
+          originY: "top",
+          selectable: false,
+          objectCaching: false,
+        }),
+        this.chartText(formatValue(point.value), centre, baseline - barHeight - 16, slot, "center"),
+        this.chartText(point.label, centre, baseline + 6, slot, "center"),
+      );
+    });
+
+    // The baseline itself, so bars sit on something rather than floating.
+    parts.push(
+      new fabric.Line([left, baseline, left + plotWidth, baseline], {
+        stroke: "rgba(238, 236, 224, 0.45)",
+        strokeWidth: 1,
+        selectable: false,
+        objectCaching: false,
+      }),
+    );
+
+    this.addGroup(id, parts);
+    this.flowY += (label.height + plotHeight + 46) / height + 0.02;
+  }
+
+  /**
+   * A pie drawn from the real totals.
+   *
+   * Proportions are computed here from the raw values rather than taken from
+   * the model, so a set of slices always sums to the whole circle — a chart
+   * handed pre-computed percentages can be internally inconsistent and there is
+   * no way to notice from looking at it.
+   */
+  private drawPieChart(
+    id: string,
+    title: string,
+    series: { label: string; value: number }[],
+    width: number,
+    height: number,
+  ): void {
+    const top = height * this.flowY;
+    const label = this.chartTitle(title, width * 0.08, top, width);
+    const radius = Math.min(height * 0.1, width * 0.1);
+    const cx = width * 0.22;
+    const cy = top + label.height + 12 + radius;
+    const total = series.reduce((sum, point) => sum + point.value, 0);
+
+    const parts: fabric.FabricObject[] = [label];
+    let start = -Math.PI / 2; // start at 12 o'clock, as a reader expects
+
+    series.forEach((point, index) => {
+      const sweep = total > 0 ? (point.value / total) * Math.PI * 2 : 0;
+      if (sweep > 0) {
+        parts.push(
+          pieSlice(cx, cy, radius, start, start + sweep, CHART_COLOURS[index % CHART_COLOURS.length]),
+        );
+      }
+      start += sweep;
+
+      // A legend, not labels on the slices: a thin slice has no room for text,
+      // and leader lines on a chalkboard read as noise.
+      const legendY = top + label.height + 12 + index * 22;
+      parts.push(
+        new fabric.Rect({
+          left: cx + radius + 24,
+          top: legendY + 3,
+          width: 10,
+          height: 10,
+          fill: CHART_COLOURS[index % CHART_COLOURS.length],
+          originX: "left",
+          originY: "top",
+          selectable: false,
+          objectCaching: false,
+        }),
+        this.chartText(
+          `${point.label} — ${formatValue(point.value)}` +
+            (total > 0 ? ` (${Math.round((point.value / total) * 100)}%)` : ""),
+          cx + radius + 40,
+          legendY,
+          width * 0.5,
+          "left",
+        ),
+      );
+    });
+
+    this.addGroup(id, parts);
+    const legendHeight = series.length * 22;
+    this.flowY += (label.height + 12 + Math.max(radius * 2, legendHeight) + 16) / height + 0.02;
+  }
+
+  /** Boxes joined by arrows, wrapping to a second row when the board runs out. */
+  private drawFlow(
+    id: string,
+    title: string,
+    steps: string[],
+    width: number,
+    height: number,
+  ): void {
+    const top = height * this.flowY;
+    const label = this.chartTitle(title, width * 0.08, top, width);
+    const left = width * 0.08;
+    const usable = width * 0.84;
+    const gap = Math.max(18, width * 0.018);
+    const boxWidth = (usable - gap * (steps.length - 1)) / steps.length;
+    const boxHeight = Math.max(42, height * 0.075);
+    const boxTop = top + label.height + 12;
+
+    const parts: fabric.FabricObject[] = [label];
+    steps.forEach((step, index) => {
+      const boxLeft = left + (boxWidth + gap) * index;
+      parts.push(
+        new fabric.Rect({
+          left: boxLeft,
+          top: boxTop,
+          width: boxWidth,
+          height: boxHeight,
+          fill: "rgba(255, 255, 255, 0.05)",
+          stroke: CHART_COLOURS[index % CHART_COLOURS.length],
+          strokeWidth: 1.5,
+          rx: 6,
+          ry: 6,
+          originX: "left",
+          originY: "top",
+          selectable: false,
+          objectCaching: false,
+        }),
+        new fabric.Textbox(step, {
+          left: boxLeft + 6,
+          top: boxTop + 8,
+          width: boxWidth - 12,
+          fontSize: Math.max(11, Math.round(width * 0.0125)),
+          textAlign: "center",
+          fill: CHALK_BODY,
+          fontFamily: BOARD_FONT,
+          originX: "left",
+          originY: "top",
+          selectable: false,
+          objectCaching: false,
+        }),
+      );
+
+      if (index < steps.length - 1) {
+        const arrowY = boxTop + boxHeight / 2;
+        const arrowFrom = boxLeft + boxWidth + 3;
+        const arrowTo = boxLeft + boxWidth + gap - 3;
+        parts.push(
+          new fabric.Line([arrowFrom, arrowY, arrowTo, arrowY], {
+            stroke: "rgba(238, 236, 224, 0.6)",
+            strokeWidth: 1.5,
+            selectable: false,
+            objectCaching: false,
+          }),
+          // The head, as two short strokes — a triangle would need a polygon
+          // and reads heavier than a chalk arrow should.
+          new fabric.Polyline(
+            [
+              { x: arrowTo - 5, y: arrowY - 4 },
+              { x: arrowTo, y: arrowY },
+              { x: arrowTo - 5, y: arrowY + 4 },
+            ],
+            {
+              fill: "transparent",
+              stroke: "rgba(238, 236, 224, 0.6)",
+              strokeWidth: 1.5,
+              selectable: false,
+              objectCaching: false,
+            },
+          ),
+        );
+      }
+    });
+
+    this.addGroup(id, parts);
+    this.flowY += (label.height + 12 + boxHeight + 18) / height + 0.02;
+  }
+
+  /** The caption above a chart. */
+  private chartTitle(text: string, left: number, top: number, width: number): fabric.Textbox {
+    return new fabric.Textbox(text, {
+      left,
+      top,
+      width: width * 0.84,
+      fontSize: Math.max(12, Math.round(width * 0.015)),
+      fontWeight: "600",
+      fill: CHALK_WHITE,
+      fontFamily: BOARD_FONT,
+      originX: "left",
+      originY: "top",
+      selectable: false,
+      objectCaching: false,
+    });
+  }
+
+  /** A small label inside a chart. */
+  private chartText(
+    text: string,
+    centreOrLeft: number,
+    top: number,
+    slot: number,
+    align: "center" | "left",
+  ): fabric.Textbox {
+    return new fabric.Textbox(text, {
+      left: align === "center" ? centreOrLeft - slot / 2 : centreOrLeft,
+      top,
+      width: slot,
+      fontSize: Math.max(10, Math.round(slot * 0.13)),
+      textAlign: align,
+      fill: CHALK_BODY,
+      fontFamily: BOARD_FONT,
+      originX: "left",
+      originY: "top",
+      selectable: false,
+      objectCaching: false,
+    });
+  }
+
+  /**
+   * Adds a chart as one grouped object.
+   *
+   * Grouped so `highlight` can target the whole figure, and so a chart is one
+   * object to the canvas rather than thirty — which matters for the 400 ms
+   * NN-1 hold, since Fabric lays out every object as it is added.
+   */
+  private addGroup(id: string, parts: fabric.FabricObject[]): void {
+    const group = new fabric.Group(parts, {
+      selectable: false,
+      objectCaching: false,
+    });
+    this.add(id, group);
   }
 
   private add(id: string, object: fabric.FabricObject): void {

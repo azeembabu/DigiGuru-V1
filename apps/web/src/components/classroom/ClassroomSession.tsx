@@ -110,10 +110,13 @@ interface BoardLogEntry {
 export function ClassroomSession({
   blockId,
   documentId = null,
+  backHref = "/classroom",
 }: {
   blockId: string;
   /** The unit chosen in `/classroom`; narrows retrieval within the block. */
   documentId?: string | null;
+  /** Where the back arrow returns to — the unit list this session came from. */
+  backHref?: string;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const shellRef = useRef<HTMLDivElement | null>(null);
@@ -548,6 +551,19 @@ export function ClassroomSession({
     */
     <main className="flex h-dvh flex-col overflow-hidden bg-[#141a17] text-lavender-50">
       <header className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-black/40 bg-[#101512] px-4 py-2.5 sm:px-6">
+        {/*
+          Back to the unit list, not to the dashboard — a student who wants a
+          different unit of the same block should not have to walk the whole
+          course tree again. "Leave" (far right) is the way out of the module
+          entirely; these are different intentions and get different controls.
+        */}
+        <Link
+          href={backHref}
+          aria-label="Back to the unit list"
+          className="rounded-lg px-2 py-1 text-[13px] text-gray-400 transition hover:bg-white/5 hover:text-gray-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
+        >
+          ← Back
+        </Link>
         <Logo size="sm" />
         <StatusPill state={state} sessionId={session?.session_id ?? null} />
         {turn ? (

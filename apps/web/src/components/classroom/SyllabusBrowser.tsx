@@ -185,7 +185,12 @@ export function SyllabusBrowser() {
             <ListState state={units} empty="No units have been uploaded to this block yet.">
               {(items) =>
                 items.map((unit) => (
-                  <UnitRow key={unit.document_id} unit={unit} blockId={blockId} />
+                  <UnitRow
+                    key={unit.document_id}
+                    unit={unit}
+                    blockId={blockId}
+                    courseId={courseId}
+                  />
                 ))
               }
             </ListState>
@@ -267,8 +272,20 @@ export function SyllabusBrowser() {
   );
 }
 
-function UnitRow({ unit, blockId }: { unit: SyllabusUnit; blockId: string }) {
-  const href = `/classroom/session?block=${encodeURIComponent(blockId)}&unit=${encodeURIComponent(unit.document_id)}`;
+function UnitRow({
+  unit,
+  blockId,
+  courseId,
+}: {
+  unit: SyllabusUnit;
+  blockId: string;
+  /** Carried into the session URL so its Back link can return here exactly. */
+  courseId: string | null;
+}) {
+  const href =
+    `/classroom/session?block=${encodeURIComponent(blockId)}` +
+    `&unit=${encodeURIComponent(unit.document_id)}` +
+    (courseId ? `&course=${encodeURIComponent(courseId)}` : "");
 
   return (
     <div className="flex flex-wrap items-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] p-4">
