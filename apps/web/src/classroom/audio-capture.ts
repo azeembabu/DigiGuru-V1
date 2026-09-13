@@ -20,7 +20,15 @@ import type { VadEvent } from "./vad";
 
 export interface AudioCaptureHandlers {
   /** One complete 20 ms PCM16 frame, little-endian, ready for the socket. */
-  onFrame: (frame: Int16Array) => void;
+  /**
+   * One 20 ms frame, with its **unclipped** RMS.
+   *
+   * The level is passed alongside rather than being re-derived by the caller
+   * because it has already been computed here, and because `onLevel` is scaled
+   * and clamped for a meter — which throws away exactly the headroom that
+   * distinguishes a person talking from speaker bleed.
+   */
+  onFrame: (frame: Int16Array, level: number) => void;
   onVad?: (event: VadEvent) => void;
   /** Input level 0..1, for a meter. Called once per frame; cheap to ignore. */
   onLevel?: (level: number) => void;
@@ -102,11 +110,12 @@ export class AudioCapture {
       for (const frame of this.accumulator.push(block)) {
         const event = this.vad.push(frame);
         if (event && this.handlers.onVad) this.handlers.onVad(event);
+        const level = rmsOf(frame);
         if (this.handlers.onLevel) {
           // Reuse the VAD's own measure so the meter and the gate agree.
-          this.handlers.onLevel(Math.min(1, rmsOf(frame) * 8));
+          this.handlers.onLevel(Math.min(1, level * 8));
         }
-        this.handlers.onFrame(floatToPcm16(frame));
+        this.handlers.onFrame(floatToPcm16(frame), level);
       }
     } catch (error) {
       this.handlers.onError?.(error instanceof Error ? error : new Error(String(error)));

@@ -77,8 +77,40 @@ const PREROLL_FRAMES = Math.ceil(PREROLL_MS / 20);
  * positive cannot loop: it stops the tutor once, and the student says
  * "continue".
  */
-const BARGE_IN_MS = 350;
+const BARGE_IN_MS = 500;
 const BARGE_IN_FRAMES = Math.ceil(BARGE_IN_MS / 20);
+
+/**
+ * How much louder than the tutor's own bleed the student has to be before the
+ * tutor is cut off.
+ *
+ * The first version of barge-in counted *any* sustained speech while the tutor
+ * was talking — and while the tutor is talking, the mic hears the tutor through
+ * the speakers. That is sustained speech by every measure the VAD has, so a
+ * small sound, or nothing at all, could cut the lesson off. It reintroduced the
+ * self-interrupting echo problem that withholding mic frames exists to prevent.
+ *
+ * Level is what separates the two. Speaker bleed arrives attenuated by the room;
+ * the person holding the microphone does not. Requiring a clear multiple of the
+ * *measured* bleed — rather than a fixed threshold, which cannot know the
+ * volume setting or whether headphones are plugged in — is what makes "talk
+ * over it" work without "sneeze over it" working.
+ */
+const BARGE_IN_OVER_ECHO = 3.5;
+
+/** Floor for that comparison, so near-silence cannot make any sound qualify. */
+const BARGE_IN_MIN_LEVEL = 0.03;
+
+/**
+ * Gated frames spent measuring the bleed before barge-in may fire at all.
+ *
+ * Without it the estimate starts at zero, so for the first moments of every
+ * tutor turn the bleed itself clears the threshold and — because the estimate
+ * is frozen while a candidate is in progress — it never catches up. Simulated
+ * before shipping: with loud bleed and a silent student, that fired a false
+ * interrupt every single turn.
+ */
+const BARGE_IN_WARMUP_FRAMES = 20;
 
 /** `document.body` never changes identity, so there is nothing to subscribe to. */
 function subscribeNever(): () => void {
@@ -146,8 +178,20 @@ export function ClassroomSession({
   const playbackRef = useRef<AudioPlayback | null>(null);
   /** Student speech captured while the mic was gated — see `PREROLL_MS`. */
   const prerollRef = useRef<Int16Array[]>([]);
-  /** Consecutive gated frames carrying speech — see `BARGE_IN_MS`. */
+  /** Consecutive gated frames loud enough to be the student — see `BARGE_IN_MS`. */
   const bargeInRef = useRef(0);
+  /**
+   * Running estimate of how loud the tutor's own audio arrives back at the mic.
+   *
+   * Learned only while the gate is closed, which is exactly when everything the
+   * mic hears is the tutor. It rises slowly so a student talking over the tutor
+   * cannot drag it up to their own level within the barge-in window, and it is
+   * reset whenever the tutor stops, because the next turn may be at a different
+   * volume or through different speakers.
+   */
+  const echoLevelRef = useRef(0);
+  /** Gated frames so far this turn; barge-in is deaf until the warm-up passes. */
+  const gatedFramesRef = useRef(0);
   /** Live mirror of `speaking`, readable from the per-frame callback. */
   const speakingRef = useRef(false);
   /**
@@ -326,7 +370,7 @@ export function ClassroomSession({
       // TTS streams from the model, heard locally as doubled, glitchy audio.
       // Withholding the send while the tutor is speaking means Gemini never
       // hears its own echo, so it never has a reason to self-interrupt.
-      onFrame: (frame) => {
+      onFrame: (frame, level) => {
         const gated = (playbackRef.current?.queuedSeconds ?? 0) > PLAYBACK_GATE_S;
         if (gated) {
           // Hold the tail end of what the student is saying rather than
@@ -335,10 +379,27 @@ export function ClassroomSession({
           roll.push(frame);
           if (roll.length > PREROLL_FRAMES) roll.shift();
 
-          // Barge-in: the student is talking over the tutor. Counted in frames
-          // of *sustained* speech rather than acted on immediately, so a burst
-          // of the tutor's own echo cannot cut it off.
-          if (speakingRef.current) {
+          gatedFramesRef.current += 1;
+          const warmingUp = gatedFramesRef.current <= BARGE_IN_WARMUP_FRAMES;
+
+          // Barge-in: sustained speech that is also clearly louder than the
+          // tutor's own bleed. Both conditions are required — speech alone is
+          // what the tutor's voice looks like, and loudness alone is what a
+          // door slam looks like.
+          const overEcho =
+            level > Math.max(echoLevelRef.current * BARGE_IN_OVER_ECHO, BARGE_IN_MIN_LEVEL);
+
+          // Learn the bleed level, but only from frames that are not already
+          // candidates — otherwise the student's own voice trains the estimate
+          // upward and silences their interrupt before it completes. Simulated
+          // before shipping: without this freeze, a genuine barge-in never
+          // fired at all. During warm-up everything trains it, because nothing
+          // is allowed to fire yet.
+          if (warmingUp || !overEcho) {
+            echoLevelRef.current = echoLevelRef.current * 0.97 + level * 0.03;
+          }
+
+          if (!warmingUp && speakingRef.current && overEcho) {
             bargeInRef.current += 1;
             if (bargeInRef.current >= BARGE_IN_FRAMES) {
               bargeInRef.current = 0;
@@ -355,6 +416,10 @@ export function ClassroomSession({
         }
 
         bargeInRef.current = 0;
+        // The tutor has stopped, so there is no bleed to measure any more and
+        // the next turn may be at a different volume.
+        echoLevelRef.current = 0;
+        gatedFramesRef.current = 0;
         // Gate just opened: lead with whatever the student had already started
         // saying, in order, before the live frames.
         const roll = prerollRef.current;
