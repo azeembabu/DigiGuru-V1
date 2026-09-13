@@ -20,6 +20,12 @@ name = "create_admin"
 path = "src/bin/create_admin.rs"
 
 [dependencies]
+# Direct dependency for ONE reason: installing the process-level rustls
+# CryptoProvider (see `main.rs`). Both `ring` and `aws-lc-rs` end up in the tree
+# (sqlx pulls one, qdrant-client/reqwest the other), and rustls 0.23 refuses to
+# guess between them — it panics at the first TLS handshake instead, which is
+# the Gemini Live connection. Picking one here is what makes that deterministic.
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 dg-core = { workspace = true }
 dg-db = { workspace = true }
 dg-live = { workspace = true }
@@ -27,6 +33,15 @@ dg-live = { workspace = true }
 # quota ring. The gateway reads the ledger here (`QuotaStore::get_ms`) and
 # never charges it: only the socket task that owns a live session may do that.
 dg-quota = { workspace = true }
+# NN-4 grounding for the classroom socket: `ws::grounding` runs the retrieval
+# pipeline (`rag::retrieve`) and reads the block's prompt-cached preamble, so
+# the tutor's system instruction is built from retrieved curriculum only. The
+# gateway is the layer that has the student's academic context, which is why
+# the grounding lives here and not in `crates/live`.
+dg-rag = { workspace = true }
+# Only to construct the handle `rag::retrieve::retrieve` takes. No query is
+# built here -- the mandatory four-dimension filter is `rag`'s to enforce.
+qdrant-client = { workspace = true }
 
 # The `seed_dev` dev-only seeder writes rows directly with compile-time checked
 # `sqlx::query!` macros; the gateway proper goes through `dg-db`.

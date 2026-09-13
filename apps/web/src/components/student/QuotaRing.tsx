@@ -73,7 +73,7 @@ export function QuotaRing({ quota }: { quota: QuotaStatus }) {
       <div id="quota-heading">
         <SectionHeader
           title="Today’s speaking time"
-          hint={`Counted only while you are talking · ${quota.timezone}`}
+          hint={`Counted only while you are speaking · ${quota.timezone}`}
         />
       </div>
 
@@ -126,8 +126,8 @@ export function QuotaRing({ quota }: { quota: QuotaStatus }) {
             <>
               <Pill tone="bad">Daily limit reached</Pill>
               <p className="text-[15px] leading-[1.6] text-gray-300">
-                You have used all {max} minutes of speaking time for today. Your notes, flashcards
-                and exams are still open — only the live voice session is paused.
+                All {max} minutes of speaking time for today have been used. Your notes, flashcards
+                and assessments remain available; only the live voice session is paused.
               </p>
             </>
           ) : (
@@ -136,13 +136,13 @@ export function QuotaRing({ quota }: { quota: QuotaStatus }) {
                 {remainingMinutes} minute{remainingMinutes === 1 ? "" : "s"} left
               </Pill>
               <p className="text-[15px] leading-[1.6] text-gray-300">
-                Listening, reading the board and thinking are free — the clock only runs while you
-                are speaking.
+                The clock runs only while you are speaking. Listening to the tutor and reading the
+                whiteboard are not counted.
               </p>
             </>
           )}
           <p className="text-[14px] leading-[1.5] text-gray-300/70">
-            {resetLabel(quota.resets_at, now)} — midnight where you are.
+            {resetLabel(quota.resets_at, now)} — at midnight in your own timezone.
           </p>
         </div>
       </div>

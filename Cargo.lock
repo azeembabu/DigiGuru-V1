@@ -641,12 +641,15 @@ name = "dg-live"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
  "bytes",
  "dg-core",
+ "futures-util",
  "serde",
  "serde_json",
  "thiserror",
  "tokio",
+ "tokio-tungstenite",
  "tracing",
  "uuid",
 ]
@@ -676,6 +679,7 @@ dependencies = [
  "qdrant-client",
  "rand 0.8.8",
  "redis",
+ "reqwest",
  "serde",
  "serde_json",
  "sha2",
@@ -958,13 +962,16 @@ dependencies = [
  "dg-db",
  "dg-live",
  "dg-quota",
+ "dg-rag",
  "dotenvy",
  "jsonwebtoken",
+ "qdrant-client",
  "quick-xml 0.37.5",
  "rand 0.8.8",
  "redis",
  "regex",
  "rpassword",
+ "rustls",
  "serde",
  "serde_json",
  "sha2",
@@ -2345,6 +2352,9 @@ dependencies = [
  "rustls",
  "rustls-pki-types",
  "rustls-platform-verifier",
+ "serde",
+ "serde_json",
+ "serde_urlencoded",
  "sync_wrapper",
  "tokio",
  "tokio-rustls",
@@ -3204,8 +3214,12 @@ checksum = "8f72a05e828585856dacd553fba484c242c46e391fb0e58917c942ee9202915c"
 dependencies = [
  "futures-util",
  "log",
+ "rustls",
+ "rustls-pki-types",
  "tokio",
+ "tokio-rustls",
  "tungstenite",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]
@@ -3395,6 +3409,8 @@ dependencies = [
  "httparse",
  "log",
  "rand 0.9.5",
+ "rustls",
+ "rustls-pki-types",
  "sha1",
  "thiserror",
 ]

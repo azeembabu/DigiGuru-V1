@@ -22,6 +22,7 @@ pub mod exam_papers;
 pub mod exams;
 pub mod flashcards;
 pub mod ingestion_jobs;
+pub mod learning_sessions;
 pub mod lscs;
 pub mod password_resets;
 pub mod programs;

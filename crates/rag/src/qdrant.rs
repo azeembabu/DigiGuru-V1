@@ -176,3 +176,62 @@ pub async fn upsert_chunks(
 
     Ok(())
 }
+
+/// Normalises a configured Qdrant URL to the **gRPC** endpoint.
+///
+/// Qdrant listens on two ports and they are not interchangeable: `6333` speaks
+/// REST, `6334` speaks gRPC. `qdrant_client::Qdrant` is a gRPC client, so
+/// pointing it at `6333` does not fail with "wrong port" — it fails with
+///
+/// ```text
+/// qdrant operation failed: Error in the response: Unknown error
+/// h2 protocol error: http2 error
+/// ```
+///
+/// which reads like a network fault and sends you looking in the wrong place.
+/// Observed exactly that: every retrieval in a live session failed this way, and
+/// because the tutor treats a retrieval failure as an abstention (the correct,
+/// safe direction for NN-4), the only visible symptom was a tutor that refused
+/// to teach anything.
+///
+/// `QDRANT_URL` is documented and defaulted as the REST URL across this
+/// workspace, so rather than change that contract in every deployment, the gRPC
+/// port is derived here. An explicit `6334` (or any other port) is left alone —
+/// only the known-REST default is remapped.
+pub fn grpc_url(configured: &str) -> String {
+    match configured.rsplit_once(":6333") {
+        // Only remap when `:6333` ends the URL or is followed by a path, so a
+        // host that merely contains "6333" is untouched.
+        Some((head, tail)) if tail.is_empty() || tail.starts_with('/') => {
+            format!("{head}:6334{tail}")
+        }
+        _ => configured.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod grpc_url_tests {
+    use super::grpc_url;
+
+    #[test]
+    fn the_rest_port_is_remapped_to_the_grpc_port() {
+        assert_eq!(grpc_url("http://localhost:6333"), "http://localhost:6334");
+        assert_eq!(grpc_url("http://qdrant:6333/"), "http://qdrant:6334/");
+    }
+
+    #[test]
+    fn an_explicit_grpc_port_is_left_alone() {
+        assert_eq!(grpc_url("http://localhost:6334"), "http://localhost:6334");
+    }
+
+    #[test]
+    fn an_unrelated_port_is_left_alone() {
+        // A managed Qdrant behind a gateway may expose gRPC on 443.
+        assert_eq!(grpc_url("https://xyz.cloud.qdrant.io:443"), "https://xyz.cloud.qdrant.io:443");
+    }
+
+    #[test]
+    fn a_host_that_merely_contains_the_digits_is_not_mangled() {
+        assert_eq!(grpc_url("http://host6333.internal:6334"), "http://host6333.internal:6334");
+    }
+}

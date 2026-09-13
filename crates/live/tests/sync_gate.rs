@@ -539,3 +539,53 @@ fn a_holding_turn_is_never_retired_by_map_pruning() {
     assert_eq!(released(gate.on_board_ack(TurnSeq(1))).frames.len(), 1);
     assert_eq!(gate.wb_violation(), 0);
 }
+
+// ---------------------------------------------------------------------------
+// Implicit turns: the model spoke without calling board_ops.
+// ---------------------------------------------------------------------------
+
+/// The one case NN-1 does not hold audio for: no board was ever attempted.
+/// Nothing was reordered, so this is not a violation — the gate forwards
+/// audio immediately and counts it separately from `wb_violation`.
+#[test]
+fn an_implicit_turn_forwards_audio_immediately_and_is_not_a_violation() {
+    let (_clock, mut gate) = gate();
+    gate.open_implicit_turn(TurnSeq(1)).expect("opens");
+
+    assert_eq!(
+        gate.push_audio(TurnSeq(1), &FRAME),
+        AudioDisposition::Forward
+    );
+    assert_eq!(gate.metrics().implicit_turns, 1);
+    assert_eq!(gate.wb_violation(), 0, "an implicit turn is not an NN-1 violation");
+}
+
+/// A real board turn after an implicit one still enforces the seq ordering —
+/// an implicit turn is not exempt from monotonicity.
+#[test]
+fn a_later_board_turn_after_an_implicit_one_still_must_be_monotonic() {
+    let (_clock, mut gate) = gate();
+    gate.open_implicit_turn(TurnSeq(5)).expect("opens");
+
+    let err = gate
+        .on_board_ops(TurnSeq(5), false, vec![heading("h1")])
+        .expect_err("seq 5 was already used by the implicit turn");
+    assert!(matches!(err, SyncGateError::NonMonotonicSeq { .. }));
+
+    // But seq 6 is fine.
+    gate.on_board_ops(TurnSeq(6), false, vec![heading("h2")])
+        .expect("a genuinely later seq opens normally");
+}
+
+/// Two implicit turns in a row are also ordered — a stalled or repeated model
+/// utterance with no board must not stamp the same seq twice.
+#[test]
+fn implicit_turns_are_also_monotonic_against_each_other() {
+    let (_clock, mut gate) = gate();
+    gate.open_implicit_turn(TurnSeq(1)).expect("opens");
+    let err = gate
+        .open_implicit_turn(TurnSeq(1))
+        .expect_err("seq 1 already used");
+    assert!(matches!(err, SyncGateError::NonMonotonicSeq { .. }));
+    gate.open_implicit_turn(TurnSeq(2)).expect("later seq opens");
+}

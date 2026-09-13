@@ -1006,6 +1006,8 @@ JSON control messages. Every control message has `type` and, where it belongs to
   "quota_remaining_ms": 1200000 }
 { "type": "board_ops",     "seq": 42, "clear_first": false, "ops": [ ... ] }
 { "type": "turn_state",    "seq": 42, "chapter": "3", "topic": "...", "page": 57 }
+{ "type": "turn_complete", "seq": 42, "interrupted": false }
+{ "type": "transcript",    "source": "tutor", "text": "..." }
 { "type": "quota_warning", "remaining_ms": 120000 }
 { "type": "session_end",   "reason": "quota" }
 { "type": "error",         "code": "UPSTREAM_UNAVAILABLE", "message": "..." }
@@ -1013,6 +1015,22 @@ JSON control messages. Every control message has `type` and, where it belongs to
 
 ### Rules
 
+- `turn_state` carries the citation for the turn and is taken from the **retrieved chunk
+  payload**, never from model output (`.claude/rules/rag-pipeline.md`). It is sent after
+  `board_ops` for that turn and before its audio. A turn that abstained (NN-4) has no citation
+  and sends no `turn_state` at all, rather than repeating the previous turn's.
+- `turn_complete` says a tutor turn ended upstream. `interrupted` is `true` **only** when the
+  turn was genuinely cut short (the student barged in, or Live reported an interruption); the
+  client flushes its playback jitter buffer on `true`. A normal turn end is `false` (the field
+  may be omitted and defaults to `false`) — sending `true` as a blanket "turn is over" signal
+  would clip the legitimately queued tail off the end of every explanation. It is advisory:
+  the client also barges in locally on its own VAD without waiting for this frame, and the
+  `SyncGate` remains the sole authority on when audio is *released* (NN-1 is unaffected either
+  way).
+- `transcript` is a caption, not a control frame — `source` is `"tutor"` or `"student"`. It
+  carries no `seq` and is not subject to NN-1 ordering: it is a running record of speech, not a
+  visual the audio must wait behind. Partial and incremental per side (the service emits it as
+  speech is recognised), so the client accumulates rather than replaces.
 - `seq` is monotonic per session and identifies a turn across board ops, audio, and traces.
 - The server never sends audio for turn `N` before it has sent `board_ops` for turn `N`.
 - Unknown message types are ignored, not fatal — forward compatibility.

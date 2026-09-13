@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 
-import { StudentDashboard } from "@/components/dashboard/StudentDashboard";
+import { LuxDashboard } from "@/components/dashboard/lux/LuxDashboard";
 
 export const metadata: Metadata = {
   title: "Dashboard — Digi Guru",
@@ -10,5 +10,5 @@ export const metadata: Metadata = {
 };
 
 export default function DashboardPage() {
-  return <StudentDashboard />;
+  return <LuxDashboard />;
 }

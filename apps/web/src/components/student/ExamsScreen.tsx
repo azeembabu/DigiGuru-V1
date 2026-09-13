@@ -54,7 +54,7 @@ export function ExamsScreen() {
           setState({
             status: "error",
             message:
-              "This account has no student record, so it has no exams. Admin accounts use the console instead.",
+              "This account has no student record, so it has no assessments. Administrator accounts use the console instead.",
             retryable: false,
           });
           return;
@@ -65,7 +65,7 @@ export function ExamsScreen() {
           message:
             caught instanceof SchemaError || caught instanceof ApiError
               ? caught.message
-              : "Something went wrong loading your exams.",
+              : "Your assessments could not be loaded. Please try again.",
           retryable: !(caught instanceof SchemaError),
         });
       });
@@ -87,28 +87,28 @@ export function ExamsScreen() {
           Exam module
         </h1>
         <p className="mt-2 max-w-2xl text-[17px] leading-[1.6] text-gray-300">
-          Assignments, mid-term quizzes and semester exams for your semester. Each paper is drawn
-          fresh, so two attempts are never the same — and your answers and the reasoning behind them
-          are shown as soon as you submit.
+          Assignments, mid-term quizzes and semester exams for your semester. Each paper is drawn at
+          random from a larger question pool, so attempts vary. Your answers and the reasoning
+          behind them are shown on submission.
         </p>
       </div>
 
       {state.status === "loading" ? (
-        <div className="grid gap-5 md:grid-cols-2" aria-busy="true" aria-label="Loading your exams">
+        <div className="grid gap-5 md:grid-cols-2" aria-busy="true" aria-label="Loading your assessments">
           <PanelSkeleton className="h-44" />
           <PanelSkeleton className="h-44" />
         </div>
       ) : state.status === "error" ? (
         <StudentError
-          title="We couldn’t load your exams"
+          title="Your assessments could not be loaded"
           message={state.message}
           onRetry={state.retryable ? retry : undefined}
         />
       ) : state.exams.length === 0 ? (
         <div className={cardClass}>
           <StudentEmpty
-            title="No exams are open for you yet"
-            hint="Exams appear here once your coordinator publishes one for a course you are enrolled in. Nothing is hidden — there is simply nothing published for your semester right now."
+            title="No assessments are open yet"
+            hint="An assessment appears here once your course coordinator publishes one for a course you are enrolled in. Nothing is hidden: none has been published for your semester yet."
           />
         </div>
       ) : (
@@ -151,7 +151,7 @@ function ExamCard({ exam }: { exam: StudentExam }) {
 
       <dl className="mt-4 flex flex-wrap gap-x-6 gap-y-2 text-[14px] text-gray-300/70">
         <div className="flex items-center gap-1.5">
-          <dt className="sr-only">Questions</dt>
+          <dt className="sr-only">Number of questions</dt>
           <dd className="tabular-nums">
             {exam.question_count === null ? "—" : exam.question_count} questions
           </dd>
@@ -171,7 +171,7 @@ function ExamCard({ exam }: { exam: StudentExam }) {
         href={`/exams/${exam.id}`}
         className="inline-flex items-center gap-1.5 self-start rounded-full bg-lime-400 px-5 py-2.5 text-[15px] font-semibold text-ink-950 transition-colors hover:bg-lime-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300 focus-visible:ring-offset-2 focus-visible:ring-offset-art-base"
       >
-        {taken ? "Take it again" : "Start"}
+        {taken ? "Attempt again" : "Begin"}
         <IconArrowUpRight className="h-4 w-4" />
       </Link>
     </article>

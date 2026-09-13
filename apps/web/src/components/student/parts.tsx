@@ -60,7 +60,7 @@ export function StudentEmpty({ title, hint }: { title: string; hint?: string }) 
  * first when the second is true is a lie the student would act on.
  */
 export function StudentError({
-  title = "We couldn’t load this",
+  title = "This section could not be loaded",
   message,
   onRetry,
 }: {

@@ -34,6 +34,20 @@ async fn main() {
         )
         .init();
 
+    // Pick the rustls crypto provider for the whole process, before anything can
+    // open a TLS connection.
+    //
+    // Both `ring` and `aws-lc-rs` are in the dependency tree — sqlx pulls one,
+    // qdrant-client/reqwest the other — and rustls 0.23 will not guess between
+    // two. Left unset it panics at the FIRST handshake, which in practice is the
+    // Gemini Live connection inside a student's session: the gateway starts
+    // cleanly, serves REST all day, and then dies the moment someone opens the
+    // classroom. Observed exactly that before this call existed.
+    //
+    // `install_default` returns Err only if a provider is already installed,
+    // which is not a failure worth aborting startup for.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     let config = Config::from_env().unwrap_or_else(|err| {
         // A missing required env var is a startup-abort condition, per
         // `.claude/rules/code-style.md` ("panic! ... allowed ... in `main`
@@ -80,6 +94,13 @@ fn build_router(state: AppState) -> Router {
         .nest("/reference", reference::router())
         .nest("/me", me::router())
         .nest("/student", student::router())
+        // The WS upgrade itself is a sibling of `/api/v1` (below), but minting
+        // the ticket that authenticates it is an ordinary cookie-authenticated
+        // REST call, so it belongs here.
+        .route(
+            "/ws/ticket",
+            axum::routing::post(ws::ticket::create_ws_ticket),
+        )
         .nest("/admin", admin::router(max_upload_bytes));
 
     Router::new()

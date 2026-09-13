@@ -363,6 +363,41 @@ export async function findActiveAttemptId(examId: string): Promise<string | null
   }
 }
 
+/**
+ * The full `GET /student/exam-attempts` row, with the denormalised block and
+ * course ancestry the contract documents.
+ *
+ * Deliberately a second schema rather than extra fields on
+ * `examAttemptCardSchema`: that one backs `findActiveAttemptId`, whose whole job
+ * is to rescue a `409 EXAM_ATTEMPT_ACTIVE` resume, and it swallows its own
+ * errors. Making its schema stricter would turn a gateway that had not yet sent
+ * `course_code` into a silently unresumable exam. The dashboard wants the
+ * ancestry and can fail loudly about it; the runner wants the id and must not.
+ */
+export const examAttemptRowSchema = examAttemptCardSchema.extend({
+  block_id: uuid,
+  block_no: z.number().int(),
+  block_title: z.string(),
+  course_id: uuid,
+  course_code: z.string(),
+  course_name: z.string(),
+});
+
+export type ExamAttemptRow = z.infer<typeof examAttemptRowSchema>;
+
+/** Newest first, as the contract orders it. */
+export async function loadExamAttempts(
+  params: { limit?: number; offset?: number } = {},
+): Promise<{ items: ExamAttemptRow[]; total: number }> {
+  const page = await apiFetchPage<unknown>(
+    `/student/exam-attempts${query({ limit: params.limit ?? 200, offset: params.offset })}`,
+  );
+  return {
+    items: parse(z.array(examAttemptRowSchema), page.items, "attempt list"),
+    total: page.total,
+  };
+}
+
 export async function loadExamAttempt(attemptId: string): Promise<ExamPaper> {
   return parse(
     examPaperSchema,

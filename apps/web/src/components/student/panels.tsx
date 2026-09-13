@@ -58,15 +58,15 @@ export function ContinueLearningHero({ resume }: { resume: ContinueLearning | nu
           Study module
         </p>
         <h2 className="mt-3 text-balance font-display text-[28px] font-bold leading-[1.2] text-white">
-          Your first session <span className="text-lime-400">starts here</span>
+          Your first <span className="text-lime-400">session</span>
         </h2>
         <p className="mt-3 max-w-xl text-[16px] leading-[1.6] text-gray-300">
-          Nothing to resume yet. The tutor opens on your current block, introduces itself once, and
-          from then on this card brings you back to the exact page you stopped on.
+          There is nothing to resume yet. The tutor opens on your current block and introduces
+          itself once; from then on this card returns you to the page you stopped on.
         </p>
         <Button href="/classroom" variant="primary" className="mt-7">
           <IconPlay className="h-5 w-5" />
-          Start your first session
+          Begin your first session
         </Button>
       </section>
     );
@@ -80,7 +80,7 @@ export function ContinueLearningHero({ resume }: { resume: ContinueLearning | nu
         Continue learning
       </p>
       <h2 className="mt-3 text-balance font-display text-[28px] font-bold leading-[1.2] text-white">
-        Pick up where you <span className="text-lime-400">left off</span>
+        Continue where you <span className="text-lime-400">left off</span>
       </h2>
 
       <div className="mt-5 grid gap-5 sm:grid-cols-[1fr_auto] sm:items-end">
@@ -126,7 +126,7 @@ export function ContinueLearningHero({ resume }: { resume: ContinueLearning | nu
 
         <Button href="/classroom" variant="primary" className="shrink-0">
           <IconPlay className="h-5 w-5" />
-          Resume session
+          Continue session
         </Button>
       </div>
     </section>
@@ -147,14 +147,14 @@ export function ExamHistoryPanel({ history }: { history: ExamHistoryEntry[] }) {
   return (
     <section className={cardClass}>
       <SectionHeader
-        title="Recent exams"
+        title="Recent assessments"
         hint="Your last three attempts"
         action={
           <Link
             href="/exams"
             className="text-[14px] font-semibold text-lime-400 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300 focus-visible:ring-offset-2 focus-visible:ring-offset-art-base"
           >
-            All exams
+            All assessments
           </Link>
         }
       />
@@ -163,7 +163,7 @@ export function ExamHistoryPanel({ history }: { history: ExamHistoryEntry[] }) {
         {history.length === 0 ? (
           <StudentEmpty
             title="No attempts yet"
-            hint="Open the Exam Module to take an assignment, mid-term quiz or semester exam. Your score and weak areas appear here straight after you submit."
+            hint="Open the Exam module to sit an assignment, mid-term quiz or semester exam. Your score and the topics to revise appear here on submission."
           />
         ) : (
           <ul className="space-y-3">
@@ -225,12 +225,12 @@ export function NotesLibraryPanel({ resources }: { resources: SavedResources }) 
 
   return (
     <section className={cardClass}>
-      <SectionHeader title="Saved notes" hint="Whiteboards you kept from your sessions" />
+      <SectionHeader title="Saved notes" hint="Whiteboards kept from your sessions" />
       <div className="mt-5">
         {count === 0 ? (
           <StudentEmpty
             title="No saved notes yet"
-            hint="During a session, use Copy or Download on the whiteboard to keep a board. Anything you tag for revision is counted here."
+            hint="During a session, use Copy or Download on the whiteboard to keep a board. Any board you tag for revision is counted here."
           />
         ) : (
           <div className="flex items-center gap-4 rounded-[12px] border border-art-mid/60 bg-art-base/40 p-4">
@@ -242,7 +242,7 @@ export function NotesLibraryPanel({ resources }: { resources: SavedResources }) 
                 {count}
               </p>
               <p className="mt-1 text-[14px] leading-[1.5] text-gray-300/70">
-                board{count === 1 ? "" : "s"} preserved across your sessions
+                whiteboard{count === 1 ? "" : "s"} saved across your sessions
               </p>
             </div>
           </div>
@@ -292,7 +292,7 @@ export function FlashcardPanel({ resources }: { resources: SavedResources }) {
       })
       .catch((caught: unknown) => {
         if (!cancelled) {
-          setLoaded({ nonce, cards: null, error: messageFor(caught, "Could not load your flashcards.") });
+          setLoaded({ nonce, cards: null, error: messageFor(caught, "Your flashcards could not be loaded.") });
         }
       });
 
@@ -309,7 +309,7 @@ export function FlashcardPanel({ resources }: { resources: SavedResources }) {
       setRevealed(null);
       setReviewError(null);
     } catch (caught: unknown) {
-      setReviewError(messageFor(caught, "Could not record that review."));
+      setReviewError(messageFor(caught, "That review could not be recorded."));
     } finally {
       setPending(null);
     }
@@ -325,7 +325,7 @@ export function FlashcardPanel({ resources }: { resources: SavedResources }) {
   return (
     <section className={cardClass}>
       <SectionHeader
-        title="Flashcard notebook"
+        title="Flashcards"
         hint={
           hasAny
             ? `${resources.flashcards_total} card${resources.flashcards_total === 1 ? "" : "s"} · ${due} due today`
@@ -336,8 +336,8 @@ export function FlashcardPanel({ resources }: { resources: SavedResources }) {
       <div className="mt-5 space-y-3">
         {!hasAny ? (
           <StudentEmpty
-            title="Your notebook is empty"
-            hint="The tutor adds a card whenever you pin something during a session. Cards come back on a spaced-repetition schedule, so the ones you keep forgetting show up more often."
+            title="No flashcards yet"
+            hint="The tutor adds a card whenever you pin something during a session. Cards return on a spaced-repetition schedule, so the ones you recall least often appear most often."
           />
         ) : error !== null ? (
           <StudentError
@@ -352,7 +352,7 @@ export function FlashcardPanel({ resources }: { resources: SavedResources }) {
         ) : cards.length === 0 ? (
           <StudentEmpty
             title="Nothing due today"
-            hint={`All ${resources.flashcards_total} of your cards are scheduled for a later day. Come back tomorrow.`}
+            hint={`All ${resources.flashcards_total} of your cards are scheduled for a later date.`}
           />
         ) : (
           cards.map((card) => {
@@ -384,7 +384,7 @@ export function FlashcardPanel({ resources }: { resources: SavedResources }) {
                           "!px-4 !py-1.5 !text-[14px] disabled:opacity-60",
                         )}
                       >
-                        I knew it
+                        I recalled this
                       </button>
                       <button
                         type="button"
@@ -395,7 +395,7 @@ export function FlashcardPanel({ resources }: { resources: SavedResources }) {
                           "!px-4 !py-1 !text-[14px] disabled:opacity-60",
                         )}
                       >
-                        Show me again
+                        Review again
                       </button>
                     </div>
                   </>
@@ -405,7 +405,7 @@ export function FlashcardPanel({ resources }: { resources: SavedResources }) {
                     onClick={() => setRevealed(card.id)}
                     className="mt-3 text-[14px] font-semibold text-lime-400 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300 focus-visible:ring-offset-2 focus-visible:ring-offset-art-base"
                   >
-                    Reveal answer
+                    Show answer
                   </button>
                 )}
               </div>
@@ -445,7 +445,7 @@ export function RevisionPanel({ resources }: { resources: SavedResources }) {
           setLoaded({
             nonce,
             rows: null,
-            error: messageFor(caught, "Could not load your revision schedule."),
+            error: messageFor(caught, "Your revision schedule could not be loaded."),
           });
         }
       });
@@ -462,7 +462,7 @@ export function RevisionPanel({ resources }: { resources: SavedResources }) {
   return (
     <section className={cardClass}>
       <SectionHeader
-        title="Up next for revision"
+        title="Scheduled revision"
         hint={hasAny ? `${resources.revisions_due_count} due` : undefined}
       />
 
@@ -470,7 +470,7 @@ export function RevisionPanel({ resources }: { resources: SavedResources }) {
         {!hasAny ? (
           <StudentEmpty
             title="Nothing scheduled"
-            hint="When you export a board you can tag it with a revision date. Those reminders land here on the day they come due."
+            hint="When you export a board you may tag it with a revision date. The reminder appears here on the date it falls due."
           />
         ) : error !== null ? (
           <StudentError message={error} onRetry={() => setNonce((n) => n + 1)} />

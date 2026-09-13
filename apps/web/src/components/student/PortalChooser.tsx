@@ -94,11 +94,11 @@ export function PortalChooser() {
       ) : (
         <>
           <h1 className="mt-10 text-balance font-display text-[32px] font-bold leading-[1.15] text-white sm:text-[40px]">
-            Where to, {firstName(state.me.full_name)}?
+            Study and assessment
           </h1>
           <p className="mt-3 max-w-xl text-[17px] leading-[1.6] text-gray-300">
-            Two places to be. Learn with the tutor, or sit an assessment — your progress carries
-            between them.
+            Two modules, one record: tutoring on your own syllabus, and the assessments set for your
+            semester. Your progress carries between them.
           </p>
 
           {state.context !== null ? (
@@ -118,15 +118,15 @@ export function PortalChooser() {
             <Door
               href="/dashboard"
               eyebrow="Study module"
-              title="Learn with your tutor"
-              body="A live voice session over your own syllabus, with the whiteboard drawn as you go. Up to 20 minutes of speaking time a day."
+              title="Live tutoring session"
+              body="A spoken session held strictly within your own syllabus, with the whiteboard drawn before the tutor speaks. Up to 20 minutes of speaking time each day."
               icon={<IconBoard className="h-6 w-6" />}
             />
             <Door
               href="/exams"
               eyebrow="Exam module"
-              title="Take an assessment"
-              body="Assignments, mid-term quizzes and semester exams drawn from your semester. Answers and rationale are shown the moment you submit."
+              title="Assessments for your semester"
+              body="Assignments, mid-term quizzes and semester exams drawn from your semester. Your answers and the reasoning behind them are shown on submission."
               icon={<IconTarget className="h-6 w-6" />}
             />
           </div>
@@ -134,12 +134,6 @@ export function PortalChooser() {
       )}
     </main>
   );
-}
-
-function firstName(fullName: string | null): string {
-  if (!fullName) return "student";
-  const first = fullName.trim().split(/\s+/)[0];
-  return first || "student";
 }
 
 /**

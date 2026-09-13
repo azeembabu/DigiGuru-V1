@@ -198,6 +198,9 @@ pub struct GateMetrics {
     pub board_errors: u64,
     /// Control messages naming an unknown turn.
     pub unknown_seq_messages: u64,
+    /// Turns opened with no board at all (`open_implicit_turn`) — a
+    /// prompt-quality signal, not an NN-1 violation.
+    pub implicit_turns: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -382,6 +385,42 @@ impl<C: Clock> SyncGate<C> {
             dropped,
             hold_deadline_ms: deadline,
         })
+    }
+
+    /// Opens a turn with **no board at all**, audio flowing immediately.
+    ///
+    /// For the one case NN-1 does not cover: the model spoke without calling
+    /// `board_ops` first. That is a prompt-quality defect, not a sync
+    /// violation — nothing was reordered, because there was never a board to
+    /// get ahead of. Silently dropping the audio (the alternative) would mean
+    /// the tutor sometimes says nothing at all, which is worse than an
+    /// occasional turn with no visual. The caller is expected to log this
+    /// happening; the gate itself only counts it.
+    ///
+    /// Distinct from `on_board_error`'s text-fallback: that degrades a turn
+    /// that DID have a board attempt and failed. This is for a turn that never
+    /// had one.
+    pub fn open_implicit_turn(&mut self, seq: TurnSeq) -> Result<(), SyncGateError> {
+        if let Some(last) = self.last_seq {
+            if seq <= last {
+                return Err(SyncGateError::NonMonotonicSeq { got: seq, last });
+            }
+        }
+
+        let now = self.clock.now_ms();
+        self.turns.insert(
+            seq.0,
+            Turn {
+                state: TurnState::Open,
+                forwarded_at_ms: now,
+                deadline_ms: now,
+                buffer: VecDeque::new(),
+            },
+        );
+        self.last_seq = Some(seq);
+        self.metrics.implicit_turns += 1;
+        self.retire_old_turns();
+        Ok(())
     }
 
     /// Offer one audio frame for turn `seq`.

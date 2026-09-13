@@ -23,3 +23,11 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
+
+# The real Gemini Live client (Phase 3). `tokio-tungstenite` pins the same
+# 0.29 already in the lockfile via axum, and reuses the rustls stack sqlx
+# already brings in -- deliberately not a second TLS implementation.
+tokio-tungstenite = { version = "0.29", features = ["rustls-tls-webpki-roots"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+# Live carries PCM16 audio and inline blobs as base64 on a JSON frame.
+base64 = { workspace = true }

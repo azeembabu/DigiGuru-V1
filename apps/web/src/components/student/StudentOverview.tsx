@@ -62,7 +62,7 @@ export function StudentOverview() {
           setState({
             status: "error",
             message:
-              "This account has no student record, so there is no study dashboard to show. Admin accounts use the console instead.",
+              "This account has no student record, so there is no study dashboard to show. Administrator accounts use the console instead.",
             retryable: false,
           });
           return;
@@ -73,7 +73,7 @@ export function StudentOverview() {
           message:
             caught instanceof SchemaError || caught instanceof ApiError
               ? caught.message
-              : "Something went wrong loading your dashboard.",
+              : "Your dashboard could not be loaded. Please try again.",
           retryable: !(caught instanceof SchemaError),
         });
       });
@@ -108,7 +108,7 @@ export function StudentOverview() {
   if (state.status === "error") {
     return (
       <StudentError
-        title="We couldn’t load your study dashboard"
+        title="Your study dashboard could not be loaded"
         message={state.message}
         onRetry={state.retryable ? retry : undefined}
       />

@@ -55,10 +55,14 @@ pub use sync_gate::{
 pub mod board;
 pub mod error;
 pub mod gemini_client;
+pub mod gemini_wire;
 pub mod turn_fsm;
 
 pub use error::LiveError;
 pub use gemini_client::{
     GeminiLiveSessionClient, LiveModelEvent, LiveSessionClient, StubLiveSessionClient,
+};
+pub use gemini_wire::{
+    GeminiLiveConfig, TranscriptSource, INPUT_SAMPLE_RATE_HZ, OUTPUT_SAMPLE_RATE_HZ,
 };
 pub use turn_fsm::TurnPhase;

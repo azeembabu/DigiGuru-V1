@@ -10,6 +10,10 @@ name = "rag"
 path = "src/lib.rs"
 
 [dependencies]
+# The Gemini embedding endpoint is plain REST, and reqwest is already in the
+# tree via qdrant-client, so this adds no new transitive weight. `rustls-tls`
+# rather than native-tls to stay on the one TLS stack the workspace already uses.
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls", "query"] }
 dg-core = { workspace = true }
 dg-db = { workspace = true }
 tokio = { workspace = true }
