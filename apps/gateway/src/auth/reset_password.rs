@@ -12,6 +12,7 @@ use dg_db::models::{auth_sessions, password_resets, users};
 
 use super::password::hash_password;
 use super::tokens::hash_token;
+use crate::extractors::JsonBody;
 use crate::state::AppState;
 
 #[derive(Debug, Deserialize, Validate)]
@@ -28,7 +29,7 @@ pub struct ResetPasswordResponse {
 
 pub async fn reset_password(
     State(state): State<AppState>,
-    Json(payload): Json<ResetPasswordRequest>,
+    JsonBody(payload): JsonBody<ResetPasswordRequest>,
 ) -> Result<Json<ResetPasswordResponse>, PublicError> {
     payload
         .validate()

@@ -15,7 +15,7 @@ use dg_core::{ProgramId, PublicError, Role, UserId, UserStatus};
 use dg_db::models::{admins, sub_admin_scopes, users};
 
 use crate::auth::password::hash_password;
-use crate::extractors::AuthenticatedActor;
+use crate::extractors::{AuthenticatedActor, JsonBody};
 use crate::me::identity::ScopeSummary;
 use crate::state::AppState;
 
@@ -121,7 +121,7 @@ pub struct CreateAdminResponse {
 pub async fn create_admin(
     State(state): State<AppState>,
     AuthenticatedActor(actor): AuthenticatedActor,
-    Json(payload): Json<CreateAdminRequest>,
+    JsonBody(payload): JsonBody<CreateAdminRequest>,
 ) -> Result<Json<CreateAdminResponse>, PublicError> {
     require_super_admin(&actor)?;
     payload.validate().map_err(|_| PublicError::validation("email", "invalid admin fields"))?;
@@ -182,7 +182,7 @@ pub async fn set_user_status(
     State(state): State<AppState>,
     AuthenticatedActor(actor): AuthenticatedActor,
     Path(id): Path<Uuid>,
-    Json(payload): Json<SetStatusRequest>,
+    JsonBody(payload): JsonBody<SetStatusRequest>,
 ) -> Result<(), PublicError> {
     require_super_admin(&actor)?;
 
@@ -217,7 +217,7 @@ pub async fn add_scope(
     State(state): State<AppState>,
     AuthenticatedActor(actor): AuthenticatedActor,
     Path(id): Path<Uuid>,
-    Json(payload): Json<ScopeRequest>,
+    JsonBody(payload): JsonBody<ScopeRequest>,
 ) -> Result<(), PublicError> {
     require_super_admin(&actor)?;
 

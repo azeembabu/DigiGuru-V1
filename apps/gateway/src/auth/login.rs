@@ -18,7 +18,7 @@ use super::cookies::{access_cookie, refresh_cookie, REFRESH_TOKEN_TTL_DAYS};
 use super::jwt::issue_access_token;
 use super::password::verify_password;
 use super::tokens::{generate_token, hash_token};
-use crate::extractors::ClientIp;
+use crate::extractors::{ClientIp, JsonBody};
 use crate::state::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -39,7 +39,7 @@ pub async fn login(
     ClientIp(ip_address): ClientIp,
     headers: HeaderMap,
     jar: CookieJar,
-    Json(payload): Json<LoginRequest>,
+    JsonBody(payload): JsonBody<LoginRequest>,
 ) -> Result<(CookieJar, Json<LoginResponse>), PublicError> {
     // Deliberately the same error for "no such email" and "wrong password"
     // — an auth endpoint must not leak which one it was.

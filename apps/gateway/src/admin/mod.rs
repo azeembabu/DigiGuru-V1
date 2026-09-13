@@ -19,10 +19,13 @@ pub mod enrollments;
 pub mod exams;
 pub mod lscs;
 pub mod programs;
+pub mod question_import;
+pub mod questions;
 pub mod safety_incidents;
 pub mod semesters;
 pub mod sessions;
 pub mod stats;
+pub mod student_reports;
 pub mod students;
 pub mod users;
 
@@ -43,24 +46,57 @@ use crate::state::AppState;
 /// large, which is a DoS surface, not a fix.
 pub fn router(max_upload_bytes: usize) -> Router<AppState> {
     Router::new()
-        .route("/programs", post(programs::create_program).get(programs::list_programs))
-        .route("/programs/{id}", get(programs::get_program).patch(programs::update_program))
+        .route(
+            "/programs",
+            post(programs::create_program).get(programs::list_programs),
+        )
+        .route(
+            "/programs/{id}",
+            get(programs::get_program).patch(programs::update_program),
+        )
         .route("/semesters", post(semesters::create_semester))
-        .route("/semesters/{id}", get(semesters::get_semester).patch(semesters::update_semester))
-        .route("/programs/{program_id}/semesters", get(semesters::list_semesters_for_program))
+        .route(
+            "/semesters/{id}",
+            get(semesters::get_semester).patch(semesters::update_semester),
+        )
+        .route(
+            "/programs/{program_id}/semesters",
+            get(semesters::list_semesters_for_program),
+        )
         .route("/courses", post(courses::create_course))
-        .route("/courses/{id}", get(courses::get_course).patch(courses::update_course))
-        .route("/semesters/{semester_id}/courses", get(courses::list_courses_for_semester))
-        .route("/programs/{program_id}/courses", get(courses::list_courses_for_program))
+        .route(
+            "/courses/{id}",
+            get(courses::get_course).patch(courses::update_course),
+        )
+        .route(
+            "/semesters/{semester_id}/courses",
+            get(courses::list_courses_for_semester),
+        )
+        .route(
+            "/programs/{program_id}/courses",
+            get(courses::list_courses_for_program),
+        )
         .route("/lscs", post(lscs::create_lsc).get(lscs::list_lscs))
         .route("/lscs/{id}", patch(lscs::update_lsc))
         .route("/students", get(students::list_students))
         .route("/students/{id}", get(students::get_student))
-        .route("/students/{id}/academic", patch(students::update_student_academic))
-        .route("/students/{id}/current-block", patch(students::set_current_block))
+        .route(
+            "/students/{id}/academic",
+            patch(students::update_student_academic),
+        )
+        .route(
+            "/students/{id}/current-block",
+            patch(students::set_current_block),
+        )
         .route("/blocks", post(blocks::create_block))
-        .route("/blocks/{id}", get(blocks::get_block).patch(blocks::update_block))
-        .route("/courses/{course_id}/blocks", get(blocks::list_blocks_for_course))
+        .route(
+            "/blocks/{id}",
+            get(blocks::get_block).patch(blocks::update_block),
+        )
+        .route(
+            "/courses/{course_id}/blocks",
+            get(blocks::list_blocks_for_course),
+        )
         .route(
             "/blocks/{block_id}/documents",
             post(documents::upload)
@@ -73,8 +109,43 @@ pub fn router(max_upload_bytes: usize) -> Router<AppState> {
         // `exam -> block -> course -> program_id`.
         .route("/exams", post(exams::create_exam))
         .route("/exams/{id}", get(exams::get_exam))
-        .route("/exams/{exam_id}/attempts", get(exams::list_attempts_for_exam))
+        .route(
+            "/exams/{exam_id}/attempts",
+            get(exams::list_attempts_for_exam),
+        )
         .route("/blocks/{block_id}/exams", get(exams::list_exams_for_block))
+        // The MCQ bank the exam module samples from. Scoped
+        // `question -> block -> course -> program_id`, like exams.
+        .route(
+            "/question-pool",
+            post(questions::create_question).get(questions::list_questions),
+        )
+        .route(
+            "/question-pool/bulk",
+            // Its own body cap, like the document upload's: a 500-row import is
+            // far larger than axum's 2 MiB default allows, and raising that
+            // default globally would widen the DoS surface on `/auth/*`.
+            post(questions::bulk_import_questions)
+                .layer(DefaultBodyLimit::max(questions::MAX_BULK_IMPORT_BYTES)),
+        )
+        .route("/question-pool/{id}", patch(questions::update_question))
+        // Per-course active counts for one program, empty courses included, so
+        // the Program -> Semester -> Course navigation can show which pools are
+        // still empty in one request instead of one per course.
+        .route(
+            "/programs/{program_id}/question-pool-counts",
+            get(questions::list_pool_counts),
+        )
+        // Student Reports: the same `exam_attempts` rows the student's own
+        // submit writes, scoped like `/analytics`. No second store.
+        .route(
+            "/student-reports",
+            get(student_reports::list_student_reports),
+        )
+        .route(
+            "/students/{student_id}/report",
+            get(student_reports::get_student_report),
+        )
         .route("/stats", get(stats::get_stats))
         .route("/analytics", get(analytics::get_analytics))
         // Drill-downs behind the dashboard tiles: each opens the records
@@ -82,11 +153,20 @@ pub fn router(max_upload_bytes: usize) -> Router<AppState> {
         .route("/enrollments", get(enrollments::list_enrollments))
         .route("/sessions", get(sessions::list_sessions))
         .route("/board-events", get(board_events::list_board_events))
-        .route("/safety-incidents", get(safety_incidents::list_safety_incidents))
+        .route(
+            "/safety-incidents",
+            get(safety_incidents::list_safety_incidents),
+        )
         .route("/users", get(users::list_users).post(users::create_admin))
         .route("/users/{id}/status", patch(users::set_user_status))
-        .route("/users/{id}/scopes", get(users::list_scopes).post(users::add_scope))
-        .route("/users/{id}/scopes/{program_id}", axum::routing::delete(users::remove_scope))
+        .route(
+            "/users/{id}/scopes",
+            get(users::list_scopes).post(users::add_scope),
+        )
+        .route(
+            "/users/{id}/scopes/{program_id}",
+            axum::routing::delete(users::remove_scope),
+        )
 }
 
 /// Whether a student has a live `learning_sessions` row.

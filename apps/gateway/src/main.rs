@@ -8,6 +8,7 @@ mod reference;
 mod state;
 mod student;
 mod validation;
+mod ws;
 
 use std::net::SocketAddr;
 use std::time::Duration;
@@ -32,6 +33,20 @@ async fn main() {
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
         )
         .init();
+
+    // Pick the rustls crypto provider for the whole process, before anything can
+    // open a TLS connection.
+    //
+    // Both `ring` and `aws-lc-rs` are in the dependency tree — sqlx pulls one,
+    // qdrant-client/reqwest the other — and rustls 0.23 will not guess between
+    // two. Left unset it panics at the FIRST handshake, which in practice is the
+    // Gemini Live connection inside a student's session: the gateway starts
+    // cleanly, serves REST all day, and then dies the moment someone opens the
+    // classroom. Observed exactly that before this call existed.
+    //
+    // `install_default` returns Err only if a provider is already installed,
+    // which is not a failure worth aborting startup for.
+    let _ = rustls::crypto::ring::default_provider().install_default();
 
     let config = Config::from_env().unwrap_or_else(|err| {
         // A missing required env var is a startup-abort condition, per
@@ -79,10 +94,21 @@ fn build_router(state: AppState) -> Router {
         .nest("/reference", reference::router())
         .nest("/me", me::router())
         .nest("/student", student::router())
+        // The WS upgrade itself is a sibling of `/api/v1` (below), but minting
+        // the ticket that authenticates it is an ordinary cookie-authenticated
+        // REST call, so it belongs here.
+        .route(
+            "/ws/ticket",
+            axum::routing::post(ws::ticket::create_ws_ticket),
+        )
         .nest("/admin", admin::router(max_upload_bytes));
 
     Router::new()
         .route("/health", axum::routing::get(health::health))
+        // `/ws/session` is a sibling of `/api/v1`, not nested under it — WS is
+        // a distinct transport (query-param token, not the cookie used by
+        // REST), per `.claude/rules/api-conventions.md` "WebSocket".
+        .route("/ws/session", axum::routing::get(ws::upgrade_handler))
         .nest("/api/v1", api_v1)
         .layer(TraceLayer::new_for_http())
         // CORS: an explicit origin allow-list, never `Any`. `apps/web` now

@@ -59,6 +59,8 @@ const NAV: NavItem[] = [
   { href: "/admin/students", label: "Students" },
   { href: "/admin/programs", label: "Programs" },
   { href: "/admin/lscs", label: "Learner Support Centres" },
+  { href: "/admin/question-pool", label: "Question pool" },
+  { href: "/admin/student-reports", label: "Student reports" },
   { href: "/admin/users", label: "Admin users", superAdminOnly: true },
 ];
 

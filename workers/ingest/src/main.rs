@@ -88,7 +88,8 @@ async fn main() -> Result<()> {
         return Ok(());
     }
 
-    let qdrant = qdrant_client::Qdrant::from_url(&qdrant_url)
+    // Same REST-vs-gRPC port distinction as the gateway; see `rag::qdrant::grpc_url`.
+    let qdrant = qdrant_client::Qdrant::from_url(&rag::qdrant::grpc_url(&qdrant_url))
         .build()
         .context("building the Qdrant client")?;
     let redis_client = redis::Client::open(redis_url).context("opening the Redis client")?;
@@ -142,8 +143,19 @@ async fn main() -> Result<()> {
 fn select_embedder() -> Box<dyn Embedder> {
     match std::env::var("GEMINI_API_KEY") {
         Ok(key) if !key.trim().is_empty() => {
-            tracing::info!("using the Gemini embedder");
-            Box::new(rag::embed::GeminiEmbedder { api_key: key })
+            // `for_documents`: ingestion stores passages, so it must use the
+            // RETRIEVAL_DOCUMENT task type. The query side uses RETRIEVAL_QUERY.
+            // Mixing them silently degrades retrieval with no error anywhere.
+            match rag::embed::GeminiEmbedder::for_documents(key) {
+                Ok(embedder) => {
+                    tracing::info!("using the Gemini embedder (RETRIEVAL_DOCUMENT)");
+                    Box::new(embedder)
+                }
+                Err(err) => {
+                    tracing::error!(%err, "could not build the Gemini embedder; falling back to the stub");
+                    Box::new(rag::embed::StubEmbedder)
+                }
+            }
         }
         _ => {
             tracing::warn!(

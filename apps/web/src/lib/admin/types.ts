@@ -235,3 +235,163 @@ export type SafetyIncident = {
   excerpt: string;
   created_at: string;
 };
+
+// ------------------------------------------------------------ question pool
+//
+// AMENDMENT 1 of the exam-module contract. A question hangs off a **block**,
+// exactly like `exams` and `documents`; program and semester are reached
+// through `blocks -> courses` and are deliberately NOT columns here — a second
+// copy of `program_id` is a second thing to keep true. The list response
+// denormalises that ancestry for display only.
+
+export type AssessmentType = "assignment" | "mid_term_quiz" | "semester_exam";
+export type DifficultyLevel = "beginner" | "intermediate" | "advanced";
+export type QuestionStatus = "active" | "retired";
+
+export const ASSESSMENT_TYPES: { value: AssessmentType; label: string }[] = [
+  { value: "assignment", label: "Assignment" },
+  { value: "mid_term_quiz", label: "Mid-term quiz" },
+  { value: "semester_exam", label: "Semester exam" },
+];
+
+export const DIFFICULTY_LEVELS: { value: DifficultyLevel; label: string }[] = [
+  { value: "beginner", label: "Beginner" },
+  { value: "intermediate", label: "Intermediate" },
+  { value: "advanced", label: "Advanced" },
+];
+
+/**
+ * One pooled question.
+ *
+ * `correct_option_index` and `explanation` are present here because this is the
+ * ADMIN shape — the student-facing paper has no field for either until the
+ * attempt is submitted.
+ *
+ * AMENDMENT A2.1: the pool is built per COURSE, so `course_id` is the required
+ * link and `block_id` became the OPTIONAL unit/module pointer — hence the three
+ * nullable block fields. `course_name` and `semester_number` are optional
+ * because the shipped gateway response does not carry them; the UI labels a row
+ * from `course_code` and only adds the longer names when they are present,
+ * rather than rendering "Sem undefined".
+ */
+export type PoolQuestion = {
+  id: string;
+  block_id: string | null;
+  block_no: number | null;
+  block_title: string | null;
+  course_id: string;
+  course_code: string;
+  course_name?: string;
+  semester_id: string;
+  semester_number?: number;
+  program_id: string;
+  topic: string;
+  question_text: string;
+  /** Exactly four after AMENDMENT A1.1 (A/B/C/D). */
+  options: string[];
+  correct_option_index: number;
+  explanation: string;
+  assessment_type: AssessmentType;
+  difficulty_level: DifficultyLevel;
+  status: QuestionStatus;
+  created_by: string;
+  created_at: string;
+};
+
+// ----------------------------------------------------------- student reports
+//
+// AMENDMENT A2.4. The academic record behind a student's exam attempts.
+
+export type AttemptStatus = "in_progress" | "submitted" | "graded" | "abandoned";
+
+export const ATTEMPT_STATUSES: { value: AttemptStatus; label: string }[] = [
+  { value: "in_progress", label: "In progress" },
+  { value: "submitted", label: "Submitted" },
+  { value: "graded", label: "Graded" },
+  { value: "abandoned", label: "Abandoned" },
+];
+
+/**
+ * One attempt, denormalised enough to render a row without a second request.
+ *
+ * `score`, `percentage` and `time_spent_seconds` are `null` rather than `0`
+ * until there is a real measurement: an ungraded attempt shown as 0% would
+ * misreport it as a failed one, and 0 seconds would claim it took no time.
+ */
+export type StudentReportRow = {
+  attempt_id: string;
+  student_id: string;
+  student_name: string;
+  roll_number: string;
+  program_id: string;
+  program_name: string;
+  semester_number: number;
+  course_id: string;
+  course_code: string;
+  course_name: string;
+  exam_id: string;
+  exam_title: string;
+  assessment_type: AssessmentType;
+  attempt_no: number;
+  total_questions: number;
+  answered_questions: number;
+  correct_answers: number;
+  score: number | null;
+  max_score: number;
+  percentage: number | null;
+  /** Derived `submitted_at - started_at`; `null` while in progress. */
+  time_spent_seconds: number | null;
+  status: AttemptStatus;
+  started_at: string;
+  submitted_at: string | null;
+  weak_topics: string[];
+};
+
+export type StudentReportCourse = {
+  course_id: string;
+  course_code: string;
+  course_name: string;
+  attempts: number;
+  average_percentage: number | null;
+};
+
+export type StudentReportWeakTopic = {
+  topic: string;
+  missed_count: number;
+};
+
+export type StudentReport = {
+  student_id: string;
+  student_name: string;
+  roll_number: string;
+  program_name: string;
+  semester_number: number;
+  lsc_code: string | null;
+  attempts_total: number;
+  attempts_graded: number;
+  /** `null` with nothing to average — never 0. */
+  average_percentage: number | null;
+  best_percentage: number | null;
+  total_time_spent_seconds: number;
+  by_course: StudentReportCourse[];
+  /** Descending by `missed_count`, as the gateway orders it. */
+  weak_topics: StudentReportWeakTopic[];
+};
+
+/**
+ * One course's pool size, from
+ * `GET /admin/programs/{program_id}/question-pool-counts`.
+ *
+ * Unpaginated and includes courses with an empty pool, which is the whole point
+ * — "which courses still have nothing" cannot be answered by a list that omits
+ * them. `active_questions` counts `status='active'` only, across every
+ * assessment type.
+ */
+export type QuestionPoolCount = {
+  course_id: string;
+  course_code: string;
+  course_name: string;
+  semester_id: string;
+  semester_number: number;
+  active_questions: number;
+};

@@ -20,16 +20,39 @@ name = "create_admin"
 path = "src/bin/create_admin.rs"
 
 [dependencies]
+# Direct dependency for ONE reason: installing the process-level rustls
+# CryptoProvider (see `main.rs`). Both `ring` and `aws-lc-rs` end up in the tree
+# (sqlx pulls one, qdrant-client/reqwest the other), and rustls 0.23 refuses to
+# guess between them — it panics at the first TLS handshake instead, which is
+# the Gemini Live connection. Picking one here is what makes that deterministic.
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 dg-core = { workspace = true }
 dg-db = { workspace = true }
+dg-live = { workspace = true }
+# Read-only access to the NN-3 daily voice ledger for the student dashboard's
+# quota ring. The gateway reads the ledger here (`QuotaStore::get_ms`) and
+# never charges it: only the socket task that owns a live session may do that.
+dg-quota = { workspace = true }
+# NN-4 grounding for the classroom socket: `ws::grounding` runs the retrieval
+# pipeline (`rag::retrieve`) and reads the block's prompt-cached preamble, so
+# the tutor's system instruction is built from retrieved curriculum only. The
+# gateway is the layer that has the student's academic context, which is why
+# the grounding lives here and not in `crates/live`.
+dg-rag = { workspace = true }
+# Only to construct the handle `rag::retrieve::retrieve` takes. No query is
+# built here -- the mandatory four-dimension filter is `rag`'s to enforce.
+qdrant-client = { workspace = true }
 
 # The `seed_dev` dev-only seeder writes rows directly with compile-time checked
 # `sqlx::query!` macros; the gateway proper goes through `dg-db`.
 sqlx = { workspace = true }
 
 tokio = { workspace = true }
-axum = { workspace = true }
+# `ws` enables axum's built-in WebSocket upgrade extractor/`Message` type,
+# used by `src/ws` (Phase 3, `.claude/rules/api-conventions.md` "WebSocket").
+axum = { workspace = true, features = ["ws"] }
 axum-extra = { workspace = true }
+bytes = "1"
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
@@ -59,6 +82,16 @@ time = "0.3"
 # and never echoed to the terminal; `rpassword` is the standard minimal
 # crate for exactly that and pulls in no runtime.
 rpassword = "7"
+
+# Bulk question-pool import formats (`.claude/rules/api-conventions.md`,
+# "Bulk import"). Each is here for exactly one parser and nothing else:
+# `calamine` reads the `.xlsx` worksheet (pure-Rust, no native Excel
+# dependency); `zip` opens the `.docx` OOXML container; `quick-xml` pulls the
+# one table out of `word/document.xml`. Writing an xlsx shared-strings reader
+# by hand was the alternative and is a silent-misparse risk on an answer key.
+calamine = "0.26"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+quick-xml = "0.37"
 
 [dev-dependencies]
 # `tower::ServiceExt::oneshot` drives the router in `me::tests` without a

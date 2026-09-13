@@ -11,6 +11,7 @@ use dg_core::PublicError;
 use dg_db::models::{password_resets, users};
 
 use super::tokens::{generate_token, hash_token};
+use crate::extractors::JsonBody;
 use crate::state::AppState;
 
 const RESET_TOKEN_TTL_MINUTES: i64 = 60;
@@ -27,7 +28,7 @@ pub struct ForgotPasswordResponse {
 
 pub async fn forgot_password(
     State(state): State<AppState>,
-    Json(payload): Json<ForgotPasswordRequest>,
+    JsonBody(payload): JsonBody<ForgotPasswordRequest>,
 ) -> Result<Json<ForgotPasswordResponse>, PublicError> {
     if let Some(user) = users::find_by_email(&state.pool, &payload.email)
         .await

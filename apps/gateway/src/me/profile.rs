@@ -4,16 +4,18 @@
 //! `#[serde(deny_unknown_fields)]` so a request carrying any key other than
 //! `full_name`/`phone_number` (e.g. `program_id`) is rejected as a `400`
 //! validation error at deserialization time — it is never silently dropped
-//! (`IMPLEMENTATION_PLAN.md` §4.1 item 3). Academic fields are admin-only and
+//! (`IMPLEMENTATION_PLAN.md` §4.1 item 3). That `400` is the documented envelope
+//! because the body is read through `extractors::JsonBody`; with a bare
+//! `axum::Json` it was axum's raw plaintext `422`. Academic fields are admin-only and
 //! have no path through this handler at all.
 
-use axum::{extract::State, Json};
+use axum::extract::State;
 use serde::Deserialize;
 
 use dg_core::{Capability, PublicError};
 use dg_db::models::students;
 
-use crate::extractors::AuthenticatedActor;
+use crate::extractors::{AuthenticatedActor, JsonBody};
 use crate::state::AppState;
 use crate::validation::normalize_indian_phone;
 
@@ -27,7 +29,7 @@ pub struct ProfileUpdateRequest {
 pub async fn update_profile(
     State(state): State<AppState>,
     AuthenticatedActor(actor): AuthenticatedActor,
-    Json(payload): Json<ProfileUpdateRequest>,
+    JsonBody(payload): JsonBody<ProfileUpdateRequest>,
 ) -> Result<(), PublicError> {
     actor.require(Capability::UpdateOwnProfile)?;
 

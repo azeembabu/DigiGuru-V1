@@ -4,7 +4,15 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
-import { IconBoard, IconBook, IconClose, IconMenu, IconShield, IconTarget } from "@/components/icons";
+import {
+  IconBoard,
+  IconBook,
+  IconClose,
+  IconMenu,
+  IconShield,
+  IconSparkle,
+  IconTarget,
+} from "@/components/icons";
 import { Logo } from "@/components/ui/Logo";
 
 type NavItem = {
@@ -25,12 +33,16 @@ const sections: { label: string; items: NavItem[] }[] = [
     items: [
       { href: "/dashboard", label: "Overview", icon: IconTarget },
       { href: "/classroom", label: "Classroom", icon: IconBoard },
+      { href: "/exams", label: "Exams", icon: IconSparkle },
       { href: "/dashboard#enrolment", label: "Enrolment", icon: IconBook, anchor: true },
     ],
   },
   {
     label: "Settings",
-    items: [{ href: "/dashboard#security", label: "Security", icon: IconShield, anchor: true }],
+    items: [
+      { href: "/portal", label: "Switch module", icon: IconTarget },
+      { href: "/dashboard#security", label: "Security", icon: IconShield, anchor: true },
+    ],
   },
 ];
 

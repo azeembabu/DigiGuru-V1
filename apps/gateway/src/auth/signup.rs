@@ -14,6 +14,7 @@ use dg_core::{FieldError, LscId, ProgramId, PublicError, Role, SemesterId};
 use dg_db::models::{lscs, programs, semesters, students, users};
 
 use crate::auth::password::hash_password;
+use crate::extractors::JsonBody;
 use crate::state::AppState;
 use crate::validation::{normalize_indian_phone, validate_roll_number};
 
@@ -40,7 +41,7 @@ pub struct SignupResponse {
 
 pub async fn signup(
     State(state): State<AppState>,
-    Json(payload): Json<SignupRequest>,
+    JsonBody(payload): JsonBody<SignupRequest>,
 ) -> Result<(StatusCode, Json<SignupResponse>), PublicError> {
     let mut errors: Vec<FieldError> = Vec::new();
 

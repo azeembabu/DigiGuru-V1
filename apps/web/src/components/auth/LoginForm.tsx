@@ -30,7 +30,9 @@ type LoginResponse = {
  */
 function destinationFor(role: string, next: string | null): string {
   const isAdminRole = role === "super_admin" || role === "sub_admin";
-  const home = isAdminRole ? "/admin" : "/dashboard";
+  // Students land on the post-login router (`/portal`), which offers the two
+  // modules; admins go straight to the console, which is their only surface.
+  const home = isAdminRole ? "/admin" : "/portal";
 
   if (!next || !next.startsWith("/") || next.startsWith("//")) return home;
   // Never bounce a student into the console just because the link said so.

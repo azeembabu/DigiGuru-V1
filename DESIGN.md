@@ -199,6 +199,67 @@ to the marketing hero's mood every time a student enters it.
 
 ---
 
+## 7.1 Responsive / Mobile Compatibility
+
+Every surface in §7 must work down to a 360px-wide phone viewport, not just degrade gracefully —
+mobile is the primary device for most students, not a fallback.
+
+### Breakpoints (Tailwind defaults, used as-is — no custom scale)
+
+| Token | Min width | Applies to |
+|---|---|---|
+| *(base, no prefix)* | 0px | Phone portrait — the default, unprefixed styles. Design mobile-first: write the phone layout as the base rule, then override up. |
+| `sm:` | 640px | Phone landscape / small tablet |
+| `md:` | 768px | Tablet portrait |
+| `lg:` | 1024px | Tablet landscape / small laptop — marketing nav switches from hamburger to horizontal here |
+| `xl:` | 1280px | Desktop — the compositions in §7 (hero + portrait glow, floating badges) reach full size here |
+
+### Typography scale-down
+
+The desktop type scale in §2 is too large on a 360–414px viewport. Fluid-scale the two display
+tokens with `clamp()`; everything `heading-lg` and below is unchanged (already sized for mobile):
+
+| Token | Mobile (base) | Desktop (`lg:` and up) |
+|---|---|---|
+| `display-lg` | `clamp(32px, 9vw, 56px)` / 1.1 | 56px / 1.05 |
+| `display-md` | `clamp(26px, 6vw, 40px)` / 1.15 | 40px / 1.1 |
+
+The two-tone headline rule (§2) still applies at every size — the emphasized word/phrase never
+wraps onto its own line if avoidable; keep it attached to an adjacent word with `&nbsp;` if a break
+would isolate it.
+
+### Layout rules by surface
+
+- **Marketing hero (`/`)**: single-column, stacked (headline → stat row → CTA pair → portrait) below
+  `lg:`; the side-by-side headline/portrait composition only assembles at `lg:` and above. Floating
+  decorative badges (§4) are hidden below `md:` — they compete with limited width and add no
+  information.
+- **Nav (§5.3)**: a hamburger/menu icon (`lime-400` on dark) replaces the horizontal link row below
+  `lg:`, opening a full-height dark overlay panel (`ink-950` at 96% opacity) with the same links
+  stacked at `heading-md` size, plus the CTA pair pinned to the bottom of the panel.
+- **Stat row (§5.2)**: 3-across on desktop becomes a horizontal scroll-snap row on mobile (not a
+  vertical stack — stacking triples the hero's height) — `overflow-x-auto` with `scroll-snap-type: x
+  mandatory`, no visible scrollbar, each stat card `snap-align: start`.
+- **Cards/grids (feature lists, testimonials, admin tables)**: `1` column below `sm:`, `2` at `sm:`,
+  `3`+ at `lg:`. Never rely on `auto-fit`/`auto-fill` grid alone without an explicit mobile
+  column-count override — those can produce a single very-wide column on a narrow viewport that
+  looks broken rather than intentional.
+- **Classroom (live session)**: the whiteboard canvas is the dominant element at every size; below
+  `lg:`, the transcript/controls that would sit beside it on desktop move below it in document order,
+  never overlapping the canvas.
+- **Buttons/touch targets**: minimum 44×44px hit area on any breakpoint below `lg:` (WCAG 2.5.5 /
+  iOS HIG), even where the visual button is smaller — pad with invisible touch area if needed, don't
+  shrink the visible pill below `radius-full` proportions to hit a target size.
+
+### Images & fonts on mobile
+
+- Portrait/hero imagery (§4) uses `srcset`/`sizes` so a phone never downloads the desktop-resolution
+  asset — generate at minimum 640px and 1280px widths.
+- Font loading (§9.3): Malayalam subset loads only on curriculum routes regardless of viewport — this
+  rule is about route, not device, and already minimizes mobile payload as a side effect.
+
+---
+
 ## 8. Accessibility Notes
 
 - `lime-400` on `white` fails WCAG AA for text ≤ 18px — restrict pure `lime-400` to large

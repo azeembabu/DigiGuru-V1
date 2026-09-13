@@ -36,3 +36,33 @@ pub use sync_gate::{
     AckOutcome, AudioDisposition, BoardOpsAccepted, DroppedOp, GateMetrics, ReleaseReason,
     ReleasedAudio, SyncGate, SyncGateConfig, SyncGateError, TurnSeq, HOLD_MAX_MS,
 };
+
+// ---------------------------------------------------------------------------
+// Merged from main (the other developer's parallel Phase 3 pass).
+//
+// Both branches implemented NN-1 independently. `sync_gate` here is the
+// injected-clock version with the fuller test suite; the Gemini client, turn
+// FSM and legacy board schema below come from main and are kept, since nothing
+// in this crate duplicates them.
+//
+// `board::BoardOp` and `ops::BoardOp` are two different types for the same
+// protocol. `ops` is the one `SyncGate` validates against and the one exported
+// at the crate root; `board` stays reachable by path for `gemini_client`, and
+// is NOT re-exported, so a caller cannot pick the wrong `BoardOp` by accident.
+// Collapsing the two is a follow-up, not a merge-time change.
+// ---------------------------------------------------------------------------
+
+pub mod board;
+pub mod error;
+pub mod gemini_client;
+pub mod gemini_wire;
+pub mod turn_fsm;
+
+pub use error::LiveError;
+pub use gemini_client::{
+    GeminiLiveSessionClient, LiveModelEvent, LiveSessionClient, StubLiveSessionClient,
+};
+pub use gemini_wire::{
+    GeminiLiveConfig, TranscriptSource, INPUT_SAMPLE_RATE_HZ, OUTPUT_SAMPLE_RATE_HZ,
+};
+pub use turn_fsm::TurnPhase;

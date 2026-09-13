@@ -20,8 +20,8 @@
 
 use chrono::{DateTime, Utc};
 use dg_core::{
-    BlockId, CourseId, ExamAttemptId, ExamAttemptStatus, ExamId, ExamStatus, ProgramId, SemesterId,
-    StudentId, UserId,
+    AssessmentType, BlockId, CourseId, ExamAttemptId, ExamAttemptStatus, ExamId, ExamStatus,
+    ProgramId, SemesterId, StudentId, UserId,
 };
 use sqlx::PgPool;
 
@@ -45,6 +45,12 @@ pub struct Exam {
     pub max_score: f64,
     /// `None` = untimed.
     pub duration_minutes: Option<i16>,
+    /// How many questions this exam's paper draws. `None` together with
+    /// `assessment_type` means this is not an MCQ exam — the schema keeps the
+    /// two in step, so a caller that has one has both.
+    pub question_count: Option<i16>,
+    /// Which pool the paper is sampled from. `None` = not an MCQ exam.
+    pub assessment_type: Option<AssessmentType>,
     pub status: ExamStatus,
     pub created_by: UserId,
     pub created_at: DateTime<Utc>,
@@ -59,6 +65,8 @@ pub async fn create(
     max_score: f64,
     duration_minutes: Option<i16>,
     status: ExamStatus,
+    question_count: Option<i16>,
+    assessment_type: Option<AssessmentType>,
     created_by: UserId,
 ) -> Result<Exam> {
     sqlx::query_as!(
@@ -66,10 +74,11 @@ pub async fn create(
         r#"
         WITH inserted AS (
             INSERT INTO exams (block_id, title, description, max_score, duration_minutes,
-                               status, created_by)
-            VALUES ($1, $2, $3, $4, $5, $6::text::exam_status, $7)
+                               status, question_count, assessment_type, created_by)
+            VALUES ($1, $2, $3, $4, $5, $6::text::exam_status, $7,
+                    $8::text::assessment_type, $9)
             RETURNING id, block_id, title, description, max_score, duration_minutes,
-                      status, created_by, created_at
+                      question_count, assessment_type, status, created_by, created_at
         )
         SELECT
             e.id           as "id!: ExamId",
@@ -84,6 +93,8 @@ pub async fn create(
             e.description  as "description",
             e.max_score    as "max_score!",
             e.duration_minutes as "duration_minutes",
+            e.question_count   as "question_count",
+            e.assessment_type  as "assessment_type: AssessmentType",
             e.status       as "status!: ExamStatus",
             e.created_by   as "created_by!: UserId",
             e.created_at   as "created_at!"
@@ -97,6 +108,8 @@ pub async fn create(
         max_score,
         duration_minutes,
         status.as_db_str(),
+        question_count,
+        assessment_type.map(AssessmentType::as_db_str),
         created_by.into_uuid()
     )
     .fetch_one(pool)
@@ -121,6 +134,8 @@ pub async fn find_by_id(pool: &PgPool, id: ExamId) -> Result<Option<Exam>> {
             e.description  as "description",
             e.max_score    as "max_score!",
             e.duration_minutes as "duration_minutes",
+            e.question_count   as "question_count",
+            e.assessment_type  as "assessment_type: AssessmentType",
             e.status       as "status!: ExamStatus",
             e.created_by   as "created_by!: UserId",
             e.created_at   as "created_at!"
@@ -161,6 +176,8 @@ pub async fn list_by_block(
             e.description  as "description",
             e.max_score    as "max_score!",
             e.duration_minutes as "duration_minutes",
+            e.question_count   as "question_count",
+            e.assessment_type  as "assessment_type: AssessmentType",
             e.status       as "status!: ExamStatus",
             e.created_by   as "created_by!: UserId",
             e.created_at   as "created_at!"
@@ -419,6 +436,158 @@ pub async fn attempt_for_student(
         "#,
         student_id.into_uuid(),
         attempt_id.into_uuid()
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(Error::from_sqlx)
+}
+
+/// One row of `GET /student/exams` — a published exam the caller may sit,
+/// with this student's own history of it folded in.
+///
+/// `attempts_used` and `best_percentage` are aggregated in the same query
+/// rather than fetched per card: a page of cards that has to re-request its own
+/// attempt history is an N+1 in the browser.
+#[derive(Debug, Clone)]
+pub struct StudentExamRow {
+    pub id: ExamId,
+    pub block_id: BlockId,
+    pub block_no: i16,
+    pub block_title: String,
+    pub course_id: CourseId,
+    pub course_code: String,
+    pub course_name: String,
+    pub semester_id: SemesterId,
+    pub program_id: ProgramId,
+    pub title: String,
+    pub description: Option<String>,
+    pub max_score: f64,
+    pub duration_minutes: Option<i16>,
+    pub question_count: Option<i16>,
+    pub assessment_type: Option<AssessmentType>,
+    pub attempts_used: i64,
+    /// Best graded percentage (0..100), `None` when nothing is graded yet.
+    /// `None` rather than `0.0`: a zero would read as a measured score.
+    pub best_percentage: Option<f64>,
+}
+
+/// One page of the published exams reachable by this student.
+///
+/// Reachability is `student_courses -> courses -> blocks -> exams` with
+/// `status = 'published'`: a student reaches content only through
+/// `student_courses` (`CLAUDE.md`), and a draft or archived exam is not content
+/// they may sit. Both predicates are in the query, so there is no call shape
+/// that returns another student's exam list or an unpublished paper.
+pub async fn list_published_for_student(
+    pool: &PgPool,
+    student_id: StudentId,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<StudentExamRow>> {
+    sqlx::query_as!(
+        StudentExamRow,
+        r#"
+        SELECT
+            e.id             as "id!: ExamId",
+            e.block_id       as "block_id!: BlockId",
+            b.block_no       as "block_no!",
+            b.title          as "block_title!",
+            b.course_id      as "course_id!: CourseId",
+            c.code           as "course_code!",
+            c.name           as "course_name!",
+            c.semester_id    as "semester_id!: SemesterId",
+            c.program_id     as "program_id!: ProgramId",
+            e.title          as "title!",
+            e.description    as "description",
+            e.max_score      as "max_score!",
+            e.duration_minutes as "duration_minutes",
+            e.question_count as "question_count",
+            e.assessment_type as "assessment_type: AssessmentType",
+            COALESCE(h.attempts_used, 0) as "attempts_used!",
+            h.best_percentage as "best_percentage"
+        FROM exams e
+        JOIN blocks  b ON b.id = e.block_id
+        JOIN courses c ON c.id = b.course_id
+        JOIN student_courses sc ON sc.course_id = c.id AND sc.student_id = $1
+        LEFT JOIN (
+            SELECT ea.exam_id,
+                   count(*)                                        AS attempts_used,
+                   max(100.0 * ea.score / ea.max_score)            AS best_percentage
+            FROM exam_attempts ea
+            WHERE ea.student_id = $1
+            GROUP BY ea.exam_id
+        ) h ON h.exam_id = e.id
+        WHERE e.status = 'published'
+        ORDER BY b.block_no ASC, e.title ASC, e.id ASC
+        LIMIT $2 OFFSET $3
+        "#,
+        student_id.into_uuid(),
+        limit,
+        offset
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(Error::from_sqlx)
+}
+
+/// `X-Total-Count` for [`list_published_for_student`].
+pub async fn count_published_for_student(pool: &PgPool, student_id: StudentId) -> Result<i64> {
+    sqlx::query_scalar!(
+        r#"
+        SELECT count(*) as "count!"
+        FROM exams e
+        JOIN blocks  b ON b.id = e.block_id
+        JOIN courses c ON c.id = b.course_id
+        JOIN student_courses sc ON sc.course_id = c.id AND sc.student_id = $1
+        WHERE e.status = 'published'
+        "#,
+        student_id.into_uuid()
+    )
+    .fetch_one(pool)
+    .await
+    .map_err(Error::from_sqlx)
+}
+
+/// One published exam this student may sit, or `None`.
+///
+/// The same three predicates as [`list_published_for_student`] — enrolled,
+/// published, and this exam — so an exam the student is not enrolled for is
+/// indistinguishable from one that does not exist, and the handler answers
+/// `404` for both without having to decide.
+pub async fn published_for_student(
+    pool: &PgPool,
+    student_id: StudentId,
+    exam_id: ExamId,
+) -> Result<Option<Exam>> {
+    sqlx::query_as!(
+        Exam,
+        r#"
+        SELECT
+            e.id           as "id!: ExamId",
+            e.block_id     as "block_id!: BlockId",
+            b.block_no     as "block_no!",
+            b.title        as "block_title!",
+            b.course_id    as "course_id!: CourseId",
+            c.code         as "course_code!",
+            c.semester_id  as "semester_id!: SemesterId",
+            c.program_id   as "program_id!: ProgramId",
+            e.title        as "title!",
+            e.description  as "description",
+            e.max_score    as "max_score!",
+            e.duration_minutes as "duration_minutes",
+            e.question_count   as "question_count",
+            e.assessment_type  as "assessment_type: AssessmentType",
+            e.status       as "status!: ExamStatus",
+            e.created_by   as "created_by!: UserId",
+            e.created_at   as "created_at!"
+        FROM exams e
+        JOIN blocks  b ON b.id = e.block_id
+        JOIN courses c ON c.id = b.course_id
+        JOIN student_courses sc ON sc.course_id = c.id AND sc.student_id = $1
+        WHERE e.id = $2 AND e.status = 'published'
+        "#,
+        student_id.into_uuid(),
+        exam_id.into_uuid()
     )
     .fetch_optional(pool)
     .await
