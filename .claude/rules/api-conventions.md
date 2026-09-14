@@ -136,8 +136,18 @@ recent `ingestion_jobs` attempt (`documents` has no error column of its own).
   "status": "pending|parsing|pending_review|embedded|failed",
   "created_at": "RFC3339",
   "job_status": "pending|processing|completed|failed|null",
-  "last_error": "string|null" }
+  "last_error": "string|null",
+  "log": [ { "ts": "RFC3339", "message": "string" } ] }
 ```
+
+`log` is the latest ingestion attempt's step trail — coarse milestones the
+worker reaches (`Parsed 12 pages`, `OCR fallback needed on ...`, `Chunked into
+N chunk(s)`, `Embedding chunk 30/42`, `Upserted N chunk(s) to Qdrant`, `Done —
+embedded`), oldest first, capped at the most recent 50 entries by the worker
+(`ingestion_jobs.log`). Empty — never `null` — before any job has logged a
+milestone. This is additive to the existing response, so the admin upload
+page's existing 2s poll of this same endpoint picks it up without a new
+request or polling loop.
 
 `GET /api/v1/admin/stats` — dashboard counts. A sub-admin's figures are restricted to
 its `sub_admin_scopes` programs; `lscs` is platform-wide for both roles because an LSC
