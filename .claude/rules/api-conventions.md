@@ -1078,6 +1078,7 @@ block with no way to reach the rest of their own course.
 | GET | `/api/v1/student/courses` | `ViewOwnContext` — self-only |
 | GET | `/api/v1/student/courses/{course_id}/blocks` | `ViewOwnContext` — self-only |
 | GET | `/api/v1/student/blocks/{block_id}/units` | `ViewOwnContext` — self-only |
+| GET | `/api/v1/student/units/{document_id}/thumbnail` | `ViewOwnContext` — self-only |
 
 A "unit" is a row of `documents`. `documents` is the storage-side name (it has a
 `sha256`, a `storage_key`, an ingestion status); "Unit 1" is what the student was
@@ -1109,8 +1110,43 @@ sees every student's worth of them.
 
 // GET /student/blocks/{block_id}/units
 [ { "document_id": "uuid", "title": "string", "page_count": 71,
-    "is_ready": true } ]
+    "is_ready": true, "has_thumbnail": true } ]
 ```
+
+#### Unit cover images
+
+`GET /api/v1/student/units/{document_id}/thumbnail` answers **`image/webp`
+bytes**, not JSON — the only route in this namespace that does. It is the
+rasterised **first page** of the unit's PDF, at 192 px wide, served
+`Cache-Control: private, max-age=86400` (private because the response is
+scoped to one student's enrolments, so no shared cache may hand it on).
+
+It is scoped exactly as the three listings above are: the query starts from
+`student_courses` with the caller's own id bound, so a `document_id` outside
+their active enrolments selects no row and answers `404` — indistinguishable
+from an id that does not exist, and never `403`. `storage_key` and the
+thumbnail's own path stay off the wire as always; what is served is a small
+picture of page 1, never the PDF.
+
+`has_thumbnail` on the unit list is what a client checks before asking.
+**A cover is optional and its absence is normal**, for two reasons that a
+client must not render as an error:
+
+- Rendering needs a native pdfium library the ingest worker may not have
+  (`crates/rag/src/thumbnail.rs`), and a deployment without it ingests exactly
+  as before, leaving `documents.thumbnail_key` NULL.
+- Documents uploaded before covers existed have none, and are not backfilled.
+
+So `has_thumbnail: false` means "draw your own placeholder", and a `404` here
+means the same thing — never "this unit is broken". A cover says nothing about
+whether a unit can be taught from; `is_ready` remains the only field that
+answers that, and an un-ingested unit is still listed, still marked, and still
+gets a cover if one was rendered.
+
+A browser cannot load this with `<img src>`: the session is an httpOnly
+cookie and the gateway is a different origin, so an image load carries no
+credentials and would arrive unauthenticated. Clients fetch the bytes with
+credentials and render an object URL (`apps/web/src/components/classroom/UnitCover.tsx`).
 
 `is_ready` is `status = 'embedded'` — the only state in which the unit has
 vectors to retrieve. `ready_unit_count` and `teachable_block_count` roll the same

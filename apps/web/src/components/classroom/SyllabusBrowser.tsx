@@ -39,6 +39,7 @@ import {
 } from "@/lib/student";
 import { Logo } from "@/components/ui/Logo";
 import { IngestProgress, isInFlight } from "@/components/shared/IngestProgress";
+import { UnitCover } from "@/components/classroom/UnitCover";
 
 type Load<T> =
   | { status: "loading" }
@@ -182,7 +183,11 @@ export function SyllabusBrowser() {
             title={block?.title ?? "Units"}
             hint="Pick a unit to study. The tutor teaches from the material in it, and writes on the board before it speaks."
           >
-            <ListState state={units} empty="No units have been uploaded to this block yet.">
+            <ListState
+              state={units}
+              empty="No units have been uploaded to this block yet."
+              skeletonClass="h-[160px]"
+            >
               {(items) =>
                 items.map((unit) => (
                   <UnitRow
@@ -288,9 +293,17 @@ function UnitRow({
     (courseId ? `&course=${encodeURIComponent(courseId)}` : "");
 
   return (
-    <div className="flex flex-wrap items-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] p-4">
+    <div className="flex flex-wrap items-center gap-4 rounded-xl border border-white/10 bg-white/[0.03] p-4">
+      <UnitCover
+        documentId={unit.document_id}
+        title={unit.title}
+        pageCount={unit.page_count}
+        hasThumbnail={unit.has_thumbnail}
+      />
       <div className="min-w-0 flex-1">
-        <p className="truncate text-[16px] font-semibold leading-snug text-white">{unit.title}</p>
+        <p className="text-balance text-[16px] font-semibold leading-snug text-white">
+          {unit.title}
+        </p>
         {/*
           The progress bar replaces the old "0 pages · still being prepared"
           line, which could not distinguish a queue that was moving from one
@@ -355,16 +368,23 @@ function ListState<T>({
   state,
   empty,
   children,
+  /**
+   * Matched to the card the list will actually render, so the skeleton does
+   * not resize the page out from under the student when the data lands. Unit
+   * cards are taller than course and block cards because they carry a cover.
+   */
+  skeletonClass = "h-[86px]",
 }: {
   state: Load<T>;
   empty: string;
   children: (items: T[]) => React.ReactNode;
+  skeletonClass?: string;
 }) {
   if (state.status === "loading") {
     return (
       <div className="space-y-3" aria-busy>
         {[0, 1, 2].map((n) => (
-          <div key={n} className="h-[86px] animate-pulse rounded-xl bg-white/[0.04]" />
+          <div key={n} className={`${skeletonClass} animate-pulse rounded-xl bg-white/[0.04]`} />
         ))}
       </div>
     );

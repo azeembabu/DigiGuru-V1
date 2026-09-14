@@ -118,6 +118,18 @@ async fn main() -> Result<()> {
     let parser = LopdfParser;
     let embedder = select_embedder();
 
+    // Said once, at startup, rather than discovered weeks later from a screen
+    // full of blank cards. Not fatal: covers are decoration, and a worker
+    // without pdfium ingests everything exactly as it did before.
+    if rag::thumbnail::Renderer::available() {
+        tracing::info!("unit cover rendering is enabled");
+    } else {
+        tracing::info!(
+            "unit covers will not be rendered (no pdfium library); \
+             units will show a generated placeholder instead"
+        );
+    }
+
     let requeued = ingestion_jobs::requeue_stale(&pool, STALE_JOB_SECONDS)
         .await
         .context("requeueing stale jobs")?;
@@ -336,6 +348,13 @@ async fn run_one(
     // The stored file must still be the file that was hashed at upload.
     ingest::verify_sha256(&bytes, &job.sha256)?;
 
+    // Render the cover before the pipeline rather than after it. A document
+    // that stalls at `pending_review` or fails to embed is still listed to the
+    // student (`.claude/rules/api-conventions.md`: not-ready units are marked,
+    // not hidden), and it is exactly those units a student most needs to
+    // recognise. Deliberately not `?` — see `store_cover`.
+    store_cover(pool, job, &bytes).await;
+
     let ctx = IngestContext {
         document_id: job.document_id,
         document_title: job.title.clone(),
@@ -347,6 +366,72 @@ async fn run_one(
     };
 
     ingest::run_pipeline(qdrant, redis, parser, embedder, &ctx, bytes).await
+}
+
+/// Render page 1 to a cover image and record where it went.
+///
+/// **Never fails the ingestion.** A cover is how a student recognises a unit in
+/// a list; it has no bearing on whether the tutor can teach from it, so every
+/// way this can go wrong — no pdfium library in this build, an unrenderable
+/// PDF, a full disk — is logged and swallowed. Returning an error here would
+/// mean a document that chunks, embeds and teaches perfectly is marked
+/// `failed` because its picture could not be drawn.
+///
+/// The rasterising itself is CPU-bound and goes through `spawn_blocking`
+/// (`.claude/rules/code-style.md`), which is also where the non-`Send` pdfium
+/// binding is allowed to live.
+async fn store_cover(pool: &sqlx::PgPool, job: &ingestion_jobs::ClaimedJob, bytes: &[u8]) {
+    // Beside the PDF, under the same name: the upload directory is the
+    // gateway's to choose (`admin/documents.rs`), and deriving the path keeps
+    // the worker from having to know or re-configure it.
+    let key = cover_key(&job.storage_key);
+
+    let owned = bytes.to_vec();
+    let rendered = match tokio::task::spawn_blocking(move || {
+        rag::thumbnail::Renderer::first_page_webp(&owned)
+    })
+    .await
+    {
+        Ok(Ok(Some(image))) => image,
+        Ok(Ok(None)) => return, // No engine, or nothing to draw. Already logged.
+        Ok(Err(err)) => {
+            tracing::warn!(
+                document_id = %job.document_id,
+                error = %err,
+                "could not render a cover for this unit; ingestion continues without one"
+            );
+            return;
+        }
+        Err(err) => {
+            tracing::warn!(document_id = %job.document_id, error = %err, "cover render panicked");
+            return;
+        }
+    };
+
+    if let Err(err) = tokio::fs::write(&key, &rendered).await {
+        tracing::warn!(document_id = %job.document_id, error = %err, "writing the cover failed");
+        return;
+    }
+
+    // Only now is the row pointed at the file, so `thumbnail_key` never names
+    // something that is not on disk.
+    if let Err(err) = documents::set_thumbnail_key(pool, job.document_id, &key).await {
+        tracing::warn!(document_id = %job.document_id, error = %err, "recording the cover failed");
+        return;
+    }
+
+    tracing::info!(document_id = %job.document_id, bytes = rendered.len(), "unit cover rendered");
+}
+
+/// The cover's path, derived from the PDF's: same directory, same stem,
+/// `.webp` instead of `.pdf`.
+fn cover_key(storage_key: &str) -> String {
+    match storage_key.rsplit_once('.') {
+        Some((stem, _ext)) => format!("{stem}.webp"),
+        // No extension to swap — append rather than guess, so two documents
+        // still cannot collide on a cover.
+        None => format!("{storage_key}.webp"),
+    }
 }
 
 /// Whether a failure will recur identically on every retry.
@@ -378,4 +463,29 @@ fn is_rate_limited(err: &RagError) -> bool {
     text.contains("429")
         || text.contains("Too Many Requests")
         || text.contains("RESOURCE_EXHAUSTED")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::cover_key;
+
+    #[test]
+    fn cover_sits_beside_its_pdf() {
+        assert_eq!(cover_key("./uploads/abc123.pdf"), "./uploads/abc123.webp");
+    }
+
+    /// The stem is what keeps two documents apart, so it must survive a
+    /// directory name that itself contains a dot.
+    #[test]
+    fn a_dotted_directory_does_not_swallow_the_stem() {
+        assert_eq!(
+            cover_key("/srv/dg.data/uploads/abc123.pdf"),
+            "/srv/dg.data/uploads/abc123.webp"
+        );
+    }
+
+    #[test]
+    fn an_extensionless_path_gains_one_rather_than_losing_its_name() {
+        assert_eq!(cover_key("/uploads/abc123"), "/uploads/abc123.webp");
+    }
 }

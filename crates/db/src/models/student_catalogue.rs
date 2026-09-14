@@ -155,6 +155,14 @@ pub struct StudentUnitRow {
     /// sit there for minutes while a long PDF is parsed and embedded. The stage
     /// is what lets the UI show progress that is actually moving.
     pub status: String,
+    /// Whether a rendered cover exists for this unit.
+    ///
+    /// A boolean rather than the path: `thumbnail_key` is a server-side
+    /// filesystem path and stays off the wire for exactly the reason
+    /// `storage_key` does. The client uses this only to decide between
+    /// requesting the cover and drawing its own placeholder tile — asking for
+    /// an image that is not there would mean a 404 per unit on every visit.
+    pub has_thumbnail: bool,
 }
 
 pub async fn units_for_student(
@@ -170,7 +178,8 @@ pub async fn units_for_student(
             d.title                          as "title!",
             d.page_count                     as "page_count!",
             (d.status = 'embedded')          as "is_ready!",
-            d.status                         as "status!"
+            d.status                         as "status!",
+            (d.thumbnail_key IS NOT NULL)    as "has_thumbnail!"
         FROM student_courses sc
         JOIN blocks    b ON b.course_id = sc.course_id
         JOIN documents d ON d.block_id  = b.id
@@ -186,6 +195,44 @@ pub async fn units_for_student(
     .fetch_all(pool)
     .await
     .map_err(Error::from_sqlx)
+}
+
+/// The path to a unit's cover image, if the caller is entitled to see it.
+///
+/// Starts from `student_courses` with the caller's own id bound, exactly as
+/// [`units_for_student`] does — not "filters by". A document outside the
+/// student's active enrolments selects no row, so the route serving covers
+/// cannot be turned into an oracle for documents in another programme: a
+/// `document_id` belonging to somebody else's syllabus is indistinguishable
+/// from one that does not exist, and both answer `404`.
+///
+/// `None` therefore covers three cases that must not be told apart from
+/// outside: not enrolled, no such document, and no cover rendered for it.
+pub async fn thumbnail_key_for_student(
+    pool: &PgPool,
+    student_id: StudentId,
+    document_id: DocumentId,
+) -> Result<Option<String>> {
+    sqlx::query_scalar!(
+        r#"
+        SELECT d.thumbnail_key
+        FROM student_courses sc
+        JOIN blocks    b ON b.course_id = sc.course_id
+        JOIN documents d ON d.block_id  = b.id
+        WHERE sc.student_id = $1
+          AND d.id = $2
+          AND sc.status = 'active'
+          AND b.status  = 'active'
+        "#,
+        student_id.into_uuid(),
+        document_id.into_uuid()
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(Error::from_sqlx)
+    // `fetch_optional` gives "no such row"; the column is itself nullable.
+    // Both mean "no cover you may have", so they flatten to one `None`.
+    .map(Option::flatten)
 }
 
 /// Whether the student may open the classroom on this block.

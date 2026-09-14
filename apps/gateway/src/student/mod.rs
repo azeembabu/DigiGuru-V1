@@ -59,6 +59,14 @@ pub fn router() -> Router<AppState> {
         .route("/courses", get(catalogue::list_courses))
         .route("/courses/{course_id}/blocks", get(catalogue::list_blocks))
         .route("/blocks/{block_id}/units", get(catalogue::list_units))
+        // The cover image for one unit. Addressed by the document's own id
+        // rather than nested under its block: the id is unique and already
+        // carries its block, and a second addressable path for the same row
+        // would be a second scope check to keep correct.
+        .route(
+            "/units/{document_id}/thumbnail",
+            get(catalogue::get_unit_thumbnail),
+        )
         .route("/revisions", get(revisions::list_revisions))
         .route("/flashcards", get(flashcards::list_flashcards))
         .route(

@@ -16,5 +16,6 @@ pub mod qdrant;
 pub mod rerank;
 pub mod retrieve;
 pub mod sparse;
+pub mod thumbnail;
 
 pub use error::{RagError, Result};

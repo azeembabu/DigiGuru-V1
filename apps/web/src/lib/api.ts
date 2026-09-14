@@ -210,6 +210,31 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
 }
 
 /**
+ * Fetch a binary response — currently the unit cover images.
+ *
+ * A `<img src>` pointed straight at the gateway cannot work: the session is an
+ * httpOnly cookie and the browser sends no credentials on an image load to
+ * another origin, so the request would arrive unauthenticated and 401. Going
+ * through `fetch` is what puts the cookie on it — and it also inherits the
+ * refresh-and-retry above, so a cover does not vanish from the screen fifteen
+ * minutes into a session.
+ *
+ * Returns `null` rather than throwing when the image simply is not there
+ * (`404`, which for a cover means "none was rendered"). A missing decoration
+ * must never take a navigation screen down with it, so every other failure is
+ * swallowed the same way; the caller draws its placeholder.
+ */
+export async function apiFetchImage(path: string): Promise<Blob | null> {
+  try {
+    const response = await apiFetchWithRetry(path);
+    if (!response.ok) return null;
+    return await response.blob();
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Like `apiFetch`, but also surfaces the total-row count the gateway puts in
  * `X-Total-Count` on every paginated admin list
  * (`.claude/rules/api-conventions.md`). The body stays a plain array — the

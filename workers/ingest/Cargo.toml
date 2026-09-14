@@ -9,6 +9,13 @@ publish.workspace = true
 name = "ingest-worker"
 path = "src/main.rs"
 
+# Unit cover images are rendered here, and pdfium is a native library this
+# build does not vendor -- so the feature is off by default and the worker
+# ingests exactly as before without it (`crates/rag/src/thumbnail.rs`).
+[features]
+default = []
+pdfium = ["dg-rag/pdfium"]
+
 [dependencies]
 dg-core = { workspace = true }
 dg-db = { workspace = true }

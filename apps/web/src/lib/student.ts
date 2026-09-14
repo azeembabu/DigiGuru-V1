@@ -14,7 +14,7 @@
 
 import { z } from "zod";
 
-import { apiFetch, apiFetchPage, query } from "@/lib/api";
+import { apiFetch, apiFetchImage, apiFetchPage, query } from "@/lib/api";
 
 const uuid = z.string().min(1);
 const rfc3339 = z.string().min(1);
@@ -269,6 +269,12 @@ export const syllabusUnitSchema = z.object({
   is_ready: z.boolean(),
   /** Ingestion stage, for the progress indicator. */
   status: z.string(),
+  /**
+   * Whether a rendered cover exists for this unit. Defaulted so a gateway
+   * build that predates covers still parses — the card then draws its
+   * placeholder, which is the same thing it does for a unit that has none.
+   */
+  has_thumbnail: z.boolean().default(false),
 });
 
 export type SyllabusCourse = z.infer<typeof syllabusCourseSchema>;
@@ -297,6 +303,18 @@ export async function loadSyllabusUnits(blockId: string): Promise<SyllabusUnit[]
     await apiFetch<unknown>(`/student/blocks/${blockId}/units`),
     "unit list",
   );
+}
+
+/**
+ * The rendered first page of a unit, as a blob to be turned into an object URL.
+ *
+ * `null` means there is no cover to show — which is the ordinary case on a
+ * deployment whose ingest worker has no pdfium library, not an error worth
+ * surfacing. Only ask for one when `has_thumbnail` says there is one; the flag
+ * exists precisely to keep this screen from firing a 404 per unit.
+ */
+export async function loadUnitCover(documentId: string): Promise<Blob | null> {
+  return apiFetchImage(`/student/units/${documentId}/thumbnail`);
 }
 
 // ---------------------------------------------------------------------------

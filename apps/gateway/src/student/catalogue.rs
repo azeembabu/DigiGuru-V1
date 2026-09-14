@@ -24,11 +24,13 @@
 //! sees every student's worth of them.
 
 use axum::extract::{Path, State};
+use axum::http::header;
+use axum::response::{IntoResponse, Response};
 use axum::Json;
 use serde::Serialize;
 use uuid::Uuid;
 
-use dg_core::{BlockId, Capability, CourseId, PublicError};
+use dg_core::{BlockId, Capability, CourseId, DocumentId, PublicError};
 use dg_db::models::student_catalogue;
 
 use crate::extractors::AuthenticatedActor;
@@ -72,6 +74,15 @@ pub struct StudentUnitResponse {
     /// Drives the progress indicator; `is_ready` stays the single field a
     /// client checks to decide whether the classroom may be opened.
     pub status: String,
+    /// Whether a cover image exists at
+    /// `GET /student/units/{document_id}/thumbnail`.
+    ///
+    /// A flag, not a URL: the path is derivable from `document_id`, and the
+    /// server-side file path behind it never goes on the wire (the same rule
+    /// that keeps `storage_key` off every document response). Its purpose is
+    /// to stop the client requesting a cover that was never rendered, which
+    /// would be one 404 per unit on every visit to the screen.
+    pub has_thumbnail: bool,
 }
 
 pub async fn list_courses(
@@ -166,9 +177,69 @@ pub async fn list_units(
                 page_count: row.page_count,
                 is_ready: row.is_ready,
                 status: row.status,
+                has_thumbnail: row.has_thumbnail,
             })
             .collect(),
     ))
+}
+
+/// `GET /api/v1/student/units/{document_id}/thumbnail` — a unit's cover image.
+///
+/// The one route in this module that answers bytes rather than JSON. It is
+/// still an enrolment-scoped read of the student's own syllabus, and it is
+/// scoped the same way everything else here is: the query starts from
+/// `student_courses` with the caller's id bound, so a `document_id` outside
+/// their enrolments selects nothing and answers `404`, indistinguishable from
+/// an id that does not exist.
+///
+/// # This is a cover, not the unit
+///
+/// What is served is a small rasterised image of page 1 — never the PDF, and
+/// never `storage_key`. A student reads a unit through the tutor; being able
+/// to recognise it in a list is a different thing from being handed it.
+///
+/// A missing cover is `404` and not an error: a document ingested by a build
+/// with no pdfium library has none (`rag::thumbnail`). Clients are told which
+/// units have one by `has_thumbnail` on the list above and should not be
+/// asking, so reaching here without a cover is an unusual path, not a broken
+/// one.
+pub async fn get_unit_thumbnail(
+    State(state): State<AppState>,
+    AuthenticatedActor(actor): AuthenticatedActor,
+    Path(document_id): Path<Uuid>,
+) -> Result<Response, PublicError> {
+    actor.require(Capability::ViewOwnContext)?;
+    let student = super::own_student(&state, &actor).await?;
+
+    let key = student_catalogue::thumbnail_key_for_student(
+        &state.pool,
+        student.id,
+        DocumentId::from(document_id),
+    )
+    .await
+    .map_err(PublicError::from)?
+    .ok_or(PublicError::NotFound)?;
+
+    let bytes = tokio::fs::read(&key).await.map_err(|err| {
+        // The row points at a file that is gone — a half-cleaned upload
+        // directory, or a restore that missed it. Log the path internally;
+        // the student is told only that there is no cover.
+        tracing::warn!(error = %err, key = %key, "unit cover is recorded but unreadable");
+        PublicError::NotFound
+    })?;
+
+    Ok((
+        [
+            (header::CONTENT_TYPE, "image/webp"),
+            // Private: the response is scoped to one student's enrolments, so
+            // a shared cache must never hand it to the next caller. Immutable
+            // within that: a cover is re-rendered only by a re-ingestion,
+            // which the client reaches through a changed `has_thumbnail`.
+            (header::CACHE_CONTROL, "private, max-age=86400"),
+        ],
+        bytes,
+    )
+        .into_response())
 }
 
 /// Is the student enrolled in this course at all?

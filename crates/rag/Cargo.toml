@@ -29,3 +29,15 @@ lopdf = { workspace = true }
 qdrant-client = { workspace = true }
 redis = { workspace = true }
 sha2 = { workspace = true }
+
+# First-page rasterisation for unit cover images (`src/thumbnail.rs`).
+# Optional, and off by default: pdfium is a native C++ library this build does
+# not vendor, so a tree that cannot supply it does not carry the dependency at
+# all. With the feature off the renderer reports "no engine" and ingestion is
+# unchanged -- the same posture `parse.rs` takes towards OCR.
+pdfium-render = { version = "0.9", optional = true }
+image = { version = "0.25", default-features = false, features = ["webp"], optional = true }
+
+[features]
+default = []
+pdfium = ["dep:pdfium-render", "dep:image"]

@@ -11,6 +11,18 @@
    `topic`, `page`, `para_index`, `lang`. A chunk missing any of these is a bug — reject it at upsert.
 6. Deduplicate documents by `sha256`; re-uploading the same PDF must not double the corpus.
 7. Low OCR confidence marks the document `pending_review`; it does not go live until a sub-admin approves.
+8. The worker also rasterises **page 1** to a small WebP cover (`documents.thumbnail_key`), for the
+   student's unit list. It is done before the pipeline runs, so a unit that stalls at
+   `pending_review` still has one, and it **never fails an ingestion**: a cover is decoration and
+   has no bearing on what the tutor can teach from. It contributes nothing to the corpus, is not
+   chunked, embedded or upserted, and costs no tokens.
+
+   Rendering needs pdfium, a native library this build does not vendor — the same reason
+   `parse.rs` has no OCR. It is therefore behind the `pdfium` cargo feature
+   (`cargo run -p ingest-worker --features pdfium`), and the library is found via
+   `PDFIUM_LIB_PATH`, then beside the binary, then the system path. Without it the worker logs
+   once at startup and leaves every `thumbnail_key` NULL, which the client renders as a
+   generated placeholder tile.
 
 ## Retrieval
 

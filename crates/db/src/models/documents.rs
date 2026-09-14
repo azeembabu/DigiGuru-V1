@@ -100,6 +100,27 @@ pub async fn finish_ingestion(
     Ok(())
 }
 
+/// Record where the rasterised first page was written.
+///
+/// Separate from [`finish_ingestion`] on purpose: a cover is decoration, and a
+/// deployment with no pdfium library produces none (`rag::thumbnail`). Folding
+/// it into the terminal-status write would make one nullable, optional column
+/// share a statement with the three that decide whether a unit is teachable.
+///
+/// Writing it is idempotent — a re-ingested document overwrites the path with
+/// the one it just produced.
+pub async fn set_thumbnail_key(pool: &PgPool, id: DocumentId, key: &str) -> Result<()> {
+    sqlx::query!(
+        r#"UPDATE documents SET thumbnail_key = $2 WHERE id = $1"#,
+        id.into_uuid(),
+        key
+    )
+    .execute(pool)
+    .await
+    .map_err(Error::from_sqlx)?;
+    Ok(())
+}
+
 /// Mark ingestion complete: `documents.status = 'embedded'`.
 pub async fn mark_embedded(pool: &PgPool, id: DocumentId) -> Result<()> {
     set_status(pool, id, "embedded").await
