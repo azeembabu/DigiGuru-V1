@@ -492,6 +492,30 @@ impl<C: Clock> SyncGate<C> {
         outcome
     }
 
+    /// Drop everything still held for turn `seq` because the student
+    /// interrupted it. Returns how many frames were discarded.
+    ///
+    /// Not a release: nothing is forwarded, no `wb_violation` is counted, and
+    /// the turn is retired outright. The audio belongs to a generation the
+    /// service has already cancelled, so releasing it later on ack or on hold
+    /// expiry would play the cancelled tutor over the student — and, with
+    /// server-side turn detection, feed that tail back into the microphone
+    /// as fresh "speech". NN-1 is unaffected: the invariant is that audio
+    /// never *precedes* its board, and discarded audio never plays at all.
+    pub fn discard(&mut self, seq: TurnSeq) -> usize {
+        let Some(mut turn) = self.turns.remove(&seq.0) else {
+            return 0;
+        };
+        let dropped = turn.buffer.len();
+        for buf in turn.buffer.drain(..) {
+            self.frame_pool.push(buf);
+        }
+        if dropped > 0 {
+            tracing::debug!(seq = %seq, dropped, "discarded held audio for an interrupted turn");
+        }
+        dropped
+    }
+
     /// Release every turn whose 400 ms hold has expired.
     ///
     /// Each release counts a `wb_violation` and is logged with the turn seq, as

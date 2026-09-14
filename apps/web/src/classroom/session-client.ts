@@ -29,6 +29,7 @@ import {
   CLOSE_NORMAL,
   clientMessage,
   closeReason,
+  endReasonText,
   parseServerMessage,
   shouldReconnect,
 } from "./protocol";
@@ -240,7 +241,7 @@ export class SessionClient {
         // The server is ending this on purpose, so teardown must not reconnect.
         this.closingDeliberately = true;
         this.options.handlers.onFlushAudio?.();
-        this.options.handlers.onSessionEnd?.(msg.reason);
+        this.options.handlers.onSessionEnd?.(endReasonText(msg.reason));
         break;
       case "error":
         this.options.handlers.onError?.(msg.code, msg.message);

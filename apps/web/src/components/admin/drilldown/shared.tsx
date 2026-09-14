@@ -157,8 +157,8 @@ export function ActiveFilters({
 
 // ------------------------------------------------------------------ formats
 
-/** NN-3 cap: 20 minutes of active voice, enforced server-side. */
-export const QUOTA_CAP_MS = 1_200_000;
+/** NN-3 cap: 60 minutes of active voice, enforced server-side. */
+export const QUOTA_CAP_MS = 3_600_000;
 
 /** NN-1 SyncGate hold ceiling — an ACK above this is a whiteboard violation. */
 export const HOLD_MAX_MS = 400;

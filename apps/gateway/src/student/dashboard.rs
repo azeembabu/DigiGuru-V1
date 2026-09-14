@@ -44,6 +44,10 @@ const RECENT_EXAM_CARDS: i64 = 3;
 /// from the ledger's own constant so the two can never disagree.
 const DAILY_QUOTA_MINUTES: i64 = DAILY_QUOTA_MS / 60_000;
 
+/// Unit verdicts shown on the dashboard. The full record is on the assessment
+/// page; this is the "how did I just do" glance.
+const RECENT_ASSESSMENTS: i64 = 3;
+
 #[derive(Debug, Serialize)]
 pub struct StudentInfo {
     pub name: String,
@@ -125,6 +129,26 @@ pub struct SavedResources {
     pub revisions_due_count: i64,
 }
 
+/// One of the tutor's recent conversational verdicts, for the dashboard.
+///
+/// Deliberately a different card from `ExamHistoryCard`: that one is a marked
+/// paper, this one is the tutor's judgement of a conversation. Showing them as
+/// one list would invite a student to read a chat rating as an exam result.
+#[derive(Debug, Serialize)]
+pub struct UnitAssessmentCard {
+    pub document_id: uuid::Uuid,
+    pub unit_title: String,
+    pub block_no: i16,
+    pub course_code: String,
+    pub stars: i16,
+    pub mark: f64,
+    pub trophy: Option<String>,
+    /// The breakdown, in full. The dashboard truncates for display; the API
+    /// does not, so "read more" needs no second request.
+    pub summary: String,
+    pub assessed_at: chrono::DateTime<chrono::Utc>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct DashboardResponse {
     pub student_info: StudentInfo,
@@ -133,6 +157,10 @@ pub struct DashboardResponse {
     pub continue_learning: Option<ContinueLearning>,
     pub quota_status: QuotaStatus,
     pub exam_history: Vec<ExamHistoryCard>,
+    /// The tutor's most recent unit verdicts, newest first. Empty for a student
+    /// who has not finished an assessable session — an empty list, never a
+    /// placeholder rating.
+    pub unit_assessments: Vec<UnitAssessmentCard>,
     pub saved_resources: SavedResources,
 }
 
@@ -246,6 +274,37 @@ pub async fn get_dashboard(
         .map_err(PublicError::from)?;
     let notes = queries::note_counts(&state.pool, student.id, today).await?;
 
+    // The tutor's recent conversational verdicts. Read failures degrade to an
+    // empty list rather than failing the whole dashboard: this is one card
+    // among six, and a student who cannot see their latest rating should still
+    // get their quota, their courses and their exams.
+    let unit_assessments = match dg_db::models::unit_assessments::recent_for_student(
+        &state.pool,
+        student.id,
+        RECENT_ASSESSMENTS,
+    )
+    .await
+    {
+        Ok(rows) => rows
+            .into_iter()
+            .map(|r| UnitAssessmentCard {
+                document_id: r.document_id.into_uuid(),
+                unit_title: r.unit_title,
+                block_no: r.block_no,
+                course_code: r.course_code,
+                stars: r.stars,
+                mark: r.mark,
+                trophy: r.trophy,
+                summary: r.summary,
+                assessed_at: r.created_at,
+            })
+            .collect(),
+        Err(err) => {
+            tracing::error!(%err, "failed to read recent unit assessments for the dashboard");
+            Vec::new()
+        }
+    };
+
     Ok(Json(DashboardResponse {
         student_info: StudentInfo {
             name: student.full_name,
@@ -266,6 +325,7 @@ pub async fn get_dashboard(
             timezone: student.timezone,
         },
         exam_history,
+        unit_assessments,
         saved_resources: SavedResources {
             preserved_notes_count: notes.preserved,
             flashcards_total: cards.total,
@@ -328,7 +388,11 @@ mod tests {
 
     #[test]
     fn the_quota_ring_maximum_comes_from_the_ledger_constant() {
-        assert_eq!(DAILY_QUOTA_MINUTES, 20);
+        // NN-3 was raised from twenty minutes to sixty on 2026-09-14 to fit a
+        // one-hour instructional module (CLAUDE.md). Asserted against the
+        // literal rather than the constant, so a silent change to the ledger
+        // still fails here.
+        assert_eq!(DAILY_QUOTA_MINUTES, 60);
     }
 
     /// NN-3: the reset instant is midnight in the *student's* zone, not UTC.
@@ -410,6 +474,9 @@ mod tests {
                 timezone: "Asia/Kolkata".into(),
             },
             exam_history: Vec::new(),
+            // A first-login student has no conversational feedback either —
+            // an empty list, never a placeholder rating.
+            unit_assessments: Vec::new(),
             saved_resources: SavedResources {
                 preserved_notes_count: 0,
                 flashcards_total: 0,
@@ -421,7 +488,7 @@ mod tests {
 
         assert!(json["continue_learning"].is_null());
         assert!(json["exam_history"].is_array());
-        assert_eq!(json["quota_status"]["minutes_max"], 20);
+        assert_eq!(json["quota_status"]["minutes_max"], 60);
         // Self-only: the payload names no student id anywhere.
         assert!(json["student_info"].get("student_id").is_none());
         assert!(json.get("student_id").is_none());

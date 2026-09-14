@@ -236,13 +236,41 @@ export function shouldReconnect(code: number): boolean {
   }
 }
 
+/**
+ * Human-readable text for a `session_end` frame's `reason`.
+ *
+ * `reason` is the `learning_sessions.end_reason` vocabulary
+ * (`quota|idle|user|jailbreak|error`) — a database enum, not display copy. It
+ * reaches the UI because `session_end` is the frame that carries it, so it has
+ * to be turned into a sentence somewhere; doing it here keeps it beside
+ * `closeReason`, which answers the same question for the close-code path.
+ */
+export function endReasonText(reason: string): string {
+  switch (reason) {
+    case "quota":
+      return closeReason(CLOSE_QUOTA_REACHED);
+    case "idle":
+      return closeReason(CLOSE_IDLE_TIMEOUT);
+    case "jailbreak":
+      return closeReason(CLOSE_SAFETY_TERMINATION);
+    case "error":
+      return "The tutoring session ended unexpectedly.";
+    case "user":
+      return "This lesson is finished.";
+    default:
+      // An end_reason this build does not know about is still an end. Say so
+      // plainly rather than printing the raw enum at the student.
+      return "Session ended.";
+  }
+}
+
 /** Human-readable reason for a terminal close, for the UI to show. */
 export function closeReason(code: number): string {
   switch (code) {
     case CLOSE_UNAUTHENTICATED:
       return "Your session could not be authenticated. Please sign in again.";
     case CLOSE_QUOTA_REACHED:
-      return "You have used today's 20 minutes of voice tutoring. It resets at midnight your time.";
+      return "You have used today's 60 minutes of voice tutoring. It resets at midnight your time.";
     case CLOSE_IDLE_TIMEOUT:
       return "The session ended because it was idle.";
     case CLOSE_SAFETY_TERMINATION:

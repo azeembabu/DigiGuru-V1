@@ -18,6 +18,7 @@ pub mod documents;
 pub mod enrollments;
 pub mod exams;
 pub mod lscs;
+pub mod performance;
 pub mod programs;
 pub mod question_import;
 pub mod removal;
@@ -166,6 +167,18 @@ pub fn router(max_upload_bytes: usize) -> Router<AppState> {
             "/students/{student_id}/report",
             get(student_reports::get_student_report),
         )
+        // Performance: one student's record, and the best-performers board
+        // the students page shows. Both derive from the same attempts the
+        // student's own assessment page reads, so the two cannot disagree.
+        .route(
+            "/students/{student_id}/performance",
+            get(performance::get_student_performance),
+        )
+        .route(
+            "/students/{student_id}/unit-assessments",
+            get(performance::get_student_unit_assessments),
+        )
+        .route("/top-performers", get(performance::list_top_performers))
         .route("/stats", get(stats::get_stats))
         .route("/analytics", get(analytics::get_analytics))
         // Drill-downs behind the dashboard tiles: each opens the records

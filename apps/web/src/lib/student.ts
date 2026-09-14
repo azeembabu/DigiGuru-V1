@@ -89,6 +89,22 @@ export const quotaStatusSchema = z.object({
   timezone: z.string(),
 });
 
+/** One of the tutor's recent unit verdicts, for the dashboard card.
+ *  A different thing from an exam result and rendered as a different card. */
+export const dashboardAssessmentSchema = z.object({
+  document_id: uuid,
+  unit_title: z.string(),
+  block_no: z.number().int(),
+  course_code: z.string(),
+  stars: z.number().int(),
+  mark: z.number(),
+  trophy: z.enum(["gold", "silver", "bronze"]).nullable(),
+  summary: z.string(),
+  assessed_at: rfc3339,
+});
+
+export type DashboardAssessment = z.infer<typeof dashboardAssessmentSchema>;
+
 export const examHistoryEntrySchema = z.object({
   attempt_id: uuid,
   exam_id: uuid,
@@ -116,6 +132,10 @@ export const studentDashboardSchema = z.object({
   continue_learning: continueLearningSchema.nullable(),
   quota_status: quotaStatusSchema,
   exam_history: z.array(examHistoryEntrySchema),
+  // The tutor's recent conversational verdicts. `.default([])` so a dashboard
+  // served by a gateway that predates this field still parses rather than
+  // failing the whole page on one missing key.
+  unit_assessments: z.array(dashboardAssessmentSchema).default([]),
   saved_resources: savedResourcesSchema,
 });
 
@@ -529,5 +549,210 @@ export async function submitExamAttempt(attemptId: string): Promise<ExamResult> 
     examResultSchema,
     await apiFetch<unknown>(`/student/exams/attempts/${attemptId}/submit`, { method: "POST" }),
     "exam result",
+  );
+}
+
+// ---------------------------------------------------------------------------
+// GET /student/performance — the assessment page.
+//
+// The level, star rating and trophy are computed by the GATEWAY and read here,
+// never derived in the browser. The thresholds are a pedagogical decision, and
+// a client that banded percentages itself would pin that decision into each
+// client separately — the admin's screen would then be free to disagree with
+// the student's about the same block. See `crates/core/src/performance.rs`.
+// ---------------------------------------------------------------------------
+
+export const performanceLevelSchema = z.enum([
+  "not_assessed",
+  "needs_work",
+  "developing",
+  "proficient",
+  "strong",
+  "excellent",
+]);
+export const trophySchema = z.enum(["gold", "silver", "bronze"]);
+
+export type PerformanceLevel = z.infer<typeof performanceLevelSchema>;
+export type Trophy = z.infer<typeof trophySchema>;
+
+/** Tailwind classes per band. The wire carries `level_label` for the words, so
+ *  this map is presentation only and never restates the thresholds. */
+export const LEVEL_TONE: Record<PerformanceLevel, string> = {
+  not_assessed: "text-slate-400 bg-slate-400/10 ring-slate-400/20",
+  needs_work: "text-rose-300 bg-rose-500/10 ring-rose-400/20",
+  developing: "text-amber-300 bg-amber-500/10 ring-amber-400/20",
+  proficient: "text-sky-300 bg-sky-500/10 ring-sky-400/20",
+  strong: "text-emerald-300 bg-emerald-500/10 ring-emerald-400/20",
+  excellent: "text-violet-300 bg-violet-500/10 ring-violet-400/20",
+};
+
+export const TROPHY_LABEL: Record<Trophy, string> = {
+  gold: "Gold",
+  silver: "Silver",
+  bronze: "Bronze",
+};
+
+export const TROPHY_TONE: Record<Trophy, string> = {
+  gold: "text-amber-300",
+  silver: "text-slate-200",
+  bronze: "text-orange-300",
+};
+
+export const weakTopicSchema = z.object({
+  topic: z.string(),
+  missed_count: z.number().int(),
+});
+
+export const blockPerformanceSchema = z.object({
+  block_id: uuid,
+  block_no: z.number().int(),
+  block_title: z.string(),
+  course_id: uuid,
+  course_code: z.string(),
+  course_name: z.string(),
+  semester_number: z.number().int(),
+  exams_available: z.number().int(),
+  attempts_total: z.number().int(),
+  attempts_graded: z.number().int(),
+  // Nullable throughout, and that is load-bearing: `null` is "never assessed"
+  // and `0` is a measured zero. Rendering them the same would tell a student
+  // they failed a paper they never sat.
+  average_percentage: z.number().nullable(),
+  best_percentage: z.number().nullable(),
+  level: performanceLevelSchema,
+  level_label: z.string(),
+  stars: z.number().int().nullable(),
+  sessions_total: z.number().int(),
+  sessions_completed: z.number().int(),
+  active_voice_ms: z.number().int(),
+  last_studied_at: rfc3339.nullable(),
+  weak_topics: z.array(weakTopicSchema),
+  remark: z.string().nullable(),
+  remark_updated_at: rfc3339.nullable(),
+});
+
+export const performanceSummarySchema = z.object({
+  blocks_total: z.number().int(),
+  blocks_assessed: z.number().int(),
+  attempts_graded: z.number().int(),
+  average_percentage: z.number().nullable(),
+  best_percentage: z.number().nullable(),
+  level: performanceLevelSchema,
+  level_label: z.string(),
+  stars: z.number().int().nullable(),
+  trophy: trophySchema.nullable(),
+  attempts_until_trophy: z.number().int(),
+  total_active_voice_ms: z.number().int(),
+});
+
+export const performanceSchema = z.object({
+  summary: performanceSummarySchema,
+  blocks: z.array(blockPerformanceSchema),
+});
+
+export type BlockPerformance = z.infer<typeof blockPerformanceSchema>;
+export type PerformanceSummary = z.infer<typeof performanceSummarySchema>;
+export type StudentPerformance = z.infer<typeof performanceSchema>;
+
+export async function loadPerformance(courseId?: string): Promise<StudentPerformance> {
+  return parse(
+    performanceSchema,
+    await apiFetch<unknown>(`/student/performance${query({ course_id: courseId })}`),
+    "performance",
+  );
+}
+
+export const saveRemarkResponseSchema = z.object({
+  block_id: uuid,
+  remark: z.string().nullable(),
+  remark_updated_at: rfc3339.nullable(),
+});
+
+/** Upsert, and idempotent: sending the same text twice leaves one row. An
+ *  empty string clears the remark rather than storing a blank one. */
+export async function saveBlockRemark(
+  blockId: string,
+  remark: string,
+): Promise<z.infer<typeof saveRemarkResponseSchema>> {
+  return parse(
+    saveRemarkResponseSchema,
+    await apiFetch<unknown>(`/student/performance/blocks/${blockId}/remark`, {
+      method: "PUT",
+      body: JSON.stringify({ remark }),
+    }),
+    "remark",
+  );
+}
+
+// ---------------------------------------------------------------------------
+// GET /student/unit-assessments — the tutor's conversational verdicts.
+//
+// A DIFFERENT kind of number from `/student/performance`, which is exam marks
+// computed from a stored answer key. These are the tutor's judgement of how the
+// student engaged in a session. They are fetched separately and rendered as
+// separate cards on purpose: a student must always be able to tell which of
+// their numbers came from a marked paper.
+// ---------------------------------------------------------------------------
+
+export const assessmentEvidenceSchema = z.object({
+  student_turns: z.number().int(),
+  questions_asked: z.number().int(),
+  comprehension_passed: z.number().int(),
+  comprehension_failed: z.number().int(),
+  active_voice_ms: z.number().int(),
+});
+
+export const unitAssessmentSchema = z.object({
+  stars: z.number().int(),
+  mark: z.number(),
+  trophy: trophySchema.nullable(),
+  summary: z.string(),
+  strengths: z.array(z.string()),
+  improvements: z.array(z.string()),
+  assessed_at: rfc3339,
+  evidence: assessmentEvidenceSchema,
+});
+
+export const unitCardSchema = z.object({
+  document_id: uuid,
+  unit_title: z.string(),
+  block_id: uuid,
+  block_no: z.number().int(),
+  block_title: z.string(),
+  course_id: uuid,
+  course_code: z.string(),
+  course_name: z.string(),
+  semester_number: z.number().int(),
+  is_ready: z.boolean(),
+  sessions_total: z.number().int(),
+  active_voice_ms: z.number().int(),
+  last_studied_at: rfc3339.nullable(),
+  assessments_count: z.number().int(),
+  // `null` for a unit never assessed. Not a zero rating — the distinction is
+  // load-bearing and the UI renders the two differently.
+  latest: unitAssessmentSchema.nullable(),
+  best_mark: z.number().nullable(),
+});
+
+export type UnitAssessment = z.infer<typeof unitAssessmentSchema>;
+export type UnitCard = z.infer<typeof unitCardSchema>;
+
+export async function loadUnitAssessments(): Promise<UnitCard[]> {
+  return parse(
+    z.array(unitCardSchema),
+    await apiFetch<unknown>("/student/unit-assessments"),
+    "unit assessments",
+  );
+}
+
+/** Every sitting of one unit, newest first — so a better second attempt is
+ *  visible rather than hidden behind the latest verdict. */
+export async function loadUnitHistory(documentId: string): Promise<UnitAssessment[]> {
+  return parse(
+    z.array(unitAssessmentSchema),
+    await apiFetch<unknown>(
+      `/student/unit-assessments/history${query({ document_id: documentId })}`,
+    ),
+    "unit history",
   );
 }

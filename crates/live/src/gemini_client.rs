@@ -67,11 +67,18 @@ pub enum LiveModelEvent {
         source: TranscriptSource,
         text: String,
     },
-    /// The model has finished its current turn — either naturally, or
-    /// because the student interrupted it. On an interruption the downstream
-    /// audio queue must be flushed, or the old turn keeps playing over the
-    /// student.
-    TurnComplete,
+    /// The model has finished its current turn.
+    ///
+    /// `interrupted` is `true` only when the service reported
+    /// `serverContent.interrupted` — the student spoke over the tutor and the
+    /// generation was cancelled. That distinction is load-bearing now that turn
+    /// detection is the service's: on an interruption the client must flush
+    /// its playback queue and the gateway must drop any audio still held for
+    /// the turn, or the cancelled turn keeps coming out of the speakers, the
+    /// microphone hears it, and the service keeps detecting "speech" that is
+    /// really the tutor's own tail. Collapsing both cases into one event was
+    /// exactly that feedback loop.
+    TurnComplete { interrupted: bool },
     /// The Live session ended (model-initiated, or upstream closed).
     SessionEnded,
 }
@@ -84,18 +91,17 @@ pub trait LiveSessionClient: Send {
     /// Send one frame of captured student audio upstream.
     async fn send_audio_frame(&mut self, frame: Bytes) -> Result<()>;
 
-    /// Declare the start or end of a student turn.
+    /// Declare the start or end of a student turn, as the CLIENT's local
+    /// detector sees it.
     ///
-    /// Automatic turn detection is disabled (`gemini_wire::realtime_input_config`),
-    /// so these are what tell the service a turn has begun and ended. `true`
-    /// during a tutor turn is also the interruption signal.
-    ///
-    /// Ordering matters and is the caller's responsibility: start, then audio,
-    /// then end. They go on the **control** queue so a start is never stuck
-    /// behind queued mic audio — an interruption that arrives after the frames
-    /// it was meant to precede is an interruption that did not happen.
+    /// Turn detection is now the service's
+    /// (`gemini_wire::realtime_input_config`), so an implementation backed by
+    /// the real Live API does NOT forward these upstream: the API accepts
+    /// activity signals only while automatic detection is disabled. They
+    /// remain in the trait because they are still meaningful to the gateway
+    /// and to the stub — they say what the browser believes it heard, which
+    /// drives the "hearing you" indicator and local playback flushing.
     async fn send_activity(&mut self, speaking: bool) -> Result<()>;
-
     /// Send a gateway-authored text turn (kickoff greeting, resume prompt, or
     /// per-turn curriculum context). `turn_complete = true` asks the model to
     /// respond now; `false` only adds context and waits for the student.
@@ -128,8 +134,15 @@ const MAX_QUEUED_AUDIO_FRAMES: usize = 125;
 /// must stay in sequence with it.
 enum Outgoing {
     Audio(Bytes),
-    /// A control frame whose position relative to the audio matters — today
-    /// only `activityEnd`.
+    /// A control frame whose position relative to the audio matters.
+    ///
+    /// Unused while turn detection is the service's: `activityEnd` was its only
+    /// producer and is no longer sent (see `send_activity`). Kept rather than
+    /// deleted because it is one half of a deliberate split — priority control
+    /// vs. in-sequence control — and the `pop` ordering below still depends on
+    /// that split being expressible. It is also what the client-side-VAD path
+    /// needs if turn detection ever moves back to the browser.
+    #[allow(dead_code)]
     Ordered(String),
 }
 
@@ -180,6 +193,7 @@ impl OutboundQueue {
     /// first tells the model the student finished before it has heard them. The
     /// model then answers an empty turn — or, as reported, says nothing at all
     /// while the audio arrives after the door has shut.
+    #[allow(dead_code)]
     fn push_ordered(&self, json: String) {
         if let Ok(mut q) = self.audio.lock() {
             q.push_back(Outgoing::Ordered(json));
@@ -453,22 +467,24 @@ impl LiveSessionClient for GeminiLiveSessionClient {
         Ok(())
     }
 
-    async fn send_activity(&mut self, speaking: bool) -> Result<()> {
+    async fn send_activity(&mut self, _speaking: bool) -> Result<()> {
+        // Deliberately does nothing while server-side turn detection is on.
+        //
+        // The Live API accepts `activityStart`/`activityEnd` "only if automatic
+        // (i.e. server-side) activity detection is disabled"; sending them
+        // alongside an enabled detector is a protocol error, and a setup the
+        // service rejects closes the socket with 1007 for reasons that are
+        // invisible until the student first speaks.
+        //
+        // The gateway still receives `activity` frames from the browser and
+        // still forwards them here — they remain the client's statement of what
+        // its local detector believes, which drives the "hearing you" indicator
+        // and local playback flushing. They simply no longer reach the model,
+        // which now decides turn boundaries from the audio itself.
         if self.outbound.is_closed() {
             return Err(LiveError::Session(
                 "the Gemini Live session is closed".to_string(),
             ));
-        }
-        if speaking {
-            // Jumps the queue: this both opens the turn and interrupts the
-            // tutor, and both are worthless if they arrive late.
-            self.outbound
-                .push_control(crate::gemini_wire::activity_start_message().to_string());
-        } else {
-            // Travels with the audio: it closes the turn those frames belong
-            // to and must not overtake them.
-            self.outbound
-                .push_ordered(crate::gemini_wire::activity_end_message().to_string());
         }
         Ok(())
     }
@@ -663,7 +679,7 @@ the system instruction is not landing (NN-1 relies on the tool being called)"
             ServerFrame::Interrupted => {
                 tracing::debug!(seq = self.seq, "tutor turn interrupted by the student");
                 self.end_turn();
-                vec![LiveModelEvent::TurnComplete]
+                vec![LiveModelEvent::TurnComplete { interrupted: true }]
             }
             ServerFrame::TurnComplete => {
                 if !self.turn_open {
@@ -672,7 +688,7 @@ the system instruction is not landing (NN-1 relies on the tool being called)"
                     return Vec::new();
                 }
                 self.end_turn();
-                vec![LiveModelEvent::TurnComplete]
+                vec![LiveModelEvent::TurnComplete { interrupted: false }]
             }
             ServerFrame::GoAway => {
                 tracing::info!("gemini live sent goAway; the session is ending");
@@ -758,7 +774,7 @@ mod tests {
             clear_first: false,
             ops: vec![BoardOp::Heading {
                 text: "Intro".to_string(),
-                page: 1,
+                page: Some(1),
             }],
         }
     }
@@ -768,7 +784,7 @@ mod tests {
         let mut client = StubLiveSessionClient::new(vec![
             LiveModelEvent::BoardOps(sample_board_ops()),
             LiveModelEvent::AudioChunk { seq: 1, data: Bytes::from_static(b"audio") },
-            LiveModelEvent::TurnComplete,
+            LiveModelEvent::TurnComplete { interrupted: false },
         ]);
 
         assert_eq!(
@@ -781,7 +797,7 @@ mod tests {
         );
         assert_eq!(
             client.poll_event().await.unwrap(),
-            LiveModelEvent::TurnComplete
+            LiveModelEvent::TurnComplete { interrupted: false }
         );
         assert_eq!(
             client.poll_event().await.unwrap(),
@@ -854,7 +870,7 @@ mod tests {
             events[1],
             LiveModelEvent::AudioChunk { seq: 1, data: Bytes::from_static(&[1, 2, 3, 4]) }
         );
-        assert_eq!(events[3], LiveModelEvent::TurnComplete);
+        assert_eq!(events[3], LiveModelEvent::TurnComplete { interrupted: false });
         // The tool call is acknowledged so the model goes on to narrate.
         assert_eq!(control.len(), 1);
         assert!(control[0].contains("\"rendered\""));
@@ -889,7 +905,7 @@ mod tests {
             events,
             vec![
                 LiveModelEvent::AudioChunk { seq: 1, data: Bytes::from_static(&[1, 2, 3, 4]) },
-                LiveModelEvent::TurnComplete,
+                LiveModelEvent::TurnComplete { interrupted: false },
             ]
         );
     }
@@ -918,16 +934,19 @@ mod tests {
     #[test]
     fn interruption_closes_the_turn_exactly_once() {
         // The upstream sends `interrupted` and then `turnComplete` for the
-        // same turn; the gateway must not be told twice.
+        // same turn; the gateway must not be told twice — and the one event it
+        // is told must carry `interrupted: true`, because that flag is what
+        // makes the client flush and the gateway discard the cancelled audio.
         let (events, _) = drive(&[TOOL_CALL, AUDIO, INTERRUPTED, TURN_COMPLETE]);
+        let completions: Vec<_> = events
+            .iter()
+            .filter(|e| matches!(e, LiveModelEvent::TurnComplete { .. }))
+            .collect();
+        assert_eq!(completions.len(), 1);
         assert_eq!(
-            events
-                .iter()
-                .filter(|e| **e == LiveModelEvent::TurnComplete)
-                .count(),
-            1
+            completions[0],
+            &LiveModelEvent::TurnComplete { interrupted: true }
         );
-        assert_eq!(events.last(), Some(&LiveModelEvent::TurnComplete));
     }
 
     #[test]

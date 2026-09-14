@@ -13,6 +13,29 @@ pub const EMBEDDING_DIM: usize = 3072;
 #[async_trait::async_trait]
 pub trait Embedder: Send + Sync {
     async fn embed(&self, text: &str) -> Result<Vec<f32>>;
+
+    /// Embed many texts, in order.
+    ///
+    /// The default implementation is the obvious loop, so every existing
+    /// implementor keeps working unchanged. [`GeminiEmbedder`] overrides it
+    /// with the real batch endpoint, and the difference is not a micro
+    /// optimisation: the free tier caps `embedContent` at **1000 requests per
+    /// day per project**, and a one-request-per-chunk ingest spends that on a
+    /// few hundred chunks. Rebuilding this project's own corpus exhausted the
+    /// day's quota partway through and left retrieval with nothing. Batching
+    /// turns the same corpus into a handful of requests.
+    ///
+    /// Returns one vector per input, in the same order. An implementation that
+    /// cannot honour that must fail rather than return a short vector: the
+    /// caller zips these against the chunks positionally, so a missing entry
+    /// would silently attach the wrong text to the wrong embedding.
+    async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        let mut out = Vec::with_capacity(texts.len());
+        for text in texts {
+            out.push(self.embed(text).await?);
+        }
+        Ok(out)
+    }
 }
 
 /// Deterministic pseudo-embedding for pipeline plumbing/tests. Hashes the
@@ -118,6 +141,12 @@ impl GeminiEmbedder {
     }
 }
 
+/// Max texts per `batchEmbedContents` call. The API accepts up to 100.
+const BATCH_MAX: usize = 100;
+
+const BATCH_EMBED_ENDPOINT: &str =
+    "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:batchEmbedContents";
+
 const EMBED_ENDPOINT: &str =
     "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-001:embedContent";
 
@@ -140,44 +169,205 @@ impl Embedder for GeminiEmbedder {
             "outputDimensionality": EMBEDDING_DIM,
         });
 
-        // The key travels as a query parameter because that is what this endpoint
-        // accepts; it is never logged, and the error paths below deliberately
-        // carry the status and body only, never the request URL.
-        let response = self
-            .http
-            .post(EMBED_ENDPOINT)
-            .query(&[("key", self.api_key.as_str())])
-            .json(&body)
-            .send()
-            .await
-            .map_err(|err| RagError::Embed(format!("embedding request failed: {err}")))?;
+        // Retried here, per chunk, rather than left to the ingest worker.
+        //
+        // The worker's unit of retry is the whole DOCUMENT: one failed chunk
+        // discards every embedding already paid for and computed for that
+        // document, and burns one of its three attempts. The endpoint returns a
+        // transient 503 often enough that a long document would then never
+        // finish — observed rebuilding this corpus, where the first document
+        // failed on a single 503 after embedding most of its chunks. A few
+        // seconds of backoff here is far cheaper than re-embedding a document,
+        // and it is the difference between a rebuild that converges and one
+        // that exhausts its attempts.
+        //
+        // Only transient statuses are retried. A 400 (bad request) or 403 (bad
+        // key) will fail identically forever, and retrying it wastes the
+        // attempt budget that a genuinely transient failure needs.
+        const MAX_TRIES: u32 = 5;
+        let mut last: String = String::new();
 
-        let status = response.status();
-        if !status.is_success() {
+        for attempt in 1..=MAX_TRIES {
+            if attempt > 1 {
+                // 0.5s, 1s, 2s, 4s. Bounded and short: this sits inside an
+                // ingest job, not a student's turn.
+                let backoff = std::time::Duration::from_millis(250 * (1 << attempt.min(5)));
+                tokio::time::sleep(backoff).await;
+            }
+
+            let response = match self
+                .http
+                .post(EMBED_ENDPOINT)
+                .query(&[("key", self.api_key.as_str())])
+                .json(&body)
+                .send()
+                .await
+            {
+                Ok(response) => response,
+                Err(err) => {
+                    // A transport error (timeout, reset connection) is exactly
+                    // the kind of thing another try fixes.
+                    last = format!("embedding request failed: {err}");
+                    tracing::warn!(attempt, error = %last, "embedding request failed; retrying");
+                    continue;
+                }
+            };
+
+            let status = response.status();
+            if status.is_success() {
+                let parsed: EmbedResponse = response.json().await.map_err(|err| {
+                    RagError::Embed(format!("embedding response was not JSON: {err}"))
+                })?;
+
+                let vector = parsed.embedding.values;
+                if vector.len() != EMBEDDING_DIM {
+                    return Err(RagError::Embed(format!(
+                        "embedding width {} does not match the collection's {EMBEDDING_DIM}",
+                        vector.len()
+                    )));
+                }
+                return Ok(vector);
+            }
+
             let detail = response.text().await.unwrap_or_default();
             // Truncated: an upstream error body can be long, and this string ends
             // up in a log line, not in front of a student.
             let detail: String = detail.chars().take(300).collect();
-            return Err(RagError::Embed(format!(
-                "embedding endpoint returned {status}: {detail}"
-            )));
+            last = format!("embedding endpoint returned {status}: {detail}");
+
+            // 429 and 5xx are the transient ones. Everything else is a
+            // permanent answer and is returned immediately.
+            let transient = status.as_u16() == 429 || status.is_server_error();
+            if !transient {
+                return Err(RagError::Embed(last));
+            }
+            tracing::warn!(attempt, %status, "embedding endpoint is unavailable; retrying");
         }
 
-        let parsed: EmbedResponse = response
-            .json()
-            .await
-            .map_err(|err| RagError::Embed(format!("embedding response was not JSON: {err}")))?;
-
-        let vector = parsed.embedding.values;
-        if vector.len() != EMBEDDING_DIM {
-            return Err(RagError::Embed(format!(
-                "embedding width {} does not match the collection's {EMBEDDING_DIM}",
-                vector.len()
-            )));
-        }
-
-        Ok(vector)
+        Err(RagError::Embed(format!(
+            "embedding failed after {MAX_TRIES} attempts: {last}"
+        )))
     }
+
+    /// Batched embedding via `batchEmbedContents`.
+    ///
+    /// One HTTP request carries up to [`BATCH_MAX`] texts, which is what keeps
+    /// a corpus rebuild inside the free tier's 1000-requests-per-day cap: the
+    /// per-chunk path spends one request per chunk and runs out partway
+    /// through a textbook.
+    ///
+    /// The response's `embeddings` array is positional — entry `i` is the
+    /// vector for request `i` — and the whole pipeline relies on that, because
+    /// the caller zips these against the chunks by index. A response of the
+    /// wrong length is therefore a hard error, never a short result: silently
+    /// returning fewer vectors would pair each chunk with a later chunk's
+    /// embedding and poison retrieval in a way nothing downstream could detect.
+    async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        use crate::error::RagError;
+
+        if texts.is_empty() {
+            return Ok(Vec::new());
+        }
+        if texts.iter().any(|t| t.trim().is_empty()) {
+            return Err(RagError::Embed("refusing to embed empty text".to_string()));
+        }
+
+        let mut out: Vec<Vec<f32>> = Vec::with_capacity(texts.len());
+
+        for group in texts.chunks(BATCH_MAX) {
+            let requests: Vec<serde_json::Value> = group
+                .iter()
+                .map(|text| {
+                    serde_json::json!({
+                        "model": "models/gemini-embedding-001",
+                        "content": { "parts": [{ "text": text }] },
+                        "taskType": self.task.as_api_value(),
+                        "outputDimensionality": EMBEDDING_DIM,
+                    })
+                })
+                .collect();
+            let body = serde_json::json!({ "requests": requests });
+
+            // Same transient-only retry policy as the single path; see `embed`.
+            const MAX_TRIES: u32 = 5;
+            let mut last = String::new();
+            let mut vectors: Option<Vec<Vec<f32>>> = None;
+
+            for attempt in 1..=MAX_TRIES {
+                if attempt > 1 {
+                    let backoff = std::time::Duration::from_millis(250 * (1 << attempt.min(5)));
+                    tokio::time::sleep(backoff).await;
+                }
+
+                let response = match self
+                    .http
+                    .post(BATCH_EMBED_ENDPOINT)
+                    .query(&[("key", self.api_key.as_str())])
+                    .json(&body)
+                    .send()
+                    .await
+                {
+                    Ok(response) => response,
+                    Err(err) => {
+                        last = format!("batch embedding request failed: {err}");
+                        tracing::warn!(attempt, error = %last, "batch embedding failed; retrying");
+                        continue;
+                    }
+                };
+
+                let status = response.status();
+                if status.is_success() {
+                    let parsed: BatchEmbedResponse = response.json().await.map_err(|err| {
+                        RagError::Embed(format!("batch embedding response was not JSON: {err}"))
+                    })?;
+                    if parsed.embeddings.len() != group.len() {
+                        return Err(RagError::Embed(format!(
+                            "batch embedding returned {} vectors for {} inputs",
+                            parsed.embeddings.len(),
+                            group.len()
+                        )));
+                    }
+                    let mut got = Vec::with_capacity(group.len());
+                    for embedding in parsed.embeddings {
+                        if embedding.values.len() != EMBEDDING_DIM {
+                            return Err(RagError::Embed(format!(
+                                "embedding width {} does not match the collection's {EMBEDDING_DIM}",
+                                embedding.values.len()
+                            )));
+                        }
+                        got.push(embedding.values);
+                    }
+                    vectors = Some(got);
+                    break;
+                }
+
+                let detail = response.text().await.unwrap_or_default();
+                let detail: String = detail.chars().take(300).collect();
+                last = format!("batch embedding endpoint returned {status}: {detail}");
+                let transient = status.as_u16() == 429 || status.is_server_error();
+                if !transient {
+                    return Err(RagError::Embed(last));
+                }
+                tracing::warn!(attempt, %status, "batch embedding endpoint unavailable; retrying");
+            }
+
+            match vectors {
+                Some(v) => out.extend(v),
+                None => {
+                    return Err(RagError::Embed(format!(
+                        "batch embedding failed after {MAX_TRIES} attempts: {last}"
+                    )))
+                }
+            }
+        }
+
+        Ok(out)
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct BatchEmbedResponse {
+    embeddings: Vec<EmbeddingValues>,
 }
 
 #[derive(serde::Deserialize)]

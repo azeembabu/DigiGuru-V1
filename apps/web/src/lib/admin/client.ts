@@ -36,6 +36,8 @@ import type {
   SessionStatus,
   Student,
   StudentReport,
+  StudentPerformance,
+  TopPerformer,
   StudentReportRow,
   UserStatus,
 } from "@/lib/admin/types";
@@ -476,4 +478,18 @@ export function listStudentReports(
 
 export function getStudentReport(studentId: string): Promise<StudentReport> {
   return apiFetch<StudentReport>(`/admin/students/${studentId}/report`);
+}
+
+// ------------------------------------------------------------- performance
+
+export function getStudentPerformance(studentId: string): Promise<StudentPerformance> {
+  return apiFetch<StudentPerformance>(`/admin/students/${studentId}/performance`);
+}
+
+/** The best-performers board. `min_attempts` defaults server-side to the same
+ *  threshold a trophy needs, so the board and the trophy agree. */
+export function listTopPerformers(
+  params: { limit?: number; min_attempts?: number } = {},
+): Promise<TopPerformer[]> {
+  return apiFetch<TopPerformer[]>(`/admin/top-performers${query({ ...params })}`);
 }

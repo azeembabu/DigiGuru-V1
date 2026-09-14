@@ -142,10 +142,22 @@ pub async fn run_pipeline(
         crate::payload::validate_chunk(chunk)?;
     }
 
-    // EMBED.
-    let mut embeddings = Vec::with_capacity(enriched.len());
-    for chunk in &enriched {
-        embeddings.push(embedder.embed(&chunk.text).await?);
+    // EMBED. Batched, not one call per chunk: the free tier caps embedding at
+    // 1000 requests per day per project, and a per-chunk loop spends that on a
+    // few hundred chunks — which is exactly how a rebuild of this corpus ran
+    // out of quota midway and left retrieval empty. `embed_batch` returns one
+    // vector per input IN ORDER, and `upsert_chunks` pairs them positionally,
+    // so the length check below is load-bearing rather than defensive: a short
+    // or reordered response would attach each chunk to another chunk's
+    // embedding, and nothing downstream could tell.
+    let texts: Vec<String> = enriched.iter().map(|c| c.text.clone()).collect();
+    let embeddings = embedder.embed_batch(&texts).await?;
+    if embeddings.len() != enriched.len() {
+        return Err(crate::error::RagError::Embed(format!(
+            "embedder returned {} vectors for {} chunks",
+            embeddings.len(),
+            enriched.len()
+        )));
     }
 
     // UPSERT. Clear this document's previous points first so a retry or
@@ -155,7 +167,19 @@ pub async fn run_pipeline(
     dg_qdrant::upsert_chunks(qdrant, &enriched, &embeddings).await?;
 
     // PROMPT CACHE — `pcache:{block_id}` (`rag-pipeline.md` cost discipline).
-    let preamble_text = crate::preamble::build_preamble(ctx.block_no, &enriched);
+    // Built from every chapter indexed for this BLOCK, read back after the
+    // upsert above, not from `enriched` alone. `enriched` is one document; the
+    // outline describes the block, and writing one document's chapters into
+    // the block key made each ingest clobber the previous one.
+    let chapters = dg_qdrant::chapters_for_block(
+        qdrant,
+        ctx.program_id,
+        ctx.semester_no as i32,
+        ctx.course_id,
+        ctx.block_no as i32,
+    )
+    .await?;
+    let preamble_text = crate::preamble::build_preamble(ctx.block_no, &chapters);
     let cached = crate::preamble::register_preamble(redis, ctx.block_id, preamble_text).await?;
 
     // Low OCR confidence holds the document for review; it does not go live

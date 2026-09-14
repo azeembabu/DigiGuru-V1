@@ -21,7 +21,7 @@ use crate::day::{
 use crate::store::{QuotaStore, StoreError};
 
 /// The daily allowance: 20 minutes of active voice.
-pub const DAILY_QUOTA_MS: i64 = 20 * 60 * 1_000;
+pub const DAILY_QUOTA_MS: i64 = 60 * 60 * 1_000;
 
 /// Remaining allowance at which `quota_warning` is emitted — two minutes,
 /// matching the worked example in `api-conventions.md` and the "begin wrapping

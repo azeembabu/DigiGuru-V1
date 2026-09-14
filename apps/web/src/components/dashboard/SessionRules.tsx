@@ -21,7 +21,7 @@ const rules: {
   {
     icon: IconClock,
     iconClass: "text-indigo-400",
-    title: "20 minutes of speaking time",
+    title: "60 minutes of speaking time",
     body: "The clock counts only while the voice session is live. You get a warning before the time is up, and the session then ends on its own.",
   },
   {

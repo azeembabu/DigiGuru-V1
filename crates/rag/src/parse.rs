@@ -166,6 +166,149 @@ impl PdfParser for LopdfParser {
     }
 }
 
+/// `pdftotext`-backed implementation — the production parser.
+///
+/// **Why this exists.** [`LopdfParser`] cannot decode Identity-H / CID font
+/// encodings, which is how essentially every embedded-subset font in a real
+/// textbook is written. Instead of failing it emits the literal string
+/// `?Identity-H Unimplemented?` per unmapped glyph, and that string is what
+/// got chunked, embedded and stored: measured on this project's own corpus,
+/// **55% of indexed chunks contained it and 32% of every stored character was
+/// that placeholder**. Retrieval then "succeeded" and handed the tutor a
+/// context window of placeholders, so the tutor truthfully reported it could
+/// not find the topic in the textbook. The same pages extract cleanly through
+/// `pdftotext`.
+///
+/// **The dependency.** This shells out to `pdftotext` (poppler-utils) rather
+/// than binding a PDF library. That is a real external requirement — ingest
+/// hosts must have it on `PATH` — accepted deliberately: poppler is the
+/// reference implementation of this extraction, and the alternative that keeps
+/// everything in-process (`pdfium-render`) ships a native blob of its own.
+/// [`LopdfParser`] remains as the no-native-dependency fallback, and
+/// [`PopplerParser::available`] reports whether the binary is actually there,
+/// so a caller can choose rather than discover it mid-ingest.
+///
+/// Pages are extracted one at a time (`-f N -l N`) rather than split out of a
+/// whole-document dump on form feeds: a page whose own extraction fails then
+/// lands as an empty page routed to OCR review, exactly as a scan does,
+/// instead of silently shifting every subsequent page number by one. Page
+/// numbers are what `turn_state` cites to the student, so an off-by-one here
+/// is a wrong citation, not a cosmetic fault.
+pub struct PopplerParser;
+
+impl PopplerParser {
+    /// Whether `pdftotext` can actually be run. Checked before use so the
+    /// caller can fall back deliberately instead of failing per document.
+    pub fn available() -> bool {
+        std::process::Command::new("pdftotext")
+            .arg("-v")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok()
+    }
+
+    /// Total pages, from `pdfinfo`-free parsing: `pdftotext` needs an explicit
+    /// last page, and asking for one past the end is an error rather than an
+    /// empty result. `lopdf` is used only to count pages, which is the one
+    /// thing it does reliably regardless of font encoding.
+    fn page_count(bytes: &[u8]) -> Result<usize> {
+        let document =
+            lopdf::Document::load_mem(bytes).map_err(|e| RagError::Parse(e.to_string()))?;
+        Ok(document.get_pages().len())
+    }
+
+    fn extract_page(path: &std::path::Path, page: usize) -> String {
+        let out = std::process::Command::new("pdftotext")
+            .args([
+                "-f",
+                &page.to_string(),
+                "-l",
+                &page.to_string(),
+                "-enc",
+                "UTF-8",
+                // Reading order, NOT `-layout`. Measured on this corpus: with
+                // `-layout` a two-column page is reproduced visually, so every
+                // output line splices the left column to the right one and the
+                // chunker sees sentences that never existed ("1.6.2 Types and
+                // classification    making coke."). Plain mode follows the
+                // document order instead and yields whole paragraphs, which is
+                // the unit `rag-pipeline.md` chunks on. Losing the coordinates
+                // costs nothing here: `bbox` is already `None` either way.
+            ])
+            .arg(path)
+            .arg("-")
+            .output();
+
+        match out {
+            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
+            // A page that will not extract is not a parse failure for the
+            // document: it is reported as empty and picked up by the
+            // `looks_scanned` check below, which is what routes it to review.
+            Ok(o) => {
+                tracing::warn!(
+                    page,
+                    status = ?o.status.code(),
+                    stderr = %String::from_utf8_lossy(&o.stderr).trim(),
+                    "pdftotext could not extract this page; treating it as unreadable"
+                );
+                String::new()
+            }
+            Err(err) => {
+                tracing::warn!(page, %err, "could not run pdftotext for this page");
+                String::new()
+            }
+        }
+    }
+}
+
+impl PdfParser for PopplerParser {
+    fn parse(&self, bytes: &[u8]) -> Result<ParsedDocument> {
+        if !bytes.starts_with(b"%PDF-") {
+            return Err(RagError::Parse(
+                "file does not begin with the %PDF- signature".to_string(),
+            ));
+        }
+
+        let count = Self::page_count(bytes)?;
+        if count == 0 {
+            return Err(RagError::Parse("PDF contains no pages".to_string()));
+        }
+
+        // `pdftotext` reads a file, not a stream. The temporary lives exactly
+        // as long as this parse and is removed on drop, including on the error
+        // paths below — curriculum PDFs must not accumulate in the temp dir.
+        let dir = tempfile::tempdir().map_err(|e| RagError::Parse(e.to_string()))?;
+        let path = dir.path().join("input.pdf");
+        std::fs::write(&path, bytes).map_err(|e| RagError::Parse(e.to_string()))?;
+
+        let mut pages = Vec::with_capacity(count);
+        for page_number in 1..=count {
+            let text = Self::extract_page(&path, page_number);
+
+            let blocks = if text.trim().is_empty() {
+                Vec::new()
+            } else {
+                // `bbox` stays `None`: `-layout` preserves reading order but
+                // reports no coordinates. Chunking uses order, not geometry.
+                vec![TextBlock { text, bbox: None }]
+            };
+
+            let mut page = ParsedPage {
+                page_number: page_number as i32,
+                blocks,
+                ocr_confidence: None,
+            };
+            if page.looks_scanned() {
+                page.ocr_confidence = Some(0.0);
+            }
+            pages.push(page);
+        }
+
+        Ok(ParsedDocument { pages })
+    }
+}
+
 /// Deterministic parser for tests and for exercising the pipeline without a
 /// real PDF. It returns exactly the pages it was constructed with — it does
 /// not read the bytes it is handed, and is never used on the ingest path.

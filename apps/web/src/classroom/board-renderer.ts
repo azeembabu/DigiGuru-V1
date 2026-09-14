@@ -58,6 +58,47 @@ const BOARD_FONT =
 const MONO_FONT = '"Cascadia Code", "Consolas", "DejaVu Sans Mono", ui-monospace, monospace';
 
 /**
+ * Complex-script text that must never be typeset as maths.
+ *
+ * MathJax lays a formula out glyph by glyph: every character becomes its own
+ * positioned `<path>`. That is exactly right for `x^2` and exactly wrong for
+ * Malayalam, which is a *shaped* script — consonants fuse into conjuncts and
+ * vowel signs reorder around the consonant they attach to, none of which a
+ * per-glyph layout engine performs. The result is the right codepoints in
+ * visibly wrong shapes and wrong places: the board shows the student mangled
+ * spelling of their own language, which is worse than showing nothing because
+ * it carries the authority of the textbook.
+ *
+ * The model really does put Malayalam inside `math` ops — a
+ * "term = definition" line reads as an equation to it — so this is not a
+ * hypothetical. Detection is on the *script*, not on the model's intent: any
+ * Devanagari, Bengali, Tamil, Telugu, Kannada or Malayalam codepoint means the
+ * line is prose and is drawn as prose. A pure-LaTeX formula matches nothing
+ * here and still typesets exactly as before.
+ */
+const COMPLEX_SCRIPT = /[ऀ-ൿ]/u;
+
+/**
+ * Strips the LaTeX scaffolding off a line that turned out to be prose.
+ *
+ * A model writing a Malayalam definition as an equation still wraps it in
+ * maths markup — `\text{...}`, `$...$`, `\;` spacing. Drawing that verbatim
+ * would put backslashes and braces on the board next to the words, so the
+ * wrapper comes off and the sentence inside is what the student reads. Only
+ * the wrappers are removed; the text itself is never rewritten.
+ */
+function stripMathMarkup(latex: string): string {
+  return latex
+    .replace(/\\(?:text|mathrm|textrm|mbox|textit|mathit|textbf|mathbf)\s*\{([^{}]*)\}/g, "$1")
+    .replace(/\\[,;:!]/g, " ")
+    .replace(/\\quad|\\qquad/g, "  ")
+    .replace(/[$]/g, "")
+    .replace(/\\\\/g, "\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
+/**
  * Resolves once the board face is actually loaded.
  *
  * Fabric lays a Textbox out the moment it is constructed, so text built before
@@ -742,20 +783,25 @@ export class BoardRenderer {
 
       case "math": {
         this.ensureRoom(0.08);
+        // A `math` op carrying Malayalam is prose, whatever the model labelled
+        // it. Typesetting it produces broken conjuncts and misplaced vowel
+        // signs (see `COMPLEX_SCRIPT`), so it is drawn as text in the board
+        // face — which shapes it correctly — and never sent to MathJax.
+        const isProse = COMPLEX_SCRIPT.test(op.latex);
         // Typeset properly — see `math-render.ts`. The source text below is the
         // fallback for LaTeX MathJax cannot parse; it is drawn immediately so
         // the board is never empty, and replaced in place once the SVG is
         // ready. A student copying from the board must see a fraction, not
         // `\frac{a}{b}`.
-        void this.typesetMath(op.id, op.latex, width, height * this.flowY);
-        const text = new fabric.Textbox(op.latex, {
+        if (!isProse) void this.typesetMath(op.id, op.latex, width, height * this.flowY);
+        const text = new fabric.Textbox(isProse ? stripMathMarkup(op.latex) : op.latex, {
           left: width * 0.08,
           top: height * this.flowY,
           width: width * 0.84,
           fontSize: Math.max(13, Math.round(width * 0.018)),
           fill: CHALK_MINT,
           shadow: chalkGlow("rgba(196, 235, 205, 0.4)"),
-          fontFamily: MONO_FONT,
+          fontFamily: isProse ? BOARD_FONT : MONO_FONT,
           originX: "left",
           originY: "top",
           selectable: false,

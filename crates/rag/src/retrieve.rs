@@ -140,17 +140,30 @@ pub async fn retrieve(
     let dense_results = search_dense(client, &filter, dense_vector).await?;
     let sparse_results = search_sparse(client, &filter, &normalised_question, lang).await?;
 
+    // The abstention signal is the best DENSE COSINE, captured before fusion
+    // and before reranking. See `abstain::ABSTAIN_THRESHOLD` for why it is this
+    // number and not the RRF score or the reranker's: in short, RRF scores live
+    // on a scale where no threshold is meaningful, and the stub reranker scores
+    // lexical overlap, which is zero for a Malayalam question over an English
+    // corpus and made every question abstain.
+    //
+    // `search_dense` returns Qdrant's ordering, so the first result is the best
+    // match. An empty dense leg means nothing cleared the four mandatory
+    // filters, which is an abstention on its own terms.
+    let retrieval_score = dense_results.first().map(|c| c.score).unwrap_or(0.0);
+
     let fused = rrf_fuse(dense_results, sparse_results);
     if fused.is_empty() {
         return Ok(RetrievalOutcome::Abstain);
     }
 
-    let reranked = StubReranker.rerank(&normalised_question, fused);
-
-    let top_score = reranked.first().map(|c| c.score).unwrap_or(0.0);
-    if should_abstain(top_score) {
+    if should_abstain(retrieval_score) {
         return Ok(RetrievalOutcome::Abstain);
     }
+
+    // Reranking decides ORDER and the 2..3 cut (E-27). It does not decide
+    // whether we retrieved anything worth teaching.
+    let reranked = StubReranker.rerank(&normalised_question, fused);
 
     Ok(RetrievalOutcome::Chunks(reranked))
 }
@@ -337,5 +350,63 @@ mod filter_tests {
     fn a_chosen_unit_adds_a_fifth_condition_rather_than_replacing_one() {
         let narrowed = mandatory_filter(&query(Some(DocumentId::from_uuid(Uuid::new_v4()))));
         assert_eq!(narrowed.must.len(), 5);
+    }
+}
+
+#[cfg(test)]
+mod abstain_tests {
+    use super::*;
+
+    fn chunk(text: &str, para_index: i32) -> RetrievedChunk {
+        RetrievedChunk {
+            document_id: DocumentId::from(uuid::Uuid::nil()),
+            chapter: "Unit 3 Forest Resources".to_string(),
+            topic: "Deforestation".to_string(),
+            page: 5,
+            para_index,
+            text: text.to_string(),
+            lang: "en".to_string(),
+            score: 0.0,
+        }
+    }
+
+    /// A question in one language, against a corpus in another, must NOT
+    /// abstain when retrieval actually found the passage.
+    ///
+    /// Regression test for a live failure. `StubReranker` replaces `score`
+    /// with Jaccard word overlap between question and chunk; abstention was
+    /// read off that. A Malayalam question over an English corpus has zero
+    /// overlap BY CONSTRUCTION, so every question abstained and the tutor told
+    /// the student, topic after topic, that their syllabus did not cover it —
+    /// while the passage sat in the corpus. The floor belongs on the retrieval
+    /// score, which is language-agnostic because the embedding is.
+    #[test]
+    fn a_cross_language_question_does_not_abstain_when_retrieval_succeeded() {
+        // What Qdrant actually returns for an on-topic Malayalam question,
+        // measured against the real corpus: a dense cosine of ~0.62.
+        let mut hit = chunk("deforestation is the destruction of forests", 1);
+        hit.score = 0.6182;
+        let dense = vec![hit];
+        let retrieval_score = dense[0].score;
+
+        let fused = rrf_fuse(dense, vec![]);
+        let reranked = StubReranker.rerank("വനനാശം എന്താണ്", fused);
+        assert_eq!(
+            reranked[0].score, 0.0,
+            "precondition: lexical overlap across scripts is zero"
+        );
+
+        assert!(
+            !crate::abstain::should_abstain(retrieval_score),
+            "retrieval found the passage; abstaining would deny a covered topic"
+        );
+    }
+
+    /// The floor still does its job in the other direction: an off-topic
+    /// question, measured at ~0.56 against this corpus, must still abstain.
+    #[test]
+    fn an_off_topic_question_still_abstains() {
+        assert!(crate::abstain::should_abstain(0.5625));
+        assert!(rrf_fuse(vec![], vec![]).is_empty());
     }
 }

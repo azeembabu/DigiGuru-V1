@@ -108,7 +108,7 @@ pub fn board_ops_declaration() -> Value {
                                 "enum": ["heading", "bullets", "math", "draw", "image",
                                          "highlight", "bar_chart", "pie_chart", "flow"],
                                 "description": "Which kind of operation this is, and it \
-    decides which other fields you MUST also set: heading needs text and page; bullets needs \
+    decides which other fields you MUST also set: heading needs text; bullets needs \
     items (a non-empty array of strings); math needs latex; draw needs shape, from and to; \
     image needs ref; highlight needs target; bar_chart and pie_chart need title and series; \
     flow needs title and steps. An op missing its required field is discarded."
@@ -119,8 +119,9 @@ pub fn board_ops_declaration() -> Value {
                             },
                             "page": {
                                 "type": "integer",
-                                "description": "heading: the textbook page this heading \
-    is cited from. Must be 1 or greater and must come from the retrieved chunk payload."
+                                "description": "heading: OPTIONAL. The textbook page, \
+    if the retrieved excerpt gives one. Omit it rather than guessing - the page the student \
+    is shown comes from the retrieval payload, not from this field."
                             },
                             "items": {
                                 "type": "array",
@@ -268,30 +269,45 @@ fn speech_config(config: &GeminiLiveConfig) -> Value {
     cfg
 }
 
-/// Turn detection is the **client's** job, not the service's.
+/// Turn detection is the SERVICE's, not the client's.
 ///
-/// Automatic detection was tried both ways round and neither works in a browser
-/// playing the tutor through speakers:
+/// `automaticActivityDetection` is left enabled and both sensitivities are
+/// `*_UNSPECIFIED`, which is the documented "use the server default" value —
+/// the middle setting, since the API defines only UNSPECIFIED / HIGH / LOW and
+/// has no MEDIUM. `prefixPaddingMs` and `silenceDurationMs` are omitted for the
+/// same reason: the server's defaults (~800 ms of silence to close a turn) are
+/// the tuned ones, and inventing numbers here is how a turn starts closing
+/// mid-sentence.
 ///
-/// * With the microphone gated while the tutor speaks, the model never hears
-///   the student and cannot be interrupted at all.
-/// * With the microphone open, the model hears its own voice bleeding back
-///   through the speakers, treats it as the student speaking, and interrupts
-///   itself — observed as every tutor sentence cut off mid-word and the
-///   student's transcript arriving as disconnected fragments.
+/// This replaces a hand-rolled browser VAD that declared turns with
+/// `activityStart`/`activityEnd`. That approach kept opening turns on room
+/// noise and on the tutor's own voice returning through the speakers, and each
+/// re-tune traded one failure for the other.
 ///
-/// The two failures have the same root: the service cannot tell the student's
-/// voice from its own echo, and only the client has the information needed to
-/// decide — it knows exactly what it is playing, and how loud that comes back.
-/// So detection moves to the client, which declares turns explicitly with
-/// `activityStart` / `activityEnd`.
-///
-/// Verified against the live endpoint before being relied on: a setup the
-/// service rejects closes the socket with 1007 and the classroom silently falls
-/// back to defaults.
+/// **`activityStart`/`activityEnd` must not be sent while this is enabled** —
+/// the API accepts activity signals "only if automatic (i.e. server-side)
+/// activity detection is disabled". `send_activity` is therefore a no-op; see
+/// its body.
 fn realtime_input_config() -> Value {
     json!({
-        "automaticActivityDetection": { "disabled": true }
+        "automaticActivityDetection": {
+            "disabled": false,
+            // LOW on both ends, tuned from a live classroom rather than chosen
+            // a priori. At the server default the detector opened turns on
+            // small room sounds and on the tutor's own voice returning through
+            // loudspeakers, and every such false start cancelled the tutor
+            // mid-sentence — heard as speech that "breaks", only parts audible.
+            // LOW start sensitivity needs clearer speech to open a turn; LOW end
+            // sensitivity needs a clearer stop to close one, so a pause for
+            // thought no longer ends the student's question.
+            "startOfSpeechSensitivity": "START_SENSITIVITY_LOW",
+            "endOfSpeechSensitivity": "END_SENSITIVITY_LOW",
+            // Above the ~800 ms server default and inside the 500-800 ms band
+            // the Live guide recommends only for latency; a second-language
+            // speaker pauses longer mid-sentence than that band assumes, and a
+            // turn closed at the first gap answers half a question.
+            "silenceDurationMs": 1000
+        }
     })
 }
 
@@ -653,11 +669,24 @@ pub fn board_ops_from_args(args: &Value, seq: u32) -> crate::error::Result<Board
         match serde_json::from_value::<BoardOp>(raw.clone()) {
             Ok(op) => ops.push(op),
             Err(e) => {
+                // The payload itself, so a malformed call is diagnosable from the
+                // log rather than reconstructed from guesswork: the schema keys on
+                // `op`, and "missing field `op`" alone does not say whether the
+                // model wrote `kind`, wrote nothing, or wrapped the op in another
+                // object. Truncated: this is board copy, never student data, but
+                // a runaway payload must not flood the log. Debug-level, because
+                // the warn above is the operational signal; this is the evidence.
+                let mut shown = raw.to_string();
+                if shown.len() > 400 {
+                    shown.truncate(400);
+                    shown.push('…');
+                }
                 tracing::warn!(
                     index,
                     error = %e,
                     "board op did not match the schema; dropped, rest of the turn kept"
                 );
+                tracing::debug!(index, payload = %shown, "rejected board op payload");
             }
         }
     }
@@ -728,7 +757,11 @@ mod tests {
     fn the_tool_declaration_states_the_per_kind_required_fields() {
         let decl = super::board_ops_declaration().to_string();
         assert!(decl.contains("bullets needs items"), "got: {decl}");
-        assert!(decl.contains("heading needs text and page"), "got: {decl}");
+        // `page` is deliberately NOT demanded of the model: requiring it made
+        // every page-less heading - which is what the model actually sends -
+        // fail the schema and take the whole board down with it.
+        assert!(decl.contains("heading needs text;"), "got: {decl}");
+        assert!(!decl.contains("heading needs text and page"), "got: {decl}");
     }
 
     #[test]
@@ -743,19 +776,25 @@ mod tests {
         assert_eq!(ctx["clientContent"]["turnComplete"], false);
     }
 
-    /// Turn detection is the client's, not the service's — see
-    /// `realtime_input_config` for why neither automatic mode works in a
-    /// browser playing the tutor through speakers.
+    /// Turn detection is the SERVICE's. `disabled` must stay `false` and both
+    /// sensitivities must stay at the documented default: the API has no
+    /// MEDIUM, so `*_UNSPECIFIED` is the middle setting. A stray `true` here
+    /// silently hands turn-taking back to a browser detector that no longer
+    /// sends activity frames, and the tutor would never answer at all.
     #[test]
-    fn setup_disables_automatic_turn_detection() {
+    fn setup_enables_server_side_turn_detection() {
         let setup = setup_message(&GeminiLiveConfig::new("k", "grounded instruction"));
         let vad = &setup["setup"]["realtimeInputConfig"]["automaticActivityDetection"];
-        assert_eq!(vad["disabled"], true);
+        assert_eq!(vad["disabled"], false);
+        assert_eq!(vad["startOfSpeechSensitivity"], "START_SENSITIVITY_LOW");
+        assert_eq!(vad["endOfSpeechSensitivity"], "END_SENSITIVITY_LOW");
+        assert_eq!(vad["silenceDurationMs"], 1000);
     }
 
-    /// The frames that replace it. Their exact shape is what the service
-    /// accepts; a typo here means turns that never start or never end, with no
-    /// error either way.
+    /// Retained for the client-detection path. These are NOT sent while
+    /// server-side detection is on — the API accepts them only when it is
+    /// disabled — but their shape is pinned so the path still works if turn
+    /// detection ever moves back to the browser.
     #[test]
     fn activity_frames_have_the_shape_the_service_accepts() {
         assert_eq!(

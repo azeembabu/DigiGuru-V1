@@ -15,7 +15,7 @@ const features: { icon: ComponentType<{ className?: string }>; title: string; bo
   {
     icon: IconClock,
     title: "Built for focus",
-    body: "Sessions are capped at 20 minutes, so a lesson stays sharp instead of drifting into rambling.",
+    body: "Sessions are capped at 60 minutes, so a lesson stays sharp instead of drifting into rambling.",
   },
   {
     icon: IconPin,

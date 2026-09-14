@@ -312,7 +312,7 @@ Filters: `status` (`in_progress|completed|abandoned`), `end_reason`
 descending.
 
 `active_voice_ms` is the NN-3 server-authoritative figure and never exceeds
-1200000. `end_reason` is `null` while a session is still running.
+3600000. `end_reason` is `null` while a session is still running.
 
 ```json
 [ { "id": "uuid", "student_id": "uuid", "student_name": "string",
@@ -780,8 +780,8 @@ in six stages and each would re-resolve the same `students` row.
     "page_number": 0, "para_index": null,
     "progress_percentage": 0.0, "resume_summary": "string|null",
     "last_active_at": "RFC3339" },
-  "quota_status": { "minutes_used": 0, "minutes_max": 20,
-    "ms_used": 0, "ms_remaining": 1200000,
+  "quota_status": { "minutes_used": 0, "minutes_max": 60,
+    "ms_used": 0, "ms_remaining": 3600000,
     "is_locked": false, "resets_at": "RFC3339", "timezone": "string" },
   "exam_history": [ { "attempt_id": "uuid", "exam_id": "uuid",
     "exam_title": "string", "score": 8.0, "max_score": 10.0,
@@ -802,7 +802,7 @@ in six stages and each would re-resolve the same `students` row.
   course -> block -> chapter -> page.
 - `quota_status` is a **read** of the NN-3 ledger and never charges or extends
   it — only the socket task holding a live session may. `minutes_max` is
-  derived from the ledger's own 20-minute constant, and `resets_at` is the next
+  derived from the ledger's own 60-minute constant, and `resets_at` is the next
   midnight in `students.timezone`, so a student is never told their allowance
   resets at a UTC hour that is mid-afternoon for them. `timezone` is echoed so
   a client can render "resets in N hours" without guessing.
@@ -1143,6 +1143,150 @@ for a unit that cannot be in this block and would find nothing at all. Teaching
 the whole block is the correct fallback, and failing a lesson over a stale
 bookmark would not be.
 
+### Performance and the assessment page
+
+How a student is doing, shown to the student on their own assessment page and
+to an admin on that student's record. **There is no performance store.** Every
+figure — average, best, level, stars, trophy, weak topics — is computed at read
+time from `exam_attempts`, `exam_attempt_answers` and `learning_sessions`, the
+same rows the student's own submit writes. Both audiences run the *same*
+derivation over the *same* rows, which is why they cannot disagree; a stored
+`performance_level` column would be a second copy free to drift, and is exactly
+what this design refuses, for the reason "Student reports" gives for having no
+mirrored gradebook.
+
+| Method | Path | Capability |
+|---|---|---|
+| GET | `/api/v1/student/performance` | `ViewOwnContext` **and** `ViewOwnExams` — self-only |
+| PUT | `/api/v1/student/performance/blocks/{block_id}/remark` | `ViewOwnContext` — self-only |
+| GET | `/api/v1/admin/students/{student_id}/performance` | `ManagePrograms`, scoped via `student -> program_id` |
+| GET | `/api/v1/admin/top-performers` | `ManagePrograms`; the board is scoped for a sub-admin |
+
+#### A block is the unit of assessment
+
+Rows are per **block**, not per unit. That is where assessment actually
+attaches: `exams.block_id` and `learning_sessions.block_id` are both NOT NULL,
+while an uploaded unit (a `documents` row) carries no score of its own. A
+per-unit figure would have to be invented rather than measured.
+
+#### `null` is "not assessed" and is never `0`
+
+`average_percentage`, `best_percentage` and `stars` are `null` for a block with
+no graded attempt. `0` is a measured result — a student who sat the paper and
+scored nothing — and rendering the two identically tells a student they failed
+something they never took. `level` carries `not_assessed` for the same reason,
+as a value distinct from `needs_work`.
+
+Bands are fixed and server-side (`crates/core/src/performance.rs`), inclusive at
+the bottom: `excellent` >= 90, `strong` >= 75, `proficient` >= 60,
+`developing` >= 45, `needs_work` below that. Stars are 5/4/3/2/1 on the same
+boundaries. A graded score always earns at least one star — having sat the paper
+badly is not the same as not having sat it. The client picks the icon; it never
+picks the band.
+
+#### `GET /api/v1/student/performance`
+
+Takes optional `course_id`. **Not paginated** — a student has a handful of
+courses and each a handful of blocks, so this is a screen rendered whole, like
+the syllabus routes. Blocks with no attempt and no session are **included**: a
+block the student has not started is the thing they most need to see.
+
+Starts from `student_courses` with the caller's own id bound, `status =
+'active'` only. A `dropped` or `completed` enrolment is a historical record, not
+a licence to keep being assessed on it.
+
+```json
+{ "summary": { "blocks_total": 6, "blocks_assessed": 3, "attempts_graded": 5,
+    "average_percentage": 72.4, "best_percentage": 90.0,
+    "level": "proficient", "level_label": "Proficient", "stars": 3,
+    "trophy": "bronze", "attempts_until_trophy": 0,
+    "total_active_voice_ms": 5400000 },
+  "blocks": [ { "block_id": "uuid", "block_no": 3, "block_title": "string",
+    "course_id": "uuid", "course_code": "string", "course_name": "string",
+    "semester_number": 1,
+    "exams_available": 2, "attempts_total": 3, "attempts_graded": 2,
+    "average_percentage": 80.0, "best_percentage": 90.0,
+    "level": "strong", "level_label": "Strong", "stars": 4,
+    "sessions_total": 4, "sessions_completed": 3, "active_voice_ms": 1800000,
+    "last_studied_at": "RFC3339|null",
+    "weak_topics": [ { "topic": "string", "missed_count": 2 } ],
+    "remark": "string|null", "remark_updated_at": "RFC3339|null" } ] }
+```
+
+`summary.average_percentage` is weighted by graded attempts, not a mean of the
+per-block averages — a block with one paper must not count as much as one with
+nine. `weak_topics` is at most 5 per block and counts only answers actually
+marked wrong; a NULL `is_correct` belongs to an ungraded attempt and must not
+invent weakness from an abandoned paper.
+
+`trophy` needs at least **3** graded attempts behind the average before it is
+awarded at all (`gold` >= 90, `silver` >= 75, `bronze` >= 60; nothing below).
+A trophy a single lucky paper could win says nothing about the student's work.
+`attempts_until_trophy` counts down to that minimum and floors at `0`, so a
+client can say "2 more to go" rather than leaving a missing medal unexplained.
+
+#### `PUT /api/v1/student/performance/blocks/{block_id}/remark`
+
+The student's own written reflection on a block — the **only** thing on this
+page that is stored rather than derived, in `student_block_remarks`, one row per
+`(student_id, block_id)`. Body `{ "remark": "string" }`, at most **2000
+characters** counted in `chars()` not bytes, so a Malayalam remark is not
+silently given a third of the room an English one gets.
+
+Upsert, and idempotent: the same body twice leaves one row. An empty or
+whitespace-only remark **clears** it — "I deleted what I wrote" and "I never
+wrote anything" are the same state to the student.
+
+The `block_id` is checked against the caller's own active enrolments before
+anything is written. A block outside them answers `404`, never `403`, which
+would confirm the id exists.
+
+```json
+{ "block_id": "uuid", "remark": "string|null", "remark_updated_at": "RFC3339|null" }
+```
+
+There is deliberately **no admin write path** to a remark. An admin reading a
+student's record sees it, because it is context for the numbers, but a remark an
+admin could edit would stop being the student's own words.
+
+#### `GET /api/v1/admin/students/{student_id}/performance`
+
+The same `blocks` and `summary` shapes, plus the student's identity header.
+Additive: `GET /admin/students/{id}/report` is unchanged and still served — that
+is the attempt-level record, this is the per-block one.
+
+```json
+{ "student_id": "uuid", "student_name": "string", "roll_number": "string",
+  "program_name": "string", "semester_number": 1, "lsc_code": "string|null",
+  "summary": { }, "blocks": [ ] }
+```
+
+#### `GET /api/v1/admin/top-performers`
+
+The best-performers board on the admin students page. Query `limit` (1-200,
+default 10) and `min_attempts` (>= 1, default 3), both validated rather than
+clamped. A bare JSON array, ordered by average descending with `roll_number`
+breaking ties so the board does not reshuffle between refreshes.
+
+Two properties are enforced in SQL, not in the client:
+
+- Only **graded** attempts count. An average over submitted-but-unmarked papers
+  would rank students on work nobody has marked.
+- A student below `min_attempts` graded papers does not appear **at all**.
+  Ranking one paper against twenty is a sampling artefact, not a leaderboard —
+  the same evidence threshold `trophy` uses, so the two agree.
+
+`rank` is assigned server-side after ordering, so a client renders the position
+rather than inferring it from an array it might re-sort.
+
+```json
+[ { "rank": 1, "student_id": "uuid", "student_name": "string",
+    "roll_number": "string", "program_name": "string", "semester_number": 1,
+    "attempts_graded": 7, "average_percentage": 91.2, "best_percentage": 98.0,
+    "level": "excellent", "level_label": "Excellent", "stars": 5,
+    "trophy": "gold" } ]
+```
+
 ### Student reports
 
 | Method | Path | Capability |
@@ -1255,7 +1399,7 @@ JSON control messages. Every control message has `type` and, where it belongs to
 ```jsonc
 { "type": "session_ready", "session_id": "uuid", "is_first_login": false,
   "context": { "program": "BA Malayalam", "semester": 1, "block_no": 3 },
-  "quota_remaining_ms": 1200000 }
+  "quota_remaining_ms": 3600000 }
 { "type": "board_ops",     "seq": 42, "clear_first": false, "ops": [ ... ] }
 { "type": "turn_state",    "seq": 42, "chapter": "3", "topic": "...", "page": 57 }
 { "type": "turn_complete", "seq": 42, "interrupted": false }
@@ -1265,32 +1409,48 @@ JSON control messages. Every control message has `type` and, where it belongs to
 { "type": "error",         "code": "UPSTREAM_UNAVAILABLE", "message": "..." }
 ```
 
-### Turn-taking is the client's
+### Turn-taking is the service's
 
-Gemini Live's automatic turn detection is **disabled**
-(`realtimeInputConfig.automaticActivityDetection.disabled = true`). The client
-runs the detector and declares boundaries with `activity`, and the gateway
-forwards them upstream as `activityStart` / `activityEnd`.
+Gemini Live's automatic turn detection is **enabled**
+(`realtimeInputConfig.automaticActivityDetection.disabled = false`) with
+`startOfSpeechSensitivity = START_SENSITIVITY_LOW`,
+`endOfSpeechSensitivity = END_SENSITIVITY_LOW` and `silenceDurationMs = 1000`.
+The API defines only `UNSPECIFIED | HIGH | LOW` — there is no `MEDIUM`. The
+server default (`UNSPECIFIED`, ~800 ms) was tried first and opened turns on
+small room sounds and on the tutor's own voice from loudspeakers, cancelling the
+tutor mid-sentence; LOW/LOW needs clearer speech to open a turn and a clearer
+stop to close one, and 1000 ms lets a second-language speaker pause mid-question
+without being answered half-way. `prefixPaddingMs` is left at the server default.
 
-That is not a preference. Neither automatic setting works in a browser playing
-the tutor through speakers: with the microphone gated while the tutor speaks the
-model never hears an interruption, and with it open the model hears its own voice
-bleeding back, takes it for the student and interrupts itself — observed as every
-tutor sentence cut off mid-word and the student's transcript arriving as
-fragments. Only the client can tell the two apart, because only the client knows
-what it is playing and how loudly that returns to the microphone.
+*Changed 2026-09-14 by the product owner.* This reverses the earlier decision
+to run a browser-side detector and declare turns with `activityStart` /
+`activityEnd`. That detector opened turns on room noise and on the tutor's own
+voice returning through the speakers, and each re-tune traded one failure for
+the other — four rounds of it are in the git history. The service's detector
+sees the audio itself and has the tuning we do not.
 
 Consequences a client must honour:
 
-- Audio frames are sent **only between** `activity{speaking:true}` and
-  `activity{speaking:false}`. Streaming outside a declared turn puts the tutor's
-  own bleed into the model's ear, which is the failure above.
-- `activity{speaking:true}` during a tutor turn **is** the interruption; there is
-  no separate interrupt message. The client should also flush local playback at
-  that moment, so the speakers go quiet without waiting for the round trip.
-- The model answers on `activity{speaking:false}`, so it must not be sent until
-  the client's VAD hangover has elapsed — sending it at the first gap between
-  words is what makes the tutor answer half a sentence.
+- The microphone streams **continuously**, from mic start to session end, as the
+  reference Live client does. The service can only hear a turn begin in audio it
+  is sent; gating the stream on a local decision means the tutor never answers.
+- `activity{speaking:…}` is still sent, but it is now **advisory only**: it says
+  what the client's local detector believes, which drives the "hearing you"
+  indicator and lets the client flush its own playback the instant it thinks the
+  student spoke. The gateway does **not** forward it upstream — the Live API
+  accepts `activityStart`/`activityEnd` only while automatic detection is
+  disabled, and sending them alongside an enabled detector is a protocol error.
+- Interruption is the service's: speech it hears while the tutor is talking ends
+  the tutor's turn. There is no client-side interrupt message.
+- **Echo is gated client-side, not just cancelled.** The tutor's voice reaches
+  the microphone whenever it leaves the speakers, and browser `echoCancellation`
+  alone did not stop it reaching the model. So while the tutor is audible the
+  client learns the bleed level and sends **digital silence** in place of any
+  frame not clearly louder than it (`ClassroomSession` echo gate). The stream
+  stays continuous — the service needs an unbroken stream — but the echo is
+  blanked out of it. Real barge-in survives because a student speaking over the
+  tutor is louder than the bleed and passes through. A headset remains the
+  reliable configuration; the gate is what makes loudspeakers workable.
 
 ### Rules
 
@@ -1302,10 +1462,13 @@ Consequences a client must honour:
   turn was genuinely cut short (the student barged in, or Live reported an interruption); the
   client flushes its playback jitter buffer on `true`. A normal turn end is `false` (the field
   may be omitted and defaults to `false`) — sending `true` as a blanket "turn is over" signal
-  would clip the legitimately queued tail off the end of every explanation. It is advisory:
-  the client also barges in locally on its own VAD without waiting for this frame, and the
-  `SyncGate` remains the sole authority on when audio is *released* (NN-1 is unaffected either
-  way).
+  would clip the legitimately queued tail off the end of every explanation. With turn
+  detection now the service's, this frame **is** how an interruption reaches the client:
+  the gateway forwards `serverContent.interrupted` as-is and also discards any audio still
+  held for that turn (`SyncGate::discard`), so a cancelled turn can never play later. The
+  client's local detector may still flush playback early as a latency courtesy, but it is
+  advisory. The `SyncGate` remains the sole authority on when audio is *released* (NN-1 is
+  unaffected either way).
 - `transcript` is a caption, not a control frame — `source` is `"tutor"` or `"student"`. It
   carries no `seq` and is not subject to NN-1 ordering: it is a running record of speech, not a
   visual the audio must wait behind. Partial and incremental per side (the service emits it as

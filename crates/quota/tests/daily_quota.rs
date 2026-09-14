@@ -1,6 +1,6 @@
 //! NN-3 conformance tests for the daily active-voice ledger.
 //!
-//! `testing.md`: "Cap fires at 1200 s of active voice with a skewed client
+//! `testing.md`: "Cap fires at 3600 s of active voice with a skewed client
 //! clock." Every test drives a `TestClock` by hand — no sleeps, no Redis.
 
 use chrono::{TimeZone, Utc};
@@ -82,14 +82,19 @@ async fn active_voice_is_charged_once_per_interval() {
 // The cap.
 // ---------------------------------------------------------------------------
 
-/// The core NN-3 property: exhaustion at exactly 1 200 s of active voice, and
-/// the documented end reason and close code.
+/// The core NN-3 property: exhaustion at exactly the daily allowance of active
+/// voice, and the documented end reason and close code.
+///
+/// Written against `DAILY_QUOTA_MS` rather than a literal. The cap moved from
+/// twenty minutes to sixty on the product owner's instruction, and a test that
+/// spells the old number out fails for the wrong reason when that happens —
+/// it is asserting the value of the constant, not the behaviour it governs.
 #[tokio::test]
-async fn quota_fires_at_exactly_1200_seconds_of_active_voice() {
+async fn quota_fires_at_exactly_the_daily_allowance_of_active_voice() {
     let (clock, _student, mut ledger) = ledger("Asia/Kolkata", at(2026, 9, 13, 6, 0));
     ledger.voice_started().await.expect("voice on");
 
-    clock.advance_ms(1_199_999);
+    clock.advance_ms((DAILY_QUOTA_MS - 1) as u64);
     let status = ledger.tick().await.expect("tick");
     assert_eq!(status.remaining_ms, 1);
     assert_eq!(status.state, QuotaState::Warning, "not yet exhausted");
@@ -112,10 +117,10 @@ async fn quota_fires_at_exactly_1200_seconds_of_active_voice() {
 }
 
 /// A client that lies about elapsed time — or whose wall clock is two hours
-/// fast — changes nothing: the cap still fires at 1 200 s of server-measured
+/// fast — changes nothing: the cap still fires at the allowance of server-measured
 /// active voice.
 #[tokio::test]
-async fn a_skewed_client_clock_is_ignored_and_the_cap_still_fires_at_1200_seconds() {
+async fn a_skewed_client_clock_is_ignored_and_the_cap_still_fires_on_server_time() {
     let (clock, _student, mut ledger) = ledger("Asia/Kolkata", at(2026, 9, 13, 6, 0));
     ledger.voice_started().await.expect("voice on");
 
@@ -136,7 +141,7 @@ async fn a_skewed_client_clock_is_ignored_and_the_cap_still_fires_at_1200_second
             break;
         }
     }
-    assert_eq!(server_ms, DAILY_QUOTA_MS, "fired at exactly 1200 s, not sooner or later");
+    assert_eq!(server_ms, DAILY_QUOTA_MS, "fired at exactly the allowance, not sooner or later");
 }
 
 /// A wall-clock step (NTP correction, operator change) must not be mistaken for
@@ -301,24 +306,28 @@ async fn two_sessions_for_one_student_share_the_same_daily_allowance() {
     let mut first = QuotaLedger::new(student, DEFAULT_TIMEZONE, clock.clone(), store.clone());
     let mut second = QuotaLedger::new(student, DEFAULT_TIMEZONE, clock.clone(), store.clone());
 
+    // Half the allowance each, so the pair exactly exhausts it whatever the
+    // cap is set to.
+    let half = DAILY_QUOTA_MS / 2;
+
     first.voice_started().await.expect("voice on");
-    clock.advance_ms(600_000);
+    clock.advance_ms(half as u64);
     let a = first.tick().await.expect("tick");
-    assert_eq!(a.used_ms, 600_000);
+    assert_eq!(a.used_ms, half);
 
     // The second socket sees the first socket's spend, not a fresh allowance.
     let b = second.tick().await.expect("tick");
     assert_eq!(b.day_key, a.day_key);
-    assert_eq!(b.used_ms, 600_000);
-    assert_eq!(b.remaining_ms, DAILY_QUOTA_MS - 600_000);
+    assert_eq!(b.used_ms, half);
+    assert_eq!(b.remaining_ms, DAILY_QUOTA_MS - half);
 
     // And spending on the second socket counts against the same total.
     second.voice_started().await.expect("voice on");
-    clock.advance_ms(600_000);
+    clock.advance_ms(half as u64);
     let b = second.tick().await.expect("tick");
     assert_eq!(
-        b.used_ms, 1_200_000,
-        "the second socket's ten minutes landed on the same day key as the first's"
+        b.used_ms, DAILY_QUOTA_MS,
+        "the second socket's half landed on the same day key as the first's"
     );
     assert!(b.is_exhausted(), "the shared allowance is spent");
 }

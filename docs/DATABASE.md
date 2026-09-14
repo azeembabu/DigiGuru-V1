@@ -135,6 +135,96 @@ A non-empty list, and `POST /student/exams/{id}/attempts` returning a paper with
 `total_questions` matching the exam's `question_count`, means the database is set up
 correctly.
 
+## Rebuilding the retrieval corpus (Qdrant)
+
+The vector corpus is derived data: every point in the `curriculum` collection
+comes from a PDF in `data/uploads/` plus the row describing it in `documents`.
+Nothing is lost by rebuilding it, and it **must** be rebuilt whenever the
+parser, the chunker, the embedder or its task type changes — the stored vectors
+were produced by the code as it was that day, and a query embedded by newer
+code is not comparable to them.
+
+### Prerequisite: `pdftotext` must be on PATH
+
+Extraction uses `pdftotext` (poppler-utils). `PopplerParser::available()` is
+checked at worker start:
+
+```bash
+pdftotext -v          # any version banner is fine
+# Debian/Ubuntu: sudo apt install poppler-utils
+# macOS:         brew install poppler
+# Windows:       it ships with Git for Windows in /mingw64/bin
+```
+
+Without it the worker falls back to `LopdfParser` and **says so at WARN**. That
+fallback cannot decode Identity-H/CID fonts: it writes the literal string
+`?Identity-H Unimplemented?` into the corpus in place of the text. Measured on
+this project's own corpus before the switch, that was **55% of chunks and 32%
+of every stored character**, and retrieval served those placeholders to the
+tutor as CURRICULUM CONTEXT — which is why the tutor reported that topics were
+not in the textbook. Never ship a corpus built by the fallback.
+
+### Rebuild
+
+```bash
+# 1. Drop the collection. The worker recreates it with the right vector
+#    dimensions and payload indexes on first upsert.
+curl -X DELETE http://localhost:6333/collections/curriculum
+
+# 2. Requeue every document. `documents.status` goes back to `pending` and a
+#    fresh `ingestion_jobs` row is enqueued for each.
+docker exec digiguru-postgres psql -U digiguru -d digiguru -c "
+  UPDATE documents SET status='pending';
+  INSERT INTO ingestion_jobs (document_id, status, attempts, last_error)
+  SELECT id, 'pending', 0, NULL FROM documents;"
+
+# 3. Drain the queue. GEMINI_API_KEY must be set, or the worker embeds with the
+#    deterministic stub and the corpus is not semantically searchable.
+GEMINI_API_KEY=... cargo run -p ingest-worker --bin ingest-worker
+```
+
+The worker exits when the queue is empty. Re-running it is safe: a document is
+re-chunked and re-upserted by `document_id`, so a partial run is resumed rather
+than duplicated.
+
+### Verify before trusting it
+
+```bash
+# Points exist, and none of them are extraction placeholders.
+curl -s http://localhost:6333/collections/curriculum \
+  | python -c "import sys,json;print(json.load(sys.stdin)['result']['points_count'])"
+```
+
+Then check a real query end to end — retrieval that returns junk still returns
+*something*, so a point count alone proves nothing. Ask the classroom a
+question whose answer you can see in the PDF, and confirm the tutor cites the
+chapter and page rather than saying the topic is not in the textbook.
+
+### The embedding quota is the binding constraint
+
+Embedding is batched (`batchEmbedContents`, up to 100 texts per request), so a
+full rebuild of this corpus costs a handful of requests rather than one per
+chunk. That matters because the free tier caps embedding at **1000 requests per
+day per project** (`EmbedContentRequestsPerDayPerProjectPerModel-FreeTier`).
+
+A per-chunk ingest spends that budget on a few hundred chunks. It is how a
+rebuild here ran out of quota partway through, with the old collection already
+deleted and nothing to serve — so:
+
+**Check quota before dropping the collection.** One embedding call is enough:
+a `429 RESOURCE_EXHAUSTED` naming `embed_content_free_tier_requests` means the
+day is spent and no retry or backoff will help; it resets on Google's daily
+boundary. Better still, ingest into a fresh collection and repoint retrieval
+only once it is populated, so a failed rebuild costs nothing.
+### Documents that cannot be extracted
+
+A PDF that is a pure scan yields no text under any extractor. Those pages are
+recorded with `ocr_confidence = 0.0` and the document is held at
+`pending_review` rather than `embedded`, so it is never silently treated as
+indexed. There is no OCR engine in this build: such a file must be re-uploaded
+as a text PDF, or OCR'd first. `SELECT title FROM documents WHERE status =
+'pending_review';` lists them.
+
 ## What is *not* reproducible from this repository
 
 Be aware of these before assuming a fresh clone is identical to a working machine:

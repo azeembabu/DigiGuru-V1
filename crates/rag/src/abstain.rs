@@ -4,39 +4,59 @@
 //! "RAG-only, no world knowledge" mechanically enforceable rather than a
 //! prompt request.
 
-/// Minimum cross-encoder rerank score required to answer from retrieved
-/// context, on whatever scale the active [`crate::rerank::Reranker`]
-/// produces.
+/// Minimum **dense cosine similarity** (best hit, 0..1) required to answer
+/// from retrieved context.
 ///
-/// This is a **placeholder** value, and a specific bug was found and fixed
-/// live in it: `0.35` was calibrated for a real cross-encoder's 0..1
-/// relevance score, but the reranker actually running today is
-/// [`crate::rerank::StubReranker`] — plain word-overlap (Jaccard) between the
-/// question and the chunk text, which lives on a completely different scale.
-/// Measured directly against the real ingested corpus: a genuinely on-topic
-/// question ("What is the hydrosphere?" against the chunk that answers it)
-/// scored **0.065**; an off-topic one scored **0.029**. Both are an order of
-/// magnitude under `0.35`, so with the old value retrieval abstained on
-/// essentially every real question regardless of relevance — the tutor
-/// looked like it was teaching (the system instruction's preamble/outline
-/// text made an abstention read as plausible small talk) while never
-/// actually grounding an answer in a retrieved chunk.
+/// ## Why cosine, and not the reranker's score
 ///
-/// `0.03` sits between those two measured points. It is still a stopgap, not
-/// a validated threshold — a lexical-overlap score is a poor discriminator in
-/// general, and this exact value is calibrated from two data points, not a
-/// golden set. Per `.claude/rules/rag-pipeline.md`, any change to the
-/// reranker or this threshold needs a RAGAs run against `evals/golden/`
-/// before it can be called correct; that has not happened. What changed here
-/// is narrower and safe to ship without one: the old value was not
-/// "conservative", it was non-functional — it made every answer abstain,
-/// which is not the NN-4 behaviour it exists to protect, just a mechanically
-/// identical-looking failure. This must be replaced by a real threshold, on
-/// the real cross-encoder's scale, the moment that reranker is wired in — do
-/// not carry a Jaccard-calibrated number forward past that point.
-pub const ABSTAIN_THRESHOLD: f32 = 0.03;
+/// The floor used to be read off whatever `StubReranker` left in `score`:
+/// Jaccard word overlap between the question and the chunk. That silently
+/// makes the floor ask "did the student use the textbook's words?", and it
+/// failed live in the worst possible direction. This tutor answers Malayalam
+/// students from an English corpus, and lexical overlap across scripts is
+/// **zero by construction** — so every single question abstained and the tutor
+/// told the student, topic after topic, that their syllabus did not cover it
+/// while the passage sat in the corpus. Cosine over a multilingual embedding
+/// does not have that failure mode: it is the same measure whichever language
+/// the question is asked in.
+///
+/// RRF fusion score is not usable as a floor either: with `RRF_K = 60` a chunk
+/// ranked first in one leg scores `1/61 = 0.0164` and first in both scores
+/// `0.0328`, so any threshold meaningful for "relevance" is either above
+/// everything or below everything.
+///
+/// ## Calibration — provisional, and measured
+///
+/// Against the real ingested corpus (block 1, 171 chunks), best dense cosine:
+///
+/// | query                                    | top cosine |
+/// |------------------------------------------|-----------:|
+/// | en "What is deforestation"               |     0.6918 |
+/// | en "What are water resources"            |     0.7107 |
+/// | ml "വനനാശം എന്താണ്"                        |     0.6182 |
+/// | ml "ജലസ്രോതസ്സുകൾ എന്തൊക്കെയാണ്"              |     0.6145 |
+/// | off-topic "who won the 1998 world cup"   |     0.5595 |
+/// | off-topic "how do I bake a cake"         |     0.5625 |
+///
+/// `0.59` sits in the gap between the highest off-topic (0.5625) and the
+/// lowest on-topic (0.6145). The margin is ~0.05 and this is **six data
+/// points, not a golden set** — `.claude/rules/rag-pipeline.md` requires a
+/// RAGAs run against `evals/golden/` for any threshold change, and that has
+/// not been done. It is shipped because the alternative was not a
+/// conservative floor but a non-functional one: abstaining on 100% of
+/// questions is not the NN-4 behaviour this exists to protect.
+///
+/// Two things to fix before trusting this: the off-topic queries above all
+/// returned the SAME generic numeric table (~0.56), which is the real floor of
+/// this corpus rather than a measure of irrelevance; and the Malayalam queries
+/// returned that same table, meaning cross-lingual retrieval is finding
+/// *something* but not the right passage. Raising retrieval quality for
+/// Malayalam questions over an English corpus — most likely by translating the
+/// query before embedding — will move these numbers and this threshold with
+/// them.
+pub const ABSTAIN_THRESHOLD: f32 = 0.59;
 
-/// Whether the retriever should abstain given the best reranked score.
+/// Whether the retriever should abstain, given the best dense cosine score.
 pub fn should_abstain(top_score: f32) -> bool {
     top_score < ABSTAIN_THRESHOLD
 }

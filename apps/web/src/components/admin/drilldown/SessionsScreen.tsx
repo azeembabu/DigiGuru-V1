@@ -57,7 +57,7 @@ function headingFor(status: string, endReason: string): { title: string; descrip
       return {
         title: "Sessions that hit the 20-minute cap",
         description:
-          "The NN-3 quota stopped these sessions at 20 minutes of active voice. The cap is server-authoritative and counts only while voice is live — a client clock never contributes to it.",
+          "The NN-3 quota stopped these sessions at 60 minutes of active voice. The cap is server-authoritative and counts only while voice is live — a client clock never contributes to it.",
       };
     case "jailbreak":
       return {

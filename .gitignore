@@ -41,3 +41,8 @@ Thumbs.db
 .vscode/*
 !.vscode/extensions.json
 .cog/
+
+# Git worktrees created for parallel branch work (e.g. `.claude/worktrees/unit-thumbnails`).
+# Each is a full checkout of another branch — committing one would put a second
+# copy of the whole repository inside the repository.
+.claude/worktrees/

@@ -34,6 +34,7 @@ const sections: { label: string; items: NavItem[] }[] = [
       { href: "/dashboard", label: "Overview", icon: IconTarget },
       { href: "/classroom", label: "Classroom", icon: IconBoard },
       { href: "/exams", label: "Exams", icon: IconSparkle },
+      { href: "/assessment", label: "My assessment", icon: IconTarget },
       { href: "/dashboard#enrolment", label: "Enrolment", icon: IconBook, anchor: true },
     ],
   },

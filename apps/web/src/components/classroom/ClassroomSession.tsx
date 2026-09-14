@@ -17,11 +17,12 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "
 import { createPortal } from "react-dom";
 import Link from "next/link";
 
-import { API_BASE_URL } from "@/lib/api";
+import { API_BASE_URL, apiFetch } from "@/lib/api";
 import { AudioCapture } from "@/classroom/audio-capture";
 import { AudioPlayback } from "@/classroom/audio-playback";
 import { BoardRenderer, HOLD_MAX_MS } from "@/classroom/board-renderer";
 import { SessionClient } from "@/classroom/session-client";
+import { FRAME_SAMPLES } from "@/classroom/vad";
 import type { ConnectionState } from "@/classroom/session-client";
 import type {
   BoardOp,
@@ -110,6 +111,25 @@ const SPEECH_CLOSE_FRAMES = 35;
  */
 const TUTOR_SPEAKING_GATE_S = 0.05;
 
+/**
+ * How long the bleed guard stays armed after the tutor's audio queue drains.
+ *
+ * `queuedSeconds` reaching zero means the last frame has been *handed to the
+ * output*, not that the room has gone quiet: the speaker is still emitting that
+ * tail and a live room still rings for a moment after it. Dropping the guard on
+ * the queue alone left exactly that window unprotected — the tail came back
+ * through the microphone with nothing left to compare it against, opened a
+ * turn, and barged in on a tutor that had only just stopped talking.
+ */
+const BLEED_TAIL_MS = 400;
+
+/**
+ * How long "hearing you" stays lit after the qualified turn closes. The
+ * indicator is an instrument, not a live meter: holding it across the gaps
+ * inside a sentence is the honest reading of "yes, I can hear you".
+ */
+const HEARING_HOLD_MS = 400;
+
 /** `subscribeNever` has no store to subscribe to; `document.body` never changes. */
 function subscribeNever(): () => void {
   return () => {};
@@ -125,14 +145,13 @@ function webSocketUrl(): string {
 }
 
 async function mintTicket(): Promise<string> {
-  const response = await fetch(`${API_BASE_URL}/ws/ticket`, {
-    method: "POST",
-    credentials: "include",
-  });
-  if (!response.ok) {
-    throw new Error("Could not authorise the classroom session.");
-  }
-  const body: unknown = await response.json();
+  // Through `apiFetch`, not a bare `fetch`: the access JWT lives 15 minutes,
+  // and a bare fetch gets a flat 401 once it lapses. The socket client treats
+  // a mint failure as a retryable transport fault, so that 401 used to leave
+  // the classroom stuck on "Reconnecting" forever with no path back — the
+  // session was recoverable the whole time. `apiFetch` refreshes and retries,
+  // and sends the student to sign in when the session is genuinely over.
+  const body: unknown = await apiFetch<unknown>("/ws/ticket", { method: "POST" });
   if (
     typeof body !== "object" ||
     body === null ||
@@ -152,6 +171,12 @@ interface TurnLogEntry {
 
 /** One `board_ops` frame plus the citation that arrived with its turn. */
 interface BoardLogEntry {
+  /**
+   * Unique per entry. `seq` identifies the *turn*, and a turn may emit more
+   * than one `board_ops` frame, so `seq` is not a usable React key — two
+   * frames from one turn collide and React drops or duplicates a note.
+   */
+  id: number;
   seq: number;
   ops: BoardOp[];
   turn: TurnState | null;
@@ -253,6 +278,7 @@ export function ClassroomSession({
    * that is what makes the export a study note rather than a wall of text.
    */
   const [boardLog, setBoardLog] = useState<BoardLogEntry[]>([]);
+  const boardLogIdRef = useRef(0);
   // Captions. The Live service can repeat the last partial output chunk when
   // a turn ends (observed live), so consecutive identical entries from the
   // same speaker are collapsed rather than shown twice.
@@ -276,8 +302,29 @@ export function ClassroomSession({
    * instrument; holding it for a moment is the honest reading of "yes, I can
    * hear you".
    */
+  /** A frame of digital silence, the size the capture emits; sent in place of
+   *  echo so the upstream stream never breaks. Allocated once. */
+  const silentFrameRef = useRef<Int16Array>(new Int16Array(FRAME_SAMPLES));
+  /** Monotonic ms at which the tutor's audio queue last held anything. */
+  const lastTutorAudioMsRef = useRef(0);
   const [hearing, setHearing] = useState(false);
   const hearingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Drive the indicator from the QUALIFIED turn (see `onFrame`), never from
+   *  the raw VAD event. On is immediate; off is held so it does not blink. */
+  const showHearing = useCallback((on: boolean) => {
+    if (hearingTimer.current !== null) {
+      clearTimeout(hearingTimer.current);
+      hearingTimer.current = null;
+    }
+    if (on) {
+      setHearing(true);
+      return;
+    }
+    hearingTimer.current = setTimeout(() => {
+      hearingTimer.current = null;
+      setHearing(false);
+    }, HEARING_HOLD_MS);
+  }, []);
 
   useEffect(() => {
     // Reset happens in `leave()` (an event handler, not here) — an effect
@@ -379,7 +426,16 @@ export function ClassroomSession({
       // Withholding the send while the tutor is speaking means Gemini never
       // hears its own echo, so it never has a reason to self-interrupt.
       onFrame: (frame, level) => {
-        const tutorAudible = (playbackRef.current?.queuedSeconds ?? 0) > TUTOR_SPEAKING_GATE_S;
+        const queued = playbackRef.current?.queuedSeconds ?? 0;
+        if (queued > TUTOR_SPEAKING_GATE_S) {
+          lastTutorAudioMsRef.current = performance.now();
+        }
+        // Sticky: the guard outlives the queue by `BLEED_TAIL_MS` so the tail
+        // still coming out of the speaker is measured against the learned bleed
+        // level rather than against nothing.
+        const tutorAudible =
+          queued > TUTOR_SPEAKING_GATE_S ||
+          performance.now() - lastTutorAudioMsRef.current < BLEED_TAIL_MS;
 
         // While the tutor is audible, whatever the microphone hears is mostly
         // its own voice. Learn that level — but never from frames already loud
@@ -409,10 +465,18 @@ export function ClassroomSession({
         // audible — the signal is clearly louder than the bleed. When the tutor
         // is silent there is nothing to confuse it with, so the VAD alone
         // decides.
+        // `SPEECH_MIN_LEVEL` is an ABSOLUTE floor and is applied in both cases.
+        // It used to sit only inside the bleed branch, so whenever the tutor was
+        // silent — most of a lesson — the floor was never consulted and the
+        // VAD's own threshold decided alone. That threshold bottoms out at a
+        // level a fan or a distant voice clears easily, which is how turns
+        // opened with nobody speaking.
+        const aboveFloor = level > SPEECH_MIN_LEVEL;
         const overBleed =
-          !tutorAudible ||
-          (bleedFramesRef.current > BLEED_WARMUP_FRAMES &&
-            level > Math.max(bleedRef.current * SPEECH_OVER_BLEED, SPEECH_MIN_LEVEL));
+          aboveFloor &&
+          (!tutorAudible ||
+            (bleedFramesRef.current > BLEED_WARMUP_FRAMES &&
+              level > Math.max(bleedRef.current * SPEECH_OVER_BLEED, SPEECH_MIN_LEVEL)));
         const qualifies = speakingRef.current && overBleed;
         speechRunRef.current = qualifies ? speechRunRef.current + 1 : 0;
         silenceRunRef.current = qualifies ? 0 : silenceRunRef.current + 1;
@@ -422,21 +486,53 @@ export function ClassroomSession({
         if (turnOpenRef.current && silenceRunRef.current >= SPEECH_CLOSE_FRAMES) {
           turnOpenRef.current = false;
           clientRef.current?.setActivity(false);
+          showHearing(false);
         }
 
         if (speechRunRef.current >= SPEECH_OPEN_FRAMES && !turnOpenRef.current) {
           turnOpenRef.current = true;
-          // Declared before the first frame. Upstream this both opens the turn
-          // and, if the tutor is mid-sentence, ends its turn.
+          // Advisory only now: the gateway does not forward this upstream while
+          // turn detection is the service's. It still drives the indicator.
           clientRef.current?.setActivity(true);
-          // Silence the speakers at once rather than waiting for the round
-          // trip — and with them, the bleed.
-          if (tutorAudible) playbackRef.current?.stop();
+          showHearing(true);
+          // Deliberately NO local `playback.stop()` here any more. This used to
+          // silence the speakers the instant the local detector opened, and
+          // the local detector opens on far more than speech — twelve opens
+          // against two real interruptions in one session. Each one threw away
+          // the tutor's queued audio while the transcript kept streaming: the
+          // student saw the tutor "type" a full sentence and heard only parts
+          // of it. Playback is now flushed on one signal only — the service's
+          // own `interrupted` (`onFlushAudio`), which is the authority on
+          // whether the student actually spoke over the tutor.
         }
 
-        // Audio flows only inside a declared turn, so the tutor's own voice
-        // never reaches the model.
-        if (turnOpenRef.current) clientRef.current?.sendAudio(frame);
+        // The microphone streams CONTINUOUSLY, as the reference Live client
+        // does. Turn detection is the service's now, and it can only hear a
+        // turn begin in audio it is actually being sent — gating the stream on
+        // a local decision would mean the tutor never answers, and would also
+        // make barge-in impossible, since an interruption is just speech the
+        // server hears while it is talking.
+        //
+        // The consequence is honest and worth stating: the tutor's own voice
+        // now reaches the model whenever it leaves the speakers. `getUserMedia`
+        // is asked for `echoCancellation` and that is what must suppress it.
+        // Browser AEC is best-effort and weakest over loudspeakers, so a
+        // headset is the reliable configuration here.
+        //
+        // ECHO GATE. What the service must never hear is the tutor's own voice
+        // coming back through the microphone: every time it did, the server
+        // detector took it for the student, cancelled the generation, and the
+        // tutor was heard breaking off mid-sentence. So while the tutor is
+        // audible, a frame that is not clearly louder than the learned bleed
+        // level is sent as SILENCE rather than dropped. The stream stays
+        // continuous — server-side detection needs an unbroken stream and a
+        // gap would read as the client going away — but the echo is blanked
+        // out of it. Real barge-in survives: a student speaking over the tutor
+        // is louder than the bleed and passes through `overBleed` untouched.
+        // The gate uses the same measurement the "hearing you" indicator does,
+        // so what the student sees and what the model hears agree.
+        const passes = !tutorAudible || overBleed;
+        clientRef.current?.sendAudio(passes ? frame : silentFrameRef.current);
       },
       onVad: (event) => {
         const talking = event === "speech_start";
@@ -455,18 +551,13 @@ export function ClassroomSession({
         // Held display value — see `hearing`. Driven from the event rather
         // than an effect, because the hold is a property of the transition,
         // not of the rendered state.
-        if (hearingTimer.current !== null) {
-          clearTimeout(hearingTimer.current);
-          hearingTimer.current = null;
-        }
-        if (talking) {
-          setHearing(true);
-        } else {
-          hearingTimer.current = setTimeout(() => {
-            hearingTimer.current = null;
-            setHearing(false);
-          }, 600);
-        }
+        // The indicator is no longer driven from this raw event. `speech_start`
+        // fires on every energy blip the detector sees — echo, a chair, a
+        // cough — and lighting "hearing you" on each one is the flicker the
+        // student reported. It now follows the QUALIFIED turn in `onFrame`,
+        // which has passed the absolute floor, the bleed test and the
+        // `SPEECH_OPEN_FRAMES` run: the same evidence the echo gate uses, so
+        // what the student sees and what the model is sent agree.
       },
       onError: (error) => setMicError(error.message),
     });
@@ -484,7 +575,7 @@ export function ClassroomSession({
       );
       await capture.stop();
     }
-  }, []);
+  }, [showHearing]);
 
   const start = useCallback(async () => {
     const renderer = rendererRef.current;
@@ -542,7 +633,8 @@ export function ClassroomSession({
           setBoardLog((prev) => {
             const next = msg.clear_first ? [] : prev;
             if (msg.ops.length === 0) return next;
-            return [...next, { seq: msg.seq, ops: msg.ops, turn: null }];
+            boardLogIdRef.current += 1;
+            return [...next, { id: boardLogIdRef.current, seq: msg.seq, ops: msg.ops, turn: null }];
           });
         },
         onTranscript: (msg) => {
@@ -1079,7 +1171,7 @@ export function ClassroomSession({
                   </h3>
                   <div className="mt-2 space-y-3">
                     {boardLog.map((entry) => (
-                      <BoardNote key={entry.seq} entry={entry} />
+                      <BoardNote key={entry.id} entry={entry} />
                     ))}
                   </div>
                 </section>
@@ -1121,7 +1213,7 @@ export function ClassroomSession({
           <>
             <h2>Notes from the board</h2>
             {boardLog.map((entry) => (
-              <PrintableBoardNote key={entry.seq} entry={entry} />
+              <PrintableBoardNote key={entry.id} entry={entry} />
             ))}
           </>
         ) : null}

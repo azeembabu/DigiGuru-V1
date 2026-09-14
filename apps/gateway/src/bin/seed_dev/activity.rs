@@ -3,7 +3,7 @@
 //! Everything here exists to give the admin dashboard a believable *shape*.
 //! The distributions are not arbitrary -- each one encodes a non-negotiable:
 //!
-//! * NN-3 caps active voice at 20 minutes (1_200_000 ms), server-authoritative,
+//! * NN-3 caps active voice at 60 minutes (3_600_000 ms), server-authoritative,
 //!   so no `active_voice_ms` may exceed it and the sessions that reach it end
 //!   with `end_reason = 'quota'`.
 //! * NN-1 (`whiteboard-sync.md`) holds audio behind the board ACK with a
@@ -27,7 +27,7 @@ use uuid::Uuid;
 use crate::{SeedOpts, SeededCatalogue};
 
 /// NN-3: the hard cap, in milliseconds of *active voice*. Nothing may exceed it.
-const QUOTA_CAP_MS: i64 = 1_200_000;
+const QUOTA_CAP_MS: i64 = 3_600_000;
 /// NN-1 `HOLD_MAX`. An ACK later than this released audio early -> a violation.
 const HOLD_MAX_MS: i32 = 400;
 /// `realtime-audio.md` budgets the typical SyncGate hold at <= 250 ms.

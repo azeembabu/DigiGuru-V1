@@ -35,7 +35,7 @@ use anyhow::{Context, Result};
 use dg_db::models::{documents, ingestion_jobs};
 use rag::embed::{Embedder, StubEmbedder};
 use rag::ingest::{self, IngestContext};
-use rag::parse::{LopdfParser, PdfParser};
+use rag::parse::{LopdfParser, PdfParser, PopplerParser};
 use rag::RagError;
 
 /// How long to wait before polling again when the queue is empty.
@@ -113,9 +113,27 @@ async fn main() -> Result<()> {
         .await
         .context("connecting to Redis")?;
 
-    // Both are injected into the pipeline, so swapping in a pdfium+OCR parser
-    // or the real Gemini embedder is a change here, not in the pipeline.
-    let parser = LopdfParser;
+    // Both are injected into the pipeline, so swapping the parser or the
+    // embedder is a change here, not in the pipeline.
+    //
+    // `pdftotext` is the production parser: `LopdfParser` cannot decode
+    // Identity-H/CID fonts and silently indexes `?Identity-H Unimplemented?`
+    // in place of the text (measured at 32% of every stored character on this
+    // corpus), which retrieval then serves to the tutor as curriculum context.
+    // The fallback is kept so a host without poppler still ingests rather than
+    // refusing, but it is a degraded mode and says so.
+    let parser: Box<dyn PdfParser> = if PopplerParser::available() {
+        tracing::info!("using the pdftotext parser (poppler)");
+        Box::new(PopplerParser)
+    } else {
+        tracing::warn!(
+            "pdftotext is NOT on PATH - falling back to the lopdf parser. It cannot \
+             decode Identity-H/CID fonts and will index placeholder text for any \
+             document using them. Install poppler-utils and re-ingest before \
+             trusting retrieval from this corpus."
+        );
+        Box::new(LopdfParser)
+    };
     let embedder = select_embedder();
 
     let requeued = ingestion_jobs::requeue_stale(&pool, STALE_JOB_SECONDS)
@@ -148,7 +166,7 @@ async fn main() -> Result<()> {
         };
 
         let outcome =
-            process_job(&pool, &qdrant, &mut redis, &parser, embedder.as_ref(), job, max_attempts)
+            process_job(&pool, &qdrant, &mut redis, parser.as_ref(), embedder.as_ref(), job, max_attempts)
                 .await?;
 
         // A rate limit is the provider asking for time, not a reason to spin:

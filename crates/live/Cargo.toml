@@ -24,6 +24,12 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
 
+# The assessment call (`assess.rs`) is plain REST `generateContent`, not the
+# Live socket, so it needs an HTTP client. Same feature set as `dg-rag` uses
+# for the embedding endpoint -- rustls rather than native-tls, so there is one
+# TLS stack in the build.
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
+
 # The real Gemini Live client (Phase 3). `tokio-tungstenite` pins the same
 # 0.29 already in the lockfile via axum, and reuses the rustls stack sqlx
 # already brings in -- deliberately not a second TLS implementation.

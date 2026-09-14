@@ -14,6 +14,7 @@ import {
 } from "@/components/admin/primitives";
 import { AcademicPlacementForm } from "@/components/admin/people/AcademicPlacementForm";
 import { CurrentBlockForm } from "@/components/admin/people/CurrentBlockForm";
+import { StudentPerformancePanel } from "@/components/admin/people/StudentPerformancePanel";
 import { formatDate, nameOf, useCatalogue } from "@/components/admin/people/lookups";
 import { getStudent } from "@/lib/admin/client";
 import type { Student } from "@/lib/admin/types";
@@ -140,6 +141,10 @@ export function StudentDetail({ studentId }: { studentId: string }) {
           <Detail label="Last updated" value={formatDate(student.updated_at)} />
         </dl>
       </section>
+
+      {/* Read-only, and placed before the placement forms: an admin looks at
+          how the student is doing before deciding to move them. */}
+      <StudentPerformancePanel studentId={student.id} />
 
       {editable ? (
         <>

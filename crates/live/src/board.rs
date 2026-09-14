@@ -16,7 +16,27 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum BoardOp {
-    Heading { text: String, page: u32 },
+    /// `page` is OPTIONAL and advisory.
+    ///
+    /// It is not required of the model, and nothing downstream reads it:
+    /// `ops::BoardOp::Heading` carries only `id` and `text`, so this value is
+    /// validated and then discarded. Requiring it was actively harmful — the
+    /// model routinely emits `{"op":"heading","text":"..."}` with no page, the
+    /// op was rejected as `missing field \`page\``, and because a `board_ops`
+    /// call with no valid op is dropped entirely the turn lost its whole
+    /// board. Observed live: every heading dropped, audio then arriving with
+    /// no board to gate against.
+    ///
+    /// It must not be reinstated as required. The page a student is told is
+    /// the one in `turn_state`, taken from the retrieved chunk payload — never
+    /// from model output (`api-conventions.md`, `rag-pipeline.md`). A
+    /// model-supplied page number is exactly the value those rules say not to
+    /// trust.
+    Heading {
+        text: String,
+        #[serde(default)]
+        page: Option<u32>,
+    },
     Bullets { items: Vec<String> },
     Math { latex: String },
     Draw {
@@ -147,8 +167,10 @@ pub fn validate(msg: &BoardOpsMessage) -> crate::error::Result<()> {
 
     for op in &msg.ops {
         match op {
+            // Only meaningful when the model chose to send one; absence is
+            // normal and is not an error.
             BoardOp::Heading { page, .. } => {
-                if *page < 1 {
+                if matches!(page, Some(0)) {
                     return Err(LiveError::InvalidBoardOp(
                         "heading.page must be >= 1".to_string(),
                     ));
@@ -239,7 +261,7 @@ mod tests {
             ops: vec![
                 BoardOp::Heading {
                     text: "Chapter 3".to_string(),
-                    page: 57,
+                    page: Some(57),
                 },
                 BoardOp::Bullets {
                     items: vec!["one".to_string(), "two".to_string()],
@@ -310,7 +332,7 @@ mod tests {
         let mut msg = valid_message();
         msg.ops = vec![BoardOp::Heading {
             text: "x".to_string(),
-            page: 0,
+            page: Some(0),
         }];
         let err = validate(&msg).unwrap_err();
         assert!(matches!(err, crate::error::LiveError::InvalidBoardOp(_)));

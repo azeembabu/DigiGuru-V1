@@ -49,6 +49,7 @@ use crate::auth::jwt::verify_access_token;
 use crate::state::AppState;
 
 pub mod board_audit;
+pub mod engagement;
 pub mod grounding;
 pub mod ticket;
 pub mod voice_meter;
@@ -60,6 +61,12 @@ const CLOSE_UNAUTHENTICATED: u16 = 4001;
 /// from `crates/quota` rather than restated, so the socket and the ledger can
 /// never disagree about which code means "quota".
 const CLOSE_QUOTA: u16 = quota::CLOSE_CODE_QUOTA;
+/// Close code: the session ended normally. Not in the "Close codes" table
+/// because it is the RFC 6455 normal closure rather than an application
+/// decision, but it is load-bearing: it is the only thing distinguishing "this
+/// lesson is over" from "the connection dropped", and the client retries the
+/// latter.
+const CLOSE_NORMAL: u16 = 1000;
 // TODO(phase4): 4008 idle timeout — needs the `idle:{session_id}` watchdog
 // (`IMPLEMENTATION_PLAN.md` §3.3, D-22).
 // TODO(phase4): 4009 safety termination — needs the Tier-1 guardrail hook
@@ -323,11 +330,35 @@ async fn handle_socket(mut socket: WebSocket, state: AppState, user_id: UserId) 
     // language rule in the system instruction is anchored on it (see
     // `grounding::tutor_header`).
     let mut student_locale: Option<String> = None;
+    // Carried alongside the locale for the same reason: per-turn re-grounding
+    // rebuilds the system instruction from scratch, and the tutor must keep
+    // addressing the student by name after the opening turn.
+    let mut student_name: Option<String> = None;
     // The student's words for the question currently being asked, accumulated
     // from `Transcript { source: Input, .. }` events until the model starts
     // answering. See the `Transcript` handler for why "until the model starts
     // answering" is a heuristic, not an exact turn boundary.
     let mut pending_utterance = String::new();
+    // Per-turn re-grounding runs OFF this loop and reports back here.
+    //
+    // It used to be awaited inline in the `TranscriptSource::Output` arm, which
+    // is the worst possible place for it: that arm fires the instant the model
+    // starts answering, and the await held the whole `select!` for as long as
+    // the embedding round trip and the Qdrant search took (measured at ~600 ms
+    // against the Gemini embedding endpoint). For that entire window nothing
+    // else in this loop ran — tutor audio was not polled or forwarded, and the
+    // student's own frames were not pumped upstream — so the work meant to
+    // improve the NEXT answer delayed THIS one. `realtime-audio.md` is explicit
+    // that work like this belongs off the audio path.
+    //
+    // NN-4 is untouched by the move. The opening turn is still grounded
+    // synchronously before a single word is taught, the four mandatory filters
+    // are applied inside `grounding::build` either way, and per-turn grounding
+    // was already documented (see the `Output` arm) as landing one exchange
+    // late — so completing it a few hundred milliseconds later changes when the
+    // context turn is injected, not what retrieval is allowed to return.
+    let (grounding_tx, mut grounding_rx) =
+        tokio::sync::mpsc::channel::<(String, grounding::Grounding)>(4);
 
     // Why the session ended, for `learning_sessions.end_reason`. Overwritten
     // only by a subsystem that actually detected a cause (quota, here).
@@ -339,6 +370,17 @@ async fn handle_socket(mut socket: WebSocket, state: AppState, user_id: UserId) 
     // failure on every turn.
     let mut audit = board_audit::BoardAudit::disabled();
     let mut recorded_session = false;
+    // What the student's conversation looked like, for the end-of-unit
+    // assessment (`engagement.rs`). Accumulated as transcripts arrive and
+    // consumed once, after the socket closes.
+    let mut engagement = engagement::EngagementLog::new();
+    // The student and block the assessment is filed against.
+    let mut student_for_assessment: Option<(dg_core::StudentId, dg_core::BlockId)> = None;
+    // The unit being taught, recorded only once `with_unit` has validated it
+    // belongs to the block. `None` means the student opened the whole block,
+    // and a block-wide session is deliberately NOT assessed per unit: there is
+    // no single unit the verdict would be about.
+    let mut unit: Option<(dg_core::DocumentId, String)> = None;
     // Barge-in diagnostics; see the `Message::Binary` arm.
     let mut student_frames_in_turn: u32 = 0;
     let mut last_frame_report = Instant::now();
@@ -435,6 +477,11 @@ async fn handle_socket(mut socket: WebSocket, state: AppState, user_id: UserId) 
 
                                 session_id = Some(sid);
                                 recorded_session = student_id.is_some();
+                                // Captured for the end-of-unit assessment,
+                                // which runs after `student` has gone out of
+                                // scope.
+                                student_for_assessment =
+                                    student_id.map(|id| (id, dg_core::BlockId::from(block_id)));
                                 if recorded_session {
                                     audit = board_audit::BoardAudit::spawn(state.pool.clone(), sid);
                                 }
@@ -487,7 +534,36 @@ async fn handle_socket(mut socket: WebSocket, state: AppState, user_id: UserId) 
                                         )
                                         .await
                                     {
-                                        Ok(context) => Some(context),
+                                        Ok(context) => {
+                                            // Persist the unit now that it is
+                                            // known to belong to the block.
+                                            // `session_init` has always taken a
+                                            // `document_id` but never stored
+                                            // it, so nothing could say which
+                                            // unit a student had studied.
+                                            if let (Some(doc), Some(title), true) = (
+                                                context.unit_document_id,
+                                                context.unit_title.clone(),
+                                                recorded_session,
+                                            ) {
+                                                unit = Some((doc, title));
+                                                if let Err(err) =
+                                                    dg_db::models::learning_sessions::set_document(
+                                                        &state.pool,
+                                                        dg_core::SessionId::from(sid),
+                                                        doc,
+                                                    )
+                                                    .await
+                                                {
+                                                    // Logged, not fatal: the
+                                                    // lesson matters more than
+                                                    // the record of which unit
+                                                    // it was.
+                                                    tracing::error!(%err, %sid, "failed to record the session's unit");
+                                                }
+                                            }
+                                            Some(context)
+                                        }
                                         Err(err) => {
                                             tracing::error!(%err, %block_id, "failed to validate the chosen unit; teaching the whole block");
                                             None
@@ -534,6 +610,7 @@ async fn handle_socket(mut socket: WebSocket, state: AppState, user_id: UserId) 
                                     // here for the first turn only.
                                     academic_context = Some(context.clone());
                                     student_locale = student.as_ref().map(|s| s.locale.clone());
+                                    student_name = student.as_ref().map(|s| s.full_name.clone());
                                     cached_preamble = preamble.clone();
                                     let opening_question =
                                         format!("{} {}", context.block_title, context.course_code);
@@ -544,6 +621,7 @@ async fn handle_socket(mut socket: WebSocket, state: AppState, user_id: UserId) 
                                         &opening_question,
                                         state.config.gemini_api_key.as_deref(),
                                         student.as_ref().map(|s| s.locale.as_str()),
+                                        student.as_ref().map(|s| s.full_name.as_str()),
                                     )
                                     .await;
                                     // Visible in the log because an
@@ -568,11 +646,41 @@ async fn handle_socket(mut socket: WebSocket, state: AppState, user_id: UserId) 
                                     // has no way to know they should speak
                                     // first to trigger it.
                                     if let Some(student) = student.as_ref() {
+                                        // First name only, for the same reason
+                                        // the standing instruction uses one: a
+                                        // greeting that reads out a full legal
+                                        // name sounds like a roll-call, not a
+                                        // welcome. An empty name falls back to
+                                        // the full string rather than greeting
+                                        // nobody.
+                                        let first_name = student
+                                            .full_name
+                                            .split_whitespace()
+                                            .next()
+                                            .unwrap_or(student.full_name.as_str());
                                         let kickoff = if student.is_first_login {
+                                            // The welcome is FIXED COPY, quoted
+                                            // verbatim rather than described.
+                                            // It is the product owner's wording
+                                            // and it teaches the student the
+                                            // wake word, so a paraphrase would
+                                            // quietly drop the one instruction
+                                            // the whole session depends on.
+                                            //
+                                            // The one substitution is the name:
+                                            // the copy opened "നമസ്കാരം
+                                            // വിദ്യാർത്ഥികളെ!" — plural, and
+                                            // addressed to a room — in a
+                                            // product where every session has
+                                            // exactly one student whose name we
+                                            // already hold.
                                             format!(
                                                 "The student, {}, has just logged in for the \
-first time. Warmly greet them by name, introduce yourself once as their Digi Guru tutor, then \
-begin teaching Block {}: \"{}\" for {}. Call board_ops before you speak, as instructed.",
+first time. Begin by saying EXACTLY this, word for word, and nothing before it:\n\n\
+\"നമസ്കാരം {first_name}! ഞാൻ നിങ്ങളുടെ ഡിജി ഗുരു. ഇന്ന് നമ്മൾ ഒരുമിച്ചാണ് പാഠഭാഗങ്ങൾ \
+പഠിക്കുന്നത്. ഈ സംവാദത്തിനിടയിൽ നിങ്ങൾക്ക് എന്ത് സംശയവും എന്നോട് ചോദിക്കാവുന്നതാണ്. \
+നിങ്ങൾക്ക് സഹായം ആവശ്യമുള്ളപ്പോൾ എന്നെ 'ഗുരു' എന്ന് വിളിക്കുക.\"\n\n\
+Then begin teaching Block {}: \"{}\" for {}. Call board_ops before you speak, as instructed.",
                                                 student.full_name,
                                                 context.block_no,
                                                 context.block_title,
@@ -807,6 +915,10 @@ speak.",
                         // rule guards against; a server-side log is.
                         tracing::debug!(?source, chars = text.chars().count(), "live transcript");
 
+                        // Counted before it is forwarded, so a client that
+                        // disconnects mid-turn still contributes what it said.
+                        engagement.push(matches!(source, TranscriptSource::Input), &text);
+
                         let caption = TranscriptMsg {
                             kind: "transcript",
                             source: transcript_source_label(source),
@@ -853,42 +965,42 @@ speak.",
                                     match (academic_context.as_ref(), live_client.as_mut()) {
                                         (Some(context), Some(client)) => {
                                             let question = std::mem::take(&mut pending_utterance);
-                                            let pack = grounding::build(
-                                                qdrant_client(&state).as_ref(),
-                                                context,
-                                                cached_preamble.as_deref(),
-                                                &question,
-                                                state.config.gemini_api_key.as_deref(),
-                                                student_locale.as_deref(),
-                                            )
-                                            .await;
-                                            tracing::debug!(
-                                                abstained = pack.abstained,
-                                                "grounded a question from the input transcript"
-                                            );
+                                            // Spawned, not awaited: see
+                                            // `grounding_tx` above for why this
+                                            // must not block the loop. A full
+                                            // channel means grounding is slower
+                                            // than the student is asking, and
+                                            // dropping the newest request is
+                                            // right — the queued ones are
+                                            // already closer to the question
+                                            // actually being answered.
+                                            let task_state = state.clone();
+                                            let task_context = context.clone();
+                                            let task_preamble = cached_preamble.clone();
+                                            let task_locale = student_locale.clone();
+                                            let task_name = student_name.clone();
+                                            let task_tx = grounding_tx.clone();
+                                            tokio::spawn(async move {
+                                                let pack = grounding::build(
+                                                    qdrant_client(&task_state).as_ref(),
+                                                    &task_context,
+                                                    task_preamble.as_deref(),
+                                                    &question,
+                                                    task_state.config.gemini_api_key.as_deref(),
+                                                    task_locale.as_deref(),
+                                                    task_name.as_deref(),
+                                                )
+                                                .await;
+                                                let _ = task_tx.try_send((question, pack));
+                                            });
 
-                                            // Injected as a user turn that does
-                                            // NOT complete the exchange:
-                                            // `systemInstruction` cannot change
-                                            // mid-session, so refreshed
-                                            // curriculum context travels this
-                                            // way instead. `turn_complete:
-                                            // false` keeps the model waiting
-                                            // for the student's real next
-                                            // utterance rather than answering
-                                            // this context message itself.
-                                            let context_turn = format!(
-                                                "[Updated curriculum grounding for the student's \
-most recent question: \"{question}\"]\n\n{}",
-                                                pack.system_instruction
-                                            );
-                                            if let Err(err) =
-                                                client.send_text_turn(&context_turn, false).await
-                                            {
-                                                tracing::warn!(%err, "failed to send per-turn curriculum context");
-                                            } else {
-                                                grounding = Some(pack);
-                                            }
+                                            // The context turn itself is sent
+                                            // by the `grounding_rx` branch,
+                                            // once the spawned task reports
+                                            // back. `client` is only borrowed
+                                            // here to prove there is a live
+                                            // session to send it to.
+                                            let _ = client;
                                         }
                                         _ => pending_utterance.clear(),
                                     }
@@ -1032,22 +1144,27 @@ most recent question: \"{question}\"]\n\n{}",
                             }
                         }
                     }
-                    Ok(LiveModelEvent::TurnComplete) => {
+                    Ok(LiveModelEvent::TurnComplete { interrupted }) => {
+                        if interrupted {
+                            // The generation was cancelled upstream. Anything
+                            // still held for this turn belongs to it and must
+                            // not play later — see `SyncGate::discard`.
+                            if let Some(seq) = current_seq {
+                                sync_gate.discard(seq);
+                            }
+                        }
                         // Tell the client the turn ended upstream so it can
                         // stop waiting for more audio for this `seq`.
                         //
-                        // `interrupted: false` — always, today. The
-                        // `LiveSessionClient` trait surfaces one event for both
-                        // a normal completion and an interruption, and flushing
-                        // the client's jitter buffer on a normal completion
-                        // would clip the queued tail off every explanation. A
-                        // false `true` is therefore worse than a false `false`,
-                        // so this stays `false` until the real client can tell
-                        // the two apart.
+                        // `interrupted` is the service's own verdict (`serverContent.interrupted`),
+                        // forwarded as-is. The client flushes its jitter buffer only on `true`,
+                        // so a blanket `true` would clip the tail off every explanation and a
+                        // blanket `false` — which this used to send — leaves a cancelled turn
+                        // playing over the student. Neither is acceptable; the flag has to be real.
                         let out = TurnCompleteMsg {
                             kind: "turn_complete",
                             seq: current_seq.map(|seq| seq.get()),
-                            interrupted: false,
+                            interrupted,
                         };
                         if send_json(&mut socket, &out).await.is_err() {
                             break;
@@ -1070,6 +1187,36 @@ most recent question: \"{question}\"]\n\n{}",
                         let _ = send_json(&mut socket, &msg).await;
                         end_reason = "error";
                         break;
+                    }
+                }
+            }
+
+            // A per-turn re-grounding finished. Injected as a user turn that
+            // does NOT complete the exchange: `systemInstruction` cannot change
+            // mid-session, so refreshed curriculum context travels this way
+            // instead. `turn_complete: false` keeps the model waiting for the
+            // student's real next utterance rather than answering this context
+            // message itself.
+            //
+            // Ordered after the upstream poll so a frame already in flight is
+            // forwarded first: this branch is bookkeeping for the NEXT answer,
+            // never for the one currently being spoken.
+            Some((question, pack)) = grounding_rx.recv() => {
+                tracing::debug!(
+                    abstained = pack.abstained,
+                    "grounded a question from the input transcript"
+                );
+                if let Some(client) = live_client.as_mut() {
+                    let context_turn = format!(
+                        "[Updated curriculum grounding for the student's \nmost recent question: \"{question}\"]
+
+{}",
+                        pack.system_instruction
+                    );
+                    if let Err(err) = client.send_text_turn(&context_turn, false).await {
+                        tracing::warn!(%err, "failed to send per-turn curriculum context");
+                    } else {
+                        grounding = Some(pack);
                     }
                 }
             }
@@ -1116,14 +1263,41 @@ most recent question: \"{question}\"]\n\n{}",
     meter.finish().await;
     let active_voice_ms = meter.used_ms().await;
 
-    // The documented close code for a quota end (`4003`). Sent before the
-    // `learning_sessions` write so the client is released promptly; the write
-    // is bookkeeping and the student is not kept waiting on it.
+    // Every exit from the loop above closes the socket EXPLICITLY, whatever
+    // ended it. Simply returning here drops the connection without a close
+    // frame, which the browser reports as 1006 — and 1006 is, correctly,
+    // retryable (`protocol.ts::shouldReconnect`), so the client reconnects,
+    // reaches the same ordinary end, and is dropped again: a session that
+    // finished normally presents to the student as a permanent
+    // "Reconnecting". The close code is what tells the client whether the end
+    // was a decision or an accident, so it has to be sent on the normal path
+    // too, not only on the quota path.
+    //
+    // Sent before the `learning_sessions` write so the client is released
+    // promptly; the write is bookkeeping and the student is not kept waiting.
     if end_reason == quota::END_REASON_QUOTA {
+        // The documented close code for a quota end (`4003`).
         let _ = socket
             .send(Message::Close(Some(CloseFrame {
                 code: CLOSE_QUOTA,
                 reason: "quota".into(),
+            })))
+            .await;
+    } else {
+        // An ordinary end: the upstream session finished, the student asked to
+        // stop, or the socket is being torn down. `session_end` carries the
+        // reason the durable row records; the 1000 that follows is what stops
+        // the client retrying. Both are best-effort — a peer that has already
+        // gone away cannot be told anything, and that is not an error.
+        let ended = SessionEndMsg {
+            kind: "session_end",
+            reason: end_reason,
+        };
+        let _ = send_json(&mut socket, &ended).await;
+        let _ = socket
+            .send(Message::Close(Some(CloseFrame {
+                code: CLOSE_NORMAL,
+                reason: end_reason.into(),
             })))
             .await;
     }
@@ -1164,6 +1338,42 @@ most recent question: \"{question}\"]\n\n{}",
             {
                 tracing::error!(%err, %sid, "failed to close the learning_sessions row");
             }
+        }
+    }
+
+    // The end-of-unit assessment. Spawned rather than awaited: the student has
+    // already left, a REST call to a text model takes seconds, and nothing
+    // about this teardown should wait on it. Every failure inside is logged and
+    // swallowed — a missing assessment costs a dashboard card, not a lesson.
+    //
+    // Only a session that (a) recorded a durable row, (b) named a single unit
+    // and (c) has a configured API key is assessed. A block-wide session has no
+    // one unit for the verdict to be about, and inventing one would file the
+    // student's performance against a unit they may never have opened.
+    if let (Some(sid), Some(student), Some((document_id, unit_title)), Some(api_key)) = (
+        session_id,
+        student_for_assessment,
+        unit,
+        state.config.gemini_api_key.clone(),
+    ) {
+        let (counters, transcript) = engagement.finish(active_voice_ms);
+        if counters.is_assessable() {
+            let job = engagement::AssessmentJob {
+                student_id: student.0,
+                document_id,
+                block_id: student.1,
+                session_id: dg_core::SessionId::from(sid),
+                unit_title,
+                counters,
+                transcript,
+            };
+            let pool = state.pool.clone();
+            tokio::spawn(engagement::run_assessment(
+                pool,
+                api_key,
+                live::assess::ASSESSMENT_MODEL.to_string(),
+                job,
+            ));
         }
     }
 
@@ -1511,7 +1721,7 @@ fn demo_script() -> Vec<LiveModelEvent> {
         ops: vec![
             live::board::BoardOp::Heading {
                 text: "Demo lesson".to_string(),
-                page: 1,
+                page: Some(1),
             },
             live::board::BoardOp::Bullets {
                 items: vec!["This is a scripted Phase 3 demo turn.".to_string()],
@@ -1529,7 +1739,7 @@ fn demo_script() -> Vec<LiveModelEvent> {
             seq: 1,
             data: bytes::Bytes::from_static(b"demo-audio-frame-2"),
         },
-        LiveModelEvent::TurnComplete,
+        LiveModelEvent::TurnComplete { interrupted: false },
         LiveModelEvent::SessionEnded,
     ]
 }

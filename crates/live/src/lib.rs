@@ -52,12 +52,17 @@ pub use sync_gate::{
 // Collapsing the two is a follow-up, not a merge-time change.
 // ---------------------------------------------------------------------------
 
+pub mod assess;
 pub mod board;
 pub mod error;
 pub mod gemini_client;
 pub mod gemini_wire;
 pub mod turn_fsm;
 
+pub use assess::{
+    assess_unit, EngagementCounters, TranscriptLine, UnitAssessment, UnitTrophy,
+    ASSESSMENT_MODEL,
+};
 pub use error::LiveError;
 pub use gemini_client::{
     GeminiLiveSessionClient, LiveModelEvent, LiveSessionClient, StubLiveSessionClient,

@@ -395,3 +395,106 @@ export type QuestionPoolCount = {
   semester_number: number;
   active_questions: number;
 };
+
+// ------------------------------------------------------------- performance
+//
+// `GET /admin/students/{id}/performance` and `GET /admin/top-performers`.
+//
+// `level`, `stars` and `trophy` are computed by the GATEWAY, not here. The
+// student's own assessment page reads the same derivation over the same
+// `exam_attempts` rows, so banding the percentages a second time in the
+// browser would let the two screens disagree about the same student. See
+// `crates/core/src/performance.rs`.
+
+export type PerformanceLevel =
+  | "not_assessed"
+  | "needs_work"
+  | "developing"
+  | "proficient"
+  | "strong"
+  | "excellent";
+
+export type Trophy = "gold" | "silver" | "bronze";
+
+export type PerformanceWeakTopic = { topic: string; missed_count: number };
+
+/** One block's line in a student's performance record. */
+export type BlockPerformance = {
+  block_id: string;
+  block_no: number;
+  block_title: string;
+  course_id: string;
+  course_code: string;
+  course_name: string;
+  semester_number: number;
+  exams_available: number;
+  attempts_total: number;
+  attempts_graded: number;
+  /** `null` means never assessed; `0` would be a measured zero. */
+  average_percentage: number | null;
+  best_percentage: number | null;
+  level: PerformanceLevel;
+  level_label: string;
+  /** `null` for an unassessed block — not zero stars. */
+  stars: number | null;
+  sessions_total: number;
+  sessions_completed: number;
+  active_voice_ms: number;
+  last_studied_at: string | null;
+  weak_topics: PerformanceWeakTopic[];
+  /**
+   * The student's own words. Read-only to an admin: there is no admin write
+   * path, because a remark an admin could edit would stop being the student's.
+   */
+  remark: string | null;
+  remark_updated_at: string | null;
+};
+
+export type PerformanceSummary = {
+  blocks_total: number;
+  blocks_assessed: number;
+  attempts_graded: number;
+  average_percentage: number | null;
+  best_percentage: number | null;
+  level: PerformanceLevel;
+  level_label: string;
+  stars: number | null;
+  trophy: Trophy | null;
+  attempts_until_trophy: number;
+  total_active_voice_ms: number;
+};
+
+export type StudentPerformance = {
+  student_id: string;
+  student_name: string;
+  roll_number: string;
+  program_name: string;
+  semester_number: number;
+  lsc_code: string | null;
+  summary: PerformanceSummary;
+  blocks: BlockPerformance[];
+};
+
+/**
+ * One line of the best-performers board.
+ *
+ * `rank` is assigned server-side after ordering, so the client renders the
+ * position rather than inferring it from an array it might re-sort. Only
+ * graded attempts count, and a student below the minimum does not appear at
+ * all — ranking one paper against twenty is a sampling artefact.
+ */
+export type TopPerformer = {
+  rank: number;
+  student_id: string;
+  student_name: string;
+  roll_number: string;
+  program_name: string;
+  semester_number: number;
+  attempts_graded: number;
+  average_percentage: number;
+  best_percentage: number;
+  level: PerformanceLevel;
+  level_label: string;
+  stars: number | null;
+  trophy: Trophy | null;
+};

@@ -4,11 +4,7 @@
 //! are what makes "strictly this student's syllabus" enforceable at query
 //! time (`.claude/rules/rag-pipeline.md`).
 
-use qdrant_client::qdrant::{
-    vectors_config::Config as VectorsConfigOneOf, CreateCollectionBuilder,
-    CreateFieldIndexCollectionBuilder, DeletePointsBuilder, Distance, FieldType, Filter,
-    NamedVectors, PointStruct, SparseVectorConfig, SparseVectorParams, VectorParams, VectorsConfig,
-};
+use qdrant_client::qdrant::{CreateCollectionBuilder, CreateFieldIndexCollectionBuilder, DeletePointsBuilder, Distance, FieldType, Filter, NamedVectors, PointStruct, ScrollPointsBuilder, SparseVectorConfig, SparseVectorParams, VectorParams, VectorsConfig, vectors_config::Config as VectorsConfigOneOf};
 use qdrant_client::Qdrant;
 
 use crate::enrich::EnrichedChunk;
@@ -111,6 +107,70 @@ pub async fn delete_document_points(
         .await?;
 
     Ok(())
+}
+
+
+/// Every distinct `chapter` currently indexed for a block, in reading order
+/// (`block_no` ascending by `page`, then `para_index`).
+///
+/// Exists because the block outline is a property of the BLOCK, not of one
+/// document. Building it from a single ingest run's chunks — which is what
+/// used to happen — wrote a `pcache:{block_id}` entry containing only the
+/// document that happened to be ingested last, and the tutor was then handed
+/// that as the block's whole syllabus. Observed live: Block 1 has six units,
+/// its outline read "1. Unit 4 Water Resources", and the tutor kept leaving
+/// the unit the student had opened to teach Unit 4 instead.
+pub async fn chapters_for_block(
+    client: &Qdrant,
+    program_id: dg_core::ProgramId,
+    semester_no: i32,
+    course_id: dg_core::CourseId,
+    block_no: i32,
+) -> Result<Vec<String>> {
+    // The same four mandatory dimensions retrieval filters on (E-25), so the
+    // outline describes exactly the material this block can actually serve.
+    let filter = Filter::must([
+        qdrant_client::qdrant::Condition::matches("program_id", program_id.to_string()),
+        qdrant_client::qdrant::Condition::matches("semester_no", semester_no as i64),
+        qdrant_client::qdrant::Condition::matches("course_id", course_id.to_string()),
+        qdrant_client::qdrant::Condition::matches("block_no", block_no as i64),
+    ]);
+
+    let mut chapters: Vec<String> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut offset = None;
+
+    // Scrolled rather than searched: this wants every chunk in the block, and
+    // a vector query would cap at `limit` and silently truncate the outline.
+    loop {
+        let mut builder = ScrollPointsBuilder::new(COLLECTION_NAME)
+            .filter(filter.clone())
+            .limit(256)
+            .with_payload(true)
+            .with_vectors(false);
+        if let Some(offset) = offset.take() {
+            builder = builder.offset(offset);
+        }
+
+        let page = client.scroll(builder).await?;
+        for point in &page.result {
+            if let Some(value) = point.payload.get("chapter") {
+                if let Some(text) = value.as_str() {
+                    if !text.trim().is_empty() && seen.insert(text.to_string()) {
+                        chapters.push(text.to_string());
+                    }
+                }
+            }
+        }
+
+        match page.next_page_offset {
+            Some(next) => offset = Some(next),
+            None => break,
+        }
+    }
+
+    chapters.sort();
+    Ok(chapters)
 }
 
 /// Upserts a batch of enriched chunks with their dense embeddings, paired

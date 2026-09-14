@@ -174,3 +174,27 @@ export function formatClock(ms: number): string {
   const seconds = total % 60;
   return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`;
 }
+
+/**
+ * A cumulative duration — "15h 24m", "24m", "<1m".
+ *
+ * Deliberately NOT `formatClock`, which is an mm:ss countdown for a single
+ * session and keeps counting minutes past sixty. Fifteen hours of study
+ * rendered that way reads "924:12", which looks like a broken timer rather
+ * than a total. Any figure that accumulates across sessions belongs here.
+ *
+ * `0` renders as `0m`, not an em dash: this is a measured zero — the student
+ * has studied nothing yet — and not a missing value.
+ */
+export function formatDuration(ms: number): string {
+  const totalMinutes = Math.floor(Math.max(0, ms) / 60_000);
+  if (totalMinutes === 0) {
+    // Distinguishes "has not started" from "studied briefly"; rounding a real
+    // forty seconds down to a bare 0m would erase the session entirely.
+    return ms > 0 ? "<1m" : "0m";
+  }
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours === 0) return `${minutes}m`;
+  return minutes === 0 ? `${hours}h` : `${hours}h ${minutes}m`;
+}

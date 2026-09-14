@@ -168,3 +168,28 @@ pub async fn latest_progress_for_block(
         _ => None,
     }))
 }
+
+/// Records which unit the session is actually teaching.
+///
+/// Written **after** `open` rather than as part of it, because the unit is only
+/// trustworthy once `AcademicContext::with_unit` has checked it belongs to the
+/// block — the id arrives from the client, and the session row is opened before
+/// that validation runs. Storing it here means the column only ever holds a
+/// unit the student was genuinely entitled to open.
+///
+/// NULL stays NULL for a student who opened a whole block; that is a real
+/// answer, not a missing one.
+pub async fn set_document(
+    pool: &PgPool,
+    id: SessionId,
+    document_id: dg_core::DocumentId,
+) -> Result<()> {
+    sqlx::query!(
+        "UPDATE learning_sessions SET document_id = $2 WHERE id = $1",
+        id.into_uuid(),
+        document_id.into_uuid(),
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
+}

@@ -26,6 +26,10 @@ async-trait = { workspace = true }
 rand = { workspace = true }
 sqlx = { workspace = true }
 lopdf = { workspace = true }
+# Written, not linked: `pdftotext` reads a path, so `PopplerParser` needs a
+# scratch file that is removed on drop — including on the error paths, so
+# curriculum PDFs never accumulate in the temp directory.
+tempfile = "3"
 qdrant-client = { workspace = true }
 redis = { workspace = true }
 sha2 = { workspace = true }

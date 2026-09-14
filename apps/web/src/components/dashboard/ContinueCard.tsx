@@ -54,7 +54,7 @@ export function ContinueCard({ context }: { context: StudentContext }) {
       </div>
 
       <p className="mt-4 text-[14px] leading-[1.5] text-gray-300/70">
-        Sessions run for up to 20 minutes of speaking time.
+        Sessions run for up to 60 minutes of speaking time.
       </p>
     </Card>
   );

@@ -19,6 +19,7 @@ import {
   nameOf,
   useCatalogue,
 } from "@/components/admin/people/lookups";
+import { TopPerformers } from "@/components/admin/people/TopPerformers";
 import { listStudents } from "@/lib/admin/client";
 import type { Student } from "@/lib/admin/types";
 import { ApiError } from "@/lib/api";
@@ -220,6 +221,12 @@ export function StudentsList() {
       />
 
       {error ? <Banner tone="danger">{error}</Banner> : null}
+
+      {/* Above the roster rather than inside it: the board answers "who is
+          doing well", which is a different question from "find me this
+          student", and folding it into the table would make the table's
+          ordering ambiguous. */}
+      <TopPerformers />
 
       {/* An empty roster reads as a bug unless the scope that produced it is
           visible — a sub-admin with no scopes can never see a single row. */}

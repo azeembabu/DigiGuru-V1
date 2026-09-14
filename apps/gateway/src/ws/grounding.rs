@@ -236,6 +236,7 @@ pub async fn build(
     question: &str,
     api_key: Option<&str>,
     locale: Option<&str>,
+    student_name: Option<&str>,
 ) -> Grounding {
     // The real embedder when a key is configured, the deterministic stub
     // otherwise.
@@ -276,7 +277,13 @@ pub async fn build(
         RetrievalOutcome::Chunks(chunks) if !chunks.is_empty() => {
             let chunks = &chunks[..chunks.len().min(MAX_CHUNKS)];
             Grounding {
-                system_instruction: grounded_instruction(context, preamble, locale, chunks),
+                system_instruction: grounded_instruction(
+                    context,
+                    preamble,
+                    locale,
+                    student_name,
+                    chunks,
+                ),
                 turn_state: chunks.first().map(|c| TurnState {
                     chapter: c.chapter.clone(),
                     topic: c.topic.clone(),
@@ -286,7 +293,7 @@ pub async fn build(
             }
         }
         _ => Grounding {
-            system_instruction: abstaining_instruction(context, preamble, locale),
+            system_instruction: abstaining_instruction(context, preamble, locale, student_name),
             turn_state: None,
             abstained: true,
         },
@@ -296,12 +303,54 @@ pub async fn build(
 /// The shared persona/boundary preamble. Identical in both the grounded and
 /// the abstaining instruction, so the only thing that varies between them is
 /// what the tutor is permitted to say — not who it is.
-fn tutor_header(context: &AcademicContext, preamble: Option<&str>, locale: Option<&str>) -> String {
+fn tutor_header(
+    context: &AcademicContext,
+    preamble: Option<&str>,
+    locale: Option<&str>,
+    student_name: Option<&str>,
+) -> String {
     let mut text = String::new();
     text.push_str(
         "You are Digi Guru, a live voice tutor for one student. You teach only from the \
          CURRICULUM CONTEXT supplied below in this instruction.\n\n",
     );
+    // The student's name belongs in the STANDING instruction, not only in the
+    // one-off kickoff turn. Sent once at session start it is a fact the model
+    // has to carry in conversation history, and it fell out of the window
+    // within a few turns — after which the tutor addressed a named student as
+    // "വിദ്യാർത്ഥികളെ" ("students"). Repeating it in every turn's system
+    // instruction is what makes the name survive the whole session.
+    if let Some(name) = student_name.map(str::trim).filter(|n| !n.is_empty()) {
+        // First name only: the roll-book holds a full legal name, and a tutor
+        // that says all three parts of it every turn sounds like a summons
+        // rather than a teacher.
+        let first = name.split_whitespace().next().unwrap_or(name);
+        text.push_str(&format!(
+            "THE STUDENT'S NAME IS {first}. Address them by that name — in the greeting, when \
+             you check their understanding, when you praise them and when you call them back to \
+             the lesson. Use it naturally, the way a teacher who knows the student does: often \
+             enough that the lesson is plainly addressed to {first} and not to a room, and not \
+             so often that it sounds mechanical. Never address the student as \
+             \"വിദ്യാർത്ഥികളെ\", \"students\", \"children\", \"dear student\" or any other \
+             group or placeholder form — there is exactly one student in this session and you \
+             know their name.\n\
+             AND NEVER CALL THE STUDENT \"ഗുരു\" OR \"GURU\". That is YOUR name, not theirs. \
+             The student says \"ഗുരു\" to call YOU; it is how they address you, never how you \
+             address them. Do not echo it back, do not answer \"ഗുരു\" with \"ഗുരു\", and do \
+             not use it as a polite form of address the way you might use \"സാർ\". Every time \
+             you would be tempted to open a reply with \"ഗുരു\", open it with {first} \
+             instead.\n\n"
+        ));
+    } else {
+        // No resolvable name is still no licence to reuse the tutor's own
+        // title on the student — the failure this guards against happened
+        // with a name present, so it would certainly happen without one.
+        text.push_str(
+            "NEVER CALL THE STUDENT \"ഗുരു\" OR \"GURU\". That is YOUR name, not theirs — the \
+             student says it to call YOU, and it is never how you address them. Never echo it \
+             back at them and never use it as a form of address.\n\n",
+        );
+    }
     // The unit is named on its own line rather than appended to the breadcrumb:
     // it is the thing the student chose and the thing the tutor is actually
     // inside, and burying it at the end of a four-part header made the model
@@ -456,7 +505,79 @@ fn tutor_header(context: &AcademicContext, preamble: Option<&str>, locale: Optio
          the board can set it properly — fractions as fractions, subscripts as \
          subscripts. Writing an equation inside a heading or a bullet prints it as raw \
          characters and the student copies down something that is not what the \
-         textbook says.\n",
+         textbook says.\n\
+         The reverse is equally a rule: `math` is for symbols ONLY. Never put \
+         Malayalam - or any ordinary sentence, term, definition or translation - \
+         inside a `math` op, not even when it looks like an equation because it \
+         has an \"=\" in it. \"\u{d35}\u{d28}\u{d02} = forest\" is a definition, not a formula: it \
+         belongs in a `bullets` op. The board typesets `math` glyph by glyph, \
+         which cannot shape Malayalam conjuncts or place its vowel signs, so \
+         words sent as maths reach the student visibly misspelt.\n\
+         21. AN EXAMPLE MUST BE ABOUT THE THING YOU ARE TEACHING. Every example, \
+         analogy or illustration exists to make THIS paragraph clearer, and it must \
+         be recognisably about the idea in front of you — not the broader subject, \
+         not a neighbouring topic, not something the phrase reminded you of. State \
+         the idea, give the example, then say in one line how the example shows that \
+         idea. If you cannot close that loop the example is off-target: drop it and \
+         explain the idea directly instead. Never let an example become a story that \
+         carries the lesson away from the paragraph you are on, and never follow one \
+         example with a second — one that lands is worth more than three that \
+         wander.\n\
+         22. KEEP EXAMPLES UNCONTROVERSIAL AND SAFE. Draw them from ordinary, \
+         neutral life: household and classroom objects, food, weather, farming, \
+         travel, shops, sport, simple arithmetic. Do not build an example on party \
+         politics, religion or caste, communal or regional comparisons, a living or \
+         recent public figure, crime, violence, disease or death, money troubles, \
+         body image, or anything a parent listening at the back of the room would \
+         rather their child had not been told. Do not name a real person, company or \
+         brand to make a point, and do not invent a statistic, a news event or a \
+         quotation to dress one up. If an example needs a caveat before it is safe \
+         to say, it is the wrong example — choose a plainer one. This applies to \
+         supplementary material under rule 3 exactly as it applies to the \
+         textbook's own.\n\
+         23. STAY INSIDE THIS UNIT. THIS IS A HARD BOUNDARY. The unit named \
+         above is the whole of what you may teach in this session. Every \
+         heading you write, every example you give and every sentence you \
+         speak must be about the material in the CURRICULUM CONTEXT for THIS \
+         unit. Do not teach a neighbouring unit, an earlier or later chapter, \
+         a related topic from elsewhere in the course, or general background \
+         about the subject — not as an introduction, not as useful extra \
+         context, and not because the student's wording brushed against it. \
+         If the student asks about something outside this unit, say plainly \
+         that it belongs to a different part of the syllabus, tell them which \
+         part if the context shows it, and offer to continue with the unit \
+         they opened. Then carry on from where you were. Wandering out of the \
+         unit is a failure even when what you say is true.\n\
+         24. THE WAKE WORD. \"ഗുരു\" (\"Guru\") is YOUR name — it is what this \
+         platform's virtual teacher is called, and it refers to you and only to \
+         you. It is never a way of addressing the student: you never call the \
+         student \"ഗുരു\" or \"Guru\", never echo it back at them, and never use \
+         it as a general term of address. The student has their own name, given \
+         above, and that is what you call them. You are addressed as \"ഗുരു\". Between \
+         questions you are in STANDBY: you keep listening and you keep teaching \
+         what you were teaching, but you do NOT treat what you hear as a \
+         question to you. Answer a student question only when they actually \
+         addressed you with \"ഗുരു\" / \"Guru\" - at the start of the sentence, in \
+         the middle of it, or on its own. Everything after that word, to the \
+         end of what they said, is the question: take it whole and answer it. \
+         A room where two people are talking, a phrase you overheard, a \
+         half-sentence with no \"ഗുരു\" in it - none of these is a question for \
+         you. Say nothing and carry on. When you have finished answering, go \
+         back to standby and wait to be called again.\n\
+         Hearing \"ഗുരു\" is never a reason to SAY it. The student calling you by \
+         your name does not make it their name: answer them by THEIR name, never \
+         by yours. \"ഗുരു, what is sandhi?\" is answered \"<student's name>, \
+         sandhi is...\" — never \"ഗുരു, sandhi is...\".\n\
+         This does NOT make you deaf to the lesson itself: \"ഗുരു\" is how a \
+         QUESTION is addressed to you. Your own teaching turns, the \
+         comprehension checks you ask and the answers the student gives to \
+         those checks continue normally, because there you already have the \
+         floor and are waiting for a specific reply.\n\
+         And do not be pedantic about it. If the student plainly means you - \
+         they say \"ഗുരു\" slightly wrong, the transcript clips it, they are \
+         answering a question you just asked - treat it as addressed to you. \
+         The rule exists to stop you answering the room, not to make a student \
+         repeat themselves.\n",
     );
 
     // LANGUAGE. Anchored on the student's recorded locale rather than left to
@@ -505,9 +626,10 @@ fn grounded_instruction(
     context: &AcademicContext,
     preamble: Option<&str>,
     locale: Option<&str>,
+    student_name: Option<&str>,
     chunks: &[RetrievedChunk],
 ) -> String {
-    let mut text = tutor_header(context, preamble, locale);
+    let mut text = tutor_header(context, preamble, locale, student_name);
     text.push_str(
         "CURRICULUM CONTEXT — the only material you may teach from this turn. Each excerpt is \
          printed with the citation you must use for it.\n\n",
@@ -535,8 +657,13 @@ fn grounded_instruction(
 /// The NN-4 abstention instruction. Explicitly stated rather than left
 /// implicit: an empty context block with no instruction about it is exactly
 /// the situation in which a model improvises.
-fn abstaining_instruction(context: &AcademicContext, preamble: Option<&str>, locale: Option<&str>) -> String {
-    let mut text = tutor_header(context, preamble, locale);
+fn abstaining_instruction(
+    context: &AcademicContext,
+    preamble: Option<&str>,
+    locale: Option<&str>,
+    student_name: Option<&str>,
+) -> String {
+    let mut text = tutor_header(context, preamble, locale, student_name);
     text.push_str(
         "CURRICULUM CONTEXT — none. Retrieval found nothing in this block's textbook above the \
          similarity floor for this turn.\n\n\
@@ -596,7 +723,7 @@ mod tests {
     /// `board_ops` "BEFORE you speak it" — and "it" was read as the board.
     #[test]
     fn the_instruction_separates_the_board_from_the_spoken_explanation() {
-        let text = grounded_instruction(&context(), None, Some("en-IN"), &[chunk("Vritham", 57)]);
+        let text = grounded_instruction(&context(), None, Some("en-IN"), None, &[chunk("Vritham", 57)]);
         assert!(text.contains("NEVER read the board aloud"), "got: {text}");
         assert!(text.contains("TEACH, DO NOT LIST"), "got: {text}");
         // The wording that caused the readout must not come back.
@@ -609,7 +736,7 @@ mod tests {
     /// output, so the only lever is the prompt.
     #[test]
     fn the_tutor_is_told_to_speak_slowly() {
-        let text = grounded_instruction(&context(), None, Some("ml-IN"), &[chunk("Vritham", 57)]);
+        let text = grounded_instruction(&context(), None, Some("ml-IN"), None, &[chunk("Vritham", 57)]);
         assert!(text.contains("8. PACE"), "got: {text}");
         assert!(text.contains("Speak slowly and deliberately"), "got: {text}");
     }
@@ -620,7 +747,7 @@ mod tests {
     /// explicitly for academic formats.
     #[test]
     fn academic_format_answers_must_reach_the_board_as_well_as_the_voice() {
-        let text = grounded_instruction(&context(), None, Some("ml-IN"), &[chunk("Vritham", 57)]);
+        let text = grounded_instruction(&context(), None, Some("ml-IN"), None, &[chunk("Vritham", 57)]);
         assert!(text.contains("9. ACADEMIC-FORMAT ANSWERS ARE WRITTEN"), "got: {text}");
         assert!(text.contains("board_ops tool as well as saying it"), "got: {text}");
     }
@@ -632,7 +759,7 @@ mod tests {
     fn english_turns_are_indian_english_whatever_the_primary_language_is() {
         for locale in ["ml-IN", "en-IN"] {
             let text =
-                grounded_instruction(&context(), None, Some(locale), &[chunk("Vritham", 57)]);
+                grounded_instruction(&context(), None, Some(locale), None, &[chunk("Vritham", 57)]);
             assert!(text.contains("speak Indian English"), "{locale}: {text}");
             assert!(
                 text.contains("Technical terms from the textbook stay in English"),
@@ -641,12 +768,92 @@ mod tests {
         }
     }
 
+    /// Observed live: a named student was addressed as "വിദ്യാർത്ഥികളെ"
+    /// ("students") because the name reached the model only in the opening
+    /// kickoff turn and fell out of the conversation window. It belongs in the
+    /// standing instruction, which every turn rebuilds.
+    #[test]
+    fn the_tutor_is_told_the_students_name_and_told_to_use_it() {
+        let text = grounded_instruction(
+            &context(),
+            None,
+            Some("ml-IN"),
+            Some("Aseem Babu"),
+            &[chunk("Vritham", 57)],
+        );
+        assert!(text.contains("THE STUDENT'S NAME IS Aseem"), "got: {text}");
+        // The first name, not the roll-book entry: a tutor that says all three
+        // parts every turn sounds like a summons.
+        assert!(!text.contains("Aseem Babu"), "got: {text}");
+        assert!(text.contains("വിദ്യാർത്ഥികളെ"), "the forbidden group form is named: {text}");
+    }
+
+    /// A session with no resolvable student still has to produce a usable
+    /// instruction — the name is additive, never a precondition.
+    #[test]
+    fn an_unknown_student_name_simply_omits_the_naming_rule() {
+        let text = grounded_instruction(&context(), None, Some("ml-IN"), None, &[chunk("V", 1)]);
+        assert!(!text.contains("THE STUDENT'S NAME IS"), "got: {text}");
+        // A blank name is the same as none, rather than greeting an empty string.
+        let blank =
+            grounded_instruction(&context(), None, Some("ml-IN"), Some("   "), &[chunk("V", 1)]);
+        assert!(!blank.contains("THE STUDENT'S NAME IS"), "got: {blank}");
+    }
+
+    /// "ഗുരു" is the tutor's own name. The wake-word rule taught the model to
+    /// listen for it; nothing told it the word is not also a way of addressing
+    /// the student back.
+    #[test]
+    fn guru_is_the_tutors_own_name_and_never_the_students() {
+        let text = grounded_instruction(
+            &context(),
+            None,
+            Some("ml-IN"),
+            Some("Aseem"),
+            &[chunk("Vritham", 57)],
+        );
+        assert!(text.contains("is YOUR name"), "got: {text}");
+        assert!(
+            text.contains("never a way of addressing the student"),
+            "got: {text}"
+        );
+        // Stated again where the name is given, which is the position the model
+        // actually acts on — inside rule 24 it sat in a wall of "ഗുരു" and the
+        // tutor went on addressing the student with it.
+        assert!(
+            text.contains("NEVER CALL THE STUDENT \"ഗുരു\" OR \"GURU\""),
+            "got: {text}"
+        );
+        assert!(text.contains("open it with Aseem instead"), "got: {text}");
+    }
+
+    /// The prohibition is not conditional on knowing the name: a session that
+    /// could not resolve a student must still never reuse the tutor's own
+    /// title on them.
+    #[test]
+    fn the_student_is_never_called_guru_even_with_no_name_resolved() {
+        let text = grounded_instruction(&context(), None, Some("ml-IN"), None, &[chunk("V", 1)]);
+        assert!(
+            text.contains("NEVER CALL THE STUDENT \"ഗുരു\" OR \"GURU\""),
+            "got: {text}"
+        );
+    }
+
+    /// The board typesets `math` glyph by glyph, which cannot shape Malayalam.
+    /// The renderer routes such an op to the text face regardless; this is the
+    /// half that stops it being emitted as maths in the first place.
+    #[test]
+    fn malayalam_prose_is_kept_out_of_math_ops() {
+        let text = grounded_instruction(&context(), None, Some("ml-IN"), None, &[chunk("V", 1)]);
+        assert!(text.contains("`math` is for symbols ONLY"), "got: {text}");
+    }
+
     /// Observed live: the tutor re-emitted the same heading and bullets on a
     /// later turn, so the board showed the block twice. The renderer suppresses
     /// the repeat mechanically; this is the half that stops it being emitted.
     #[test]
     fn the_tutor_is_told_not_to_rewrite_what_is_already_on_the_board() {
-        let text = grounded_instruction(&context(), None, Some("ml-IN"), &[chunk("Vritham", 57)]);
+        let text = grounded_instruction(&context(), None, Some("ml-IN"), None, &[chunk("Vritham", 57)]);
         assert!(text.contains("10. NEVER WRITE THE SAME THING TWICE"), "got: {text}");
     }
 
@@ -655,7 +862,7 @@ mod tests {
     /// the first place, or the gate never has an answer to act on.
     #[test]
     fn the_tutor_checks_comprehension_and_reteaches_on_a_no() {
-        let text = grounded_instruction(&context(), None, Some("ml-IN"), &[chunk("Vritham", 57)]);
+        let text = grounded_instruction(&context(), None, Some("ml-IN"), None, &[chunk("Vritham", 57)]);
         assert!(text.contains("11. CHECK THAT THE STUDENT UNDERSTOOD"), "got: {text}");
         assert!(text.contains("12. IF THEY DID NOT UNDERSTAND"), "got: {text}");
         assert!(text.contains("Never simply repeat"), "got: {text}");
@@ -668,7 +875,7 @@ mod tests {
     /// rephrased into anything that softens abstention itself.
     #[test]
     fn conversational_asides_are_answered_without_weakening_abstention() {
-        let text = grounded_instruction(&context(), None, Some("ml-IN"), &[chunk("Vritham", 57)]);
+        let text = grounded_instruction(&context(), None, Some("ml-IN"), None, &[chunk("Vritham", 57)]);
         assert!(text.contains("13. BE A PERSON, NOT A READER"), "got: {text}");
         assert!(text.contains("not about ordinary human conversation"), "got: {text}");
         // The abstention rule itself is still stated in full.
@@ -682,7 +889,7 @@ mod tests {
     fn the_instruction_names_the_unit_being_taught() {
         let mut context = context();
         context.unit_title = Some("Unit 3 Forest Resources".to_string());
-        let text = grounded_instruction(&context, None, Some("ml-IN"), &[chunk("Vritham", 57)]);
+        let text = grounded_instruction(&context, None, Some("ml-IN"), None, &[chunk("Vritham", 57)]);
         assert!(text.contains("YOU ARE TEACHING THIS UNIT: Unit 3 Forest Resources"), "got: {text}");
     }
 
@@ -691,7 +898,7 @@ mod tests {
     /// printing none.
     #[test]
     fn no_unit_line_when_the_whole_block_is_being_taught() {
-        let text = grounded_instruction(&context(), None, Some("ml-IN"), &[chunk("Vritham", 57)]);
+        let text = grounded_instruction(&context(), None, Some("ml-IN"), None, &[chunk("Vritham", 57)]);
         assert!(!text.contains("YOU ARE TEACHING THIS UNIT"), "got: {text}");
     }
 
@@ -699,7 +906,7 @@ mod tests {
     /// to keep its place, teach in order, or answer "where are we?".
     #[test]
     fn every_excerpt_is_labelled_with_its_paragraph_position() {
-        let text = grounded_instruction(&context(), None, Some("ml-IN"), &[chunk("Vritham", 57)]);
+        let text = grounded_instruction(&context(), None, Some("ml-IN"), None, &[chunk("Vritham", 57)]);
         // `para_index` is 0-based in the payload and 1-based for a human.
         assert!(text.contains("paragraph 1"), "got: {text}");
         assert!(text.contains("14. KNOW WHERE YOU ARE IN THE UNIT"), "got: {text}");
@@ -711,7 +918,7 @@ mod tests {
     /// how a tutor ends up passing off its own recollection as the syllabus.
     #[test]
     fn supplementary_content_is_permitted_but_must_be_declared() {
-        let text = grounded_instruction(&context(), None, Some("ml-IN"), &[chunk("Vritham", 57)]);
+        let text = grounded_instruction(&context(), None, Some("ml-IN"), None, &[chunk("Vritham", 57)]);
 
         // Textbook first, and the model's memory of the book is not the book.
         assert!(text.contains("THE TEXTBOOK COMES FIRST"), "got: {text}");
@@ -731,7 +938,7 @@ mod tests {
     /// the policy exists to prevent, so the instruction forbids it explicitly.
     #[test]
     fn the_tutor_never_claims_a_source_it_cannot_have_consulted() {
-        let text = grounded_instruction(&context(), None, Some("ml-IN"), &[chunk("Vritham", 57)]);
+        let text = grounded_instruction(&context(), None, Some("ml-IN"), None, &[chunk("Vritham", 57)]);
         assert!(text.contains("You cannot browse"), "got: {text}");
         assert!(
             text.contains("do not invent a book, a paper, a website, an author"),
@@ -745,7 +952,7 @@ mod tests {
     /// *guessing* once it does decide the student spoke.
     #[test]
     fn the_tutor_is_told_not_to_answer_noise_or_fragments() {
-        let text = grounded_instruction(&context(), None, Some("ml-IN"), &[chunk("Vritham", 57)]);
+        let text = grounded_instruction(&context(), None, Some("ml-IN"), None, &[chunk("Vritham", 57)]);
         assert!(text.contains("16. ANSWER QUESTIONS, NOT NOISES"), "got: {text}");
         assert!(text.contains("17. NEVER GUESS AT A HALF-FINISHED SENTENCE"), "got: {text}");
         assert!(text.contains("18. WHEN YOU ARE UNSURE"), "got: {text}");
@@ -760,10 +967,10 @@ mod tests {
     /// single sentences.
     #[test]
     fn the_language_rule_anchors_on_the_students_recorded_locale() {
-        let ml = grounded_instruction(&context(), None, Some("ml-IN"), &[chunk("Vritham", 57)]);
+        let ml = grounded_instruction(&context(), None, Some("ml-IN"), None, &[chunk("Vritham", 57)]);
         assert!(ml.contains("Speak Malayalam by default"), "got: {ml}");
 
-        let en = grounded_instruction(&context(), None, Some("en-IN"), &[chunk("Vritham", 57)]);
+        let en = grounded_instruction(&context(), None, Some("en-IN"), None, &[chunk("Vritham", 57)]);
         assert!(en.contains("Speak English by default"), "got: {en}");
     }
 
@@ -771,7 +978,7 @@ mod tests {
     /// language for someone whose record does not state one.
     #[test]
     fn an_unknown_locale_lets_the_student_lead_instead_of_guessing() {
-        let text = grounded_instruction(&context(), None, None, &[chunk("Vritham", 57)]);
+        let text = grounded_instruction(&context(), None, None, None, &[chunk("Vritham", 57)]);
         assert!(text.contains("following the student's lead"), "got: {text}");
         assert!(!text.contains("by default"));
     }
@@ -780,8 +987,8 @@ mod tests {
     /// forbidden explicitly in both the grounded and abstaining instructions.
     #[test]
     fn both_instructions_forbid_mixing_languages_mid_sentence() {
-        let grounded = grounded_instruction(&context(), None, Some("ml-IN"), &[chunk("V", 1)]);
-        let abstaining = abstaining_instruction(&context(), None, Some("ml-IN"));
+        let grounded = grounded_instruction(&context(), None, Some("ml-IN"), None, &[chunk("V", 1)]);
+        let abstaining = abstaining_instruction(&context(), None, Some("ml-IN"), None);
         for text in [grounded, abstaining] {
             assert!(text.contains("Never mix two languages inside one sentence"), "got: {text}");
         }
@@ -792,6 +999,7 @@ mod tests {
         let text = grounded_instruction(
             &context(),
             Some("Block 3 outline:\n1. Vritham\n"),
+            None,
             None,
             &[chunk("Vritham", 57)],
         );
@@ -805,7 +1013,7 @@ mod tests {
 
     #[test]
     fn abstaining_instruction_names_the_gap_before_anything_else() {
-        let text = abstaining_instruction(&context(), None, None);
+        let text = abstaining_instruction(&context(), None, None, None);
 
         assert!(text.contains("CURRICULUM CONTEXT — none"));
         // Under the supplementary-content policy the tutor may go on to help,
@@ -828,7 +1036,7 @@ mod tests {
         let chunks = [chunk("A", 1), chunk("B", 2), chunk("C", 3), chunk("D", 4)];
         let capped = &chunks[..chunks.len().min(MAX_CHUNKS)];
 
-        let text = grounded_instruction(&context(), None, None, capped);
+        let text = grounded_instruction(&context(), None, None, None, capped);
         assert_eq!(capped.len(), 3);
         assert!(!text.contains("page: 4"));
     }

@@ -23,6 +23,7 @@ import {
   loadRevisions,
   reviewFlashcard,
   type ContinueLearning,
+  type DashboardAssessment,
   type ExamHistoryEntry,
   type Flashcard,
   type Revision,
@@ -515,6 +516,82 @@ export function RevisionPanel({ resources }: { resources: SavedResources }) {
                     {formatDate(row.remind_at)}
                   </p>
                 </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/**
+ * The tutor's most recent conversational verdicts.
+ *
+ * A separate panel from `ExamHistoryPanel`, deliberately. That one shows marked
+ * papers; this one shows the tutor's judgement of how the student took part in
+ * a lesson. Merging them into one "recent results" list would invite a student
+ * to read a conversation rating as an exam score, which is the one confusion
+ * this whole feature has to avoid.
+ */
+export function UnitFeedbackPanel({ items }: { items: DashboardAssessment[] }) {
+  return (
+    <section className={cardClass}>
+      <SectionHeader
+        title="Feedback from your tutor"
+        hint="How your last lessons went"
+        action={
+          <Link
+            href="/assessment"
+            className="text-[14px] font-semibold text-lime-400 underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300 focus-visible:ring-offset-2 focus-visible:ring-offset-art-base"
+          >
+            My assessment
+          </Link>
+        }
+      />
+
+      <div className="mt-5">
+        {items.length === 0 ? (
+          <StudentEmpty
+            title="No feedback yet"
+            hint="Open a unit in the classroom and talk with your tutor. After the lesson it writes up how you did, and it appears here."
+          />
+        ) : (
+          <ul className="space-y-3">
+            {items.map((item) => (
+              <li
+                key={item.document_id + item.assessed_at}
+                className="rounded-[12px] border border-art-mid/60 bg-art-base/40 p-4"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-[15px] font-semibold text-white">{item.unit_title}</p>
+                    <p className="text-[12px] text-gray-400">
+                      {item.course_code} · Block {item.block_no} ·{" "}
+                      {formatDateTime(item.assessed_at)}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <span
+                      className="text-amber-300"
+                      role="img"
+                      aria-label={`${item.stars} out of 5 stars`}
+                    >
+                      {"★".repeat(item.stars)}
+                      <span className="text-art-mid">{"★".repeat(5 - item.stars)}</span>
+                    </span>
+                    <p className="text-[13px] font-semibold text-white">
+                      {item.mark.toFixed(0)}
+                      <span className="text-[11px] font-normal text-gray-400">/100</span>
+                    </p>
+                  </div>
+                </div>
+                {/* Clamped to three lines rather than truncated in JS: the full
+                    text is already on the wire, so "read more" is a link to the
+                    assessment page and not another request. */}
+                <p className="mt-2 line-clamp-3 text-[13px] leading-[1.55] text-gray-300">
+                  {item.summary}
+                </p>
               </li>
             ))}
           </ul>

@@ -18,11 +18,13 @@ pub mod dashboard;
 pub mod exam_module;
 pub mod exams;
 pub mod flashcards;
+pub mod performance;
 pub mod queries;
 pub mod revisions;
+pub mod unit_assessments;
 
 use axum::{
-    routing::{get, patch, post},
+    routing::{get, patch, post, put},
     Router,
 };
 
@@ -60,6 +62,22 @@ pub fn router() -> Router<AppState> {
         .route("/courses/{course_id}/blocks", get(catalogue::list_blocks))
         .route("/blocks/{block_id}/units", get(catalogue::list_units))
         .route("/revisions", get(revisions::list_revisions))
+        // The assessment page: per-block performance, and the student's own
+        // remark against each block. The remark is addressed by block because
+        // that is the row it belongs to; the student is always the caller.
+        .route("/performance", get(performance::get_performance))
+        // The tutor's conversational verdicts, unit by unit. Distinct from
+        // `/performance`, which is exam results: the two are different kinds of
+        // number and are never mixed into one figure.
+        .route("/unit-assessments", get(unit_assessments::list_units))
+        .route(
+            "/unit-assessments/history",
+            get(unit_assessments::unit_history),
+        )
+        .route(
+            "/performance/blocks/{block_id}/remark",
+            put(performance::save_remark),
+        )
         .route("/flashcards", get(flashcards::list_flashcards))
         .route(
             "/flashcards/{id}/review",

@@ -12,6 +12,7 @@ pub mod context;
 pub mod domain;
 pub mod error;
 pub mod ids;
+pub mod performance;
 
 pub use auth::{Actor, Capability, Role};
 pub use domain::{
@@ -19,6 +20,9 @@ pub use domain::{
     QuestionStatus, SessionStatus, UserStatus,
 };
 pub use error::{Error, FieldError, PublicError};
+pub use performance::{
+    stars_from_percentage, trophy_for, PerformanceLevel, Trophy, TROPHY_MIN_ATTEMPTS,
+};
 pub use ids::{
     BlockId, CourseId, DocumentId, ExamAttemptId, ExamId, FlashcardId, LscId, ProgramId,
     QuestionId, SemesterId, SessionId, StudentId, UserId,

@@ -190,9 +190,27 @@ export class Vad {
       return null;
     }
 
-    // Not speech. Track the noise floor downward only while quiet, so speech
-    // never raises the floor and deafens the detector.
-    this.noiseFloor = Math.min(this.noiseFloor, this.noiseFloor * 0.95 + energy * 0.05);
+    // Not speech. The floor tracks the room, asymmetrically: it falls quickly
+    // when the room goes quiet and rises very slowly when it does not.
+    //
+    // It used to only ever fall (`Math.min` of the blend), which looks
+    // conservative and is the opposite. Any transient dip — a pause between
+    // sentences, a moment with the fan off — permanently lowered the bar, and
+    // nothing could raise it again, so across a twenty-minute lesson the floor
+    // converged on the quietest frame ever observed and `openAt` pinned itself
+    // to the absolute minimum below. The detector therefore grew steadily more
+    // trigger-happy the longer a student sat still, which is exactly backwards
+    // and shows up as "hearing you" with nobody speaking.
+    //
+    // Rising is deliberately ~50x slower than falling, and is capped at the
+    // open threshold: a noisy room may raise the bar towards the level it
+    // would take to open a turn, but never past it, so the floor can never
+    // climb into speech territory and deafen the detector to the student.
+    const settling = this.noiseFloor * 0.95 + energy * 0.05;
+    this.noiseFloor =
+      settling < this.noiseFloor
+        ? settling
+        : Math.min(this.noiseFloor * 0.999 + energy * 0.001, openAt);
 
     if (this.speaking) {
       this.silenceMs += this.frameMs;

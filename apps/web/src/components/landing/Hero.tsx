@@ -3,7 +3,7 @@ import { SessionPreview } from "@/components/landing/SessionPreview";
 import { IconArrowUpRight } from "@/components/icons";
 
 const stats = [
-  { value: "20 min", label: "Focused session length" },
+  { value: "60 min", label: "Focused session length" },
   { value: "100%", label: "Answers from your syllabus" },
   { value: "2", label: "Languages — English & Malayalam" },
 ];

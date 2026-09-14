@@ -701,7 +701,7 @@ stack traces, SQL, and system prompts are logged internally and never rendered.
 
 ### 7.6 Acceptance criteria
 
-- [ ] Cumulative voice time hits exactly 1200 s → polite message → socket closed, verified with a skewed client clock.
+- [ ] Cumulative voice time hits exactly 3600 s → polite message → socket closed, verified with a skewed client clock.
 - [ ] Red-team corpus (200 prompts, en + ml): 100 % terminate, zero system-prompt leaks.
 - [ ] Out-of-syllabus corpus: 100 % abstention, zero world-knowledge answers.
 - [ ] No PII appears in any exported log or trace (automated scan over a 24 h export).

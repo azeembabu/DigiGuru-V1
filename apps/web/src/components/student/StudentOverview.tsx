@@ -10,6 +10,7 @@ import { QuotaRing } from "@/components/student/QuotaRing";
 import {
   ContinueLearningHero,
   ExamHistoryPanel,
+  UnitFeedbackPanel,
   FlashcardPanel,
   NotesLibraryPanel,
   RevisionPanel,
@@ -115,7 +116,14 @@ export function StudentOverview() {
     );
   }
 
-  const { student_info, continue_learning, quota_status, exam_history, saved_resources } =
+  const {
+    student_info,
+    continue_learning,
+    quota_status,
+    exam_history,
+    unit_assessments,
+    saved_resources,
+  } =
     state.data;
 
   return (
@@ -134,6 +142,9 @@ export function StudentOverview() {
 
       <div className="grid gap-6 lg:grid-cols-2">
         <QuotaRing quota={quota_status} />
+        {/* Above the exam history: this is the more recent of the two after a
+            lesson, and it is what a student checks first. */}
+        <UnitFeedbackPanel items={unit_assessments} />
         <ExamHistoryPanel history={exam_history} />
       </div>
 
