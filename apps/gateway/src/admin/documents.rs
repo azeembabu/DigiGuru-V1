@@ -25,7 +25,7 @@ use axum::{
     Json,
 };
 use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
@@ -294,7 +294,22 @@ fn normalise_video_url(submitted: Option<&str>) -> Result<Option<String>, Public
 /// accepting it would make a typo in the field name look like a successful save.
 #[derive(Debug, Deserialize)]
 pub struct SetVideoRequest {
-    pub video_url: Option<String>,
+    /// Nested `Option` so "sent as `null`" and "not sent at all" stay
+    /// distinguishable: serde fills a plain missing `Option` with `None`, which
+    /// would silently turn a mistyped field name — or a client that forgot the
+    /// body — into a request that *clears the video* and answers `200`. The
+    /// outer layer is presence, the inner one is the value.
+    #[serde(default, deserialize_with = "deserialize_present")]
+    pub video_url: Option<Option<String>>,
+}
+
+/// Deserialise a present field, `null` included, into `Some(...)`. A field that
+/// is absent never reaches this function and keeps the `None` from `default`.
+fn deserialize_present<'de, D>(deserializer: D) -> Result<Option<Option<String>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    Option::<String>::deserialize(deserializer).map(Some)
 }
 
 /// `PATCH /api/v1/admin/documents/{id}/video` — set or clear a unit's
@@ -328,7 +343,13 @@ pub async fn set_video(
 
     actor.require_scoped(Capability::UploadDocuments, program_id)?;
 
-    let canonical = normalise_video_url(payload.video_url.as_deref())?;
+    let submitted = payload.video_url.ok_or_else(|| {
+        PublicError::validation(
+            "video_url",
+            "video_url is required. Send the link, or null to remove the video.",
+        )
+    })?;
+    let canonical = normalise_video_url(submitted.as_deref())?;
 
     if !documents::set_video_url(&state.pool, document_id, canonical.as_deref())
         .await
@@ -449,6 +470,33 @@ mod tests {
             let err = normalise_video_url(Some(bad)).expect_err("rejected");
             assert_eq!(err.code(), "VALIDATION_ERROR", "accepted {bad}");
         }
+    }
+
+
+    #[test]
+    fn an_absent_field_is_a_validation_error_not_a_silent_clear() {
+        use super::SetVideoRequest;
+        // A mistyped field name, or a client that forgot the body, must not
+        // read as "remove the video" — the two look identical to a handler
+        // that lets serde default a missing `Option` to `None`.
+        let absent: SetVideoRequest = serde_json::from_str("{}").expect("parses");
+        assert!(absent.video_url.is_none(), "an absent field must not look like null");
+
+        let explicit_null: SetVideoRequest =
+            serde_json::from_str(r#"{"video_url":null}"#).expect("parses");
+        assert_eq!(
+            explicit_null.video_url,
+            Some(None),
+            "an explicit null is a request to clear the video"
+        );
+
+        let set: SetVideoRequest =
+            serde_json::from_str(r#"{"video_url":"https://youtu.be/dQw4w9WgXcQ"}"#)
+                .expect("parses");
+        assert_eq!(
+            set.video_url,
+            Some(Some("https://youtu.be/dQw4w9WgXcQ".to_owned()))
+        );
     }
 
 }
