@@ -155,6 +155,10 @@ pub struct StudentUnitRow {
     /// sit there for minutes while a long PDF is parsed and embedded. The stage
     /// is what lets the UI show progress that is actually moving.
     pub status: String,
+    /// The unit's introductory video, if an admin has set one. `None` — the
+    /// normal shape — is what makes the classroom skip the video page and open
+    /// the interactive discussion directly.
+    pub video_url: Option<String>,
 }
 
 pub async fn units_for_student(
@@ -170,7 +174,8 @@ pub async fn units_for_student(
             d.title                          as "title!",
             d.page_count                     as "page_count!",
             (d.status = 'embedded')          as "is_ready!",
-            d.status                         as "status!"
+            d.status                         as "status!",
+            d.video_url                      as "video_url?"
         FROM student_courses sc
         JOIN blocks    b ON b.course_id = sc.course_id
         JOIN documents d ON d.block_id  = b.id

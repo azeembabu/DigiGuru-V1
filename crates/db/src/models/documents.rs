@@ -185,6 +185,10 @@ pub struct DocumentSummary {
     pub job_status: Option<String>,
     /// The latest attempt's failure reason, `None` unless it failed.
     pub last_error: Option<String>,
+    /// Optional introductory video shown before the tutoring session.
+    /// `None` — the normal shape — means the classroom opens straight onto the
+    /// interactive discussion.
+    pub video_url: Option<String>,
 }
 
 pub async fn list_summaries_by_block(
@@ -197,7 +201,8 @@ pub async fn list_summaries_by_block(
         SELECT d.id as "id: DocumentId", d.block_id as "block_id: BlockId",
                d.uploaded_by as "uploaded_by: UserId", d.title, d.sha256,
                d.page_count, d.ocr_confidence, d.status, d.created_at,
-               j.status::text as "job_status?", j.last_error as "last_error?"
+               j.status::text as "job_status?", j.last_error as "last_error?",
+               d.video_url
         FROM documents d
         LEFT JOIN LATERAL (
             SELECT status, last_error
@@ -226,7 +231,8 @@ pub async fn find_summary_by_id(
         SELECT d.id as "id: DocumentId", d.block_id as "block_id: BlockId",
                d.uploaded_by as "uploaded_by: UserId", d.title, d.sha256,
                d.page_count, d.ocr_confidence, d.status, d.created_at,
-               j.status::text as "job_status?", j.last_error as "last_error?"
+               j.status::text as "job_status?", j.last_error as "last_error?",
+               d.video_url
         FROM documents d
         LEFT JOIN LATERAL (
             SELECT status, last_error
@@ -242,4 +248,23 @@ pub async fn find_summary_by_id(
     .fetch_optional(pool)
     .await
     .map_err(Error::from_sqlx)
+}
+
+/// Set or clear the unit's introductory video.
+///
+/// `None` clears it, which is the same state a unit that never had one is in —
+/// the classroom then routes straight to the interactive discussion. The URL is
+/// normalised by the caller before it reaches here, so what is stored is always
+/// a canonical watch URL or nothing.
+pub async fn set_video_url(pool: &PgPool, id: DocumentId, video_url: Option<&str>) -> Result<bool> {
+    let affected = sqlx::query!(
+        r#"UPDATE documents SET video_url = $2 WHERE id = $1"#,
+        id.into_uuid(),
+        video_url
+    )
+    .execute(pool)
+    .await
+    .map_err(Error::from_sqlx)?
+    .rows_affected();
+    Ok(affected > 0)
 }

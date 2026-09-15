@@ -13,6 +13,7 @@ pub mod domain;
 pub mod error;
 pub mod ids;
 pub mod performance;
+pub mod video;
 
 pub use auth::{Actor, Capability, Role};
 pub use domain::{
@@ -20,6 +21,7 @@ pub use domain::{
     QuestionStatus, SessionStatus, UserStatus,
 };
 pub use error::{Error, FieldError, PublicError};
+pub use video::{canonical_youtube_url, youtube_id};
 pub use performance::{
     stars_from_percentage, trophy_for, PerformanceLevel, Trophy, TROPHY_MIN_ATTEMPTS,
 };

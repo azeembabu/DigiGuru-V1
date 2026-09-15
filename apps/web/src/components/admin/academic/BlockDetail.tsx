@@ -131,7 +131,16 @@ export function BlockDetail({ blockId }: { blockId: string }) {
         </section>
       ) : null}
 
-      <UnitsTable units={units} loading={loading} showUploaded />
+      <UnitsTable
+        units={units}
+        loading={loading}
+        showUploaded
+        onRefresh={reload}
+        onVideoSaved={(message) => {
+          setNotice(message);
+          reload();
+        }}
+      />
 
       <AddUnitForm
         blockId={blockId}
@@ -142,7 +151,9 @@ export function BlockDetail({ blockId }: { blockId: string }) {
       />
 
       <p className="text-xs text-gray-500">
-        Queued → Parsing → Embedded is automatic. A unit that comes back with low OCR confidence
+        A unit with a video saved against it opens on the video first and then hands the student to
+        the tutor; a unit with none opens the interactive discussion directly. Queued → Parsing →
+        Embedded is automatic. A unit that comes back with low OCR confidence
         stops at Awaiting review and stays out of the syllabus until a sub admin approves it; a
         failed unit is never retrievable and must be re-uploaded.
       </p>

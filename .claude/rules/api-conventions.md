@@ -179,8 +179,40 @@ recent `ingestion_jobs` attempt (`documents` has no error column of its own).
   "status": "pending|parsing|pending_review|embedded|failed",
   "created_at": "RFC3339",
   "job_status": "pending|processing|completed|failed|null",
-  "last_error": "string|null" }
+  "last_error": "string|null",
+  "video_url": "https://www.youtube.com/watch?v=…|null" }
 ```
+
+### The unit's introductory video
+
+| Method | Path | Capability |
+|---|---|---|
+| PATCH | `/api/v1/admin/documents/{id}/video` | `UploadDocuments`, scoped via `document -> block -> course -> program_id` |
+
+`POST /admin/blocks/{id}/documents` takes the PDF; this takes the optional
+YouTube link shown **before** the tutoring session for that unit. Body
+`{ "video_url": "string|null" }`, and the field is required but nullable: `null`
+or `""` clears the video, while a **missing** field is `400 VALIDATION_ERROR` —
+"leave it alone" is not something this route needs to express, and accepting it
+silently would make a mistyped field name look like a successful save.
+
+Its own path segment rather than a general `PATCH /admin/documents/{id}`: every
+other column on the row is written by the ingestion pipeline, not by an admin.
+
+What is **stored** is the canonical `https://www.youtube.com/watch?v=<id>` built
+back from the video id, never the string as pasted — a share link carries a
+playlist, a start offset and tracking parameters, none of which belong in front
+of a student. Watch, `youtu.be`, `/embed/`, `/shorts/`, `/live/` and a bare
+eleven-character id are all accepted (`crates/core/src/video.rs`, mirrored for
+form validation only in `apps/web/src/lib/youtube.ts`; the gateway is the
+enforcement). A playlist, a channel, a non-YouTube host or a malformed id is
+`400 VALIDATION_ERROR` on field `video_url` rather than a stored row that turns
+out to be a broken embed for a student. The response is the same
+`DocumentResponse` the list and detail routes return, re-read from the stored
+row.
+
+Deleting a video is not a state of its own: a unit with no link behaves exactly
+like every unit uploaded before videos existed.
 
 `GET /api/v1/admin/stats` — dashboard counts. A sub-admin's figures are restricted to
 its `sub_admin_scopes` programs; `lscs` is platform-wide for both roles because an LSC
@@ -1109,8 +1141,23 @@ sees every student's worth of them.
 
 // GET /student/blocks/{block_id}/units
 [ { "document_id": "uuid", "title": "string", "page_count": 71,
-    "is_ready": true } ]
+    "is_ready": true, "status": "embedded",
+    "video_id": "dQw4w9WgXcQ|null" } ]
 ```
+
+`video_id` is the **id**, not the URL an admin pasted: it is what a player
+needs, and deriving it once on the server means no client re-implements the
+several shapes a YouTube link comes in. A stored link that no longer parses
+reads as `null` rather than failing the unit list — a student who cannot reach
+their material because of a bad link is a worse outcome than one who simply
+sees no video.
+
+It is also the switch the classroom routes on, and the only one: a unit with a
+`video_id` opens `/classroom/video` first and is handed to
+`/classroom/session` when the video ends or is skipped; a unit with `null`
+bypasses the video page entirely. The video page is a step, never a gate —
+a blocked player, an un-embeddable video and a hand-typed URL all resolve to
+the discussion, because the tutoring session is the lesson.
 
 `is_ready` is `status = 'embedded'` — the only state in which the unit has
 vectors to retrieve. `ready_unit_count` and `teachable_block_count` roll the same

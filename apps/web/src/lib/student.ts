@@ -289,6 +289,14 @@ export const syllabusUnitSchema = z.object({
   is_ready: z.boolean(),
   /** Ingestion stage, for the progress indicator. */
   status: z.string(),
+  /**
+   * The unit's introductory video, as the eleven-character YouTube id the
+   * player needs, or `null` when an admin has set none.
+   *
+   * This is the switch the classroom routes on: a unit with a video opens the
+   * video page first, one without goes straight to the interactive discussion.
+   */
+  video_id: z.string().nullable(),
 });
 
 export type SyllabusCourse = z.infer<typeof syllabusCourseSchema>;

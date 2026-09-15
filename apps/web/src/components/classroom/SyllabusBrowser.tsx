@@ -282,10 +282,21 @@ function UnitRow({
   /** Carried into the session URL so its Back link can return here exactly. */
   courseId: string | null;
 }) {
-  const href =
-    `/classroom/session?block=${encodeURIComponent(blockId)}` +
+  // The one branch that decides where "open this unit" goes.
+  //
+  // An admin who has saved a video for the unit wants it watched before the
+  // tutor takes over, so the unit opens on the video page; a unit with no
+  // video skips that page entirely rather than showing an empty player — the
+  // overwhelmingly normal case, and the one every unit uploaded before videos
+  // existed is in. Both destinations carry the same parameters, so the video
+  // page can hand the student straight on without re-deriving anything.
+  const params =
+    `?block=${encodeURIComponent(blockId)}` +
     `&unit=${encodeURIComponent(unit.document_id)}` +
     (courseId ? `&course=${encodeURIComponent(courseId)}` : "");
+  const href = unit.video_id
+    ? `/classroom/video${params}`
+    : `/classroom/session${params}`;
 
   return (
     <div className="flex flex-wrap items-center gap-3 rounded-xl border border-white/10 bg-white/[0.03] p-4">
@@ -307,7 +318,7 @@ function UnitRow({
           href={href}
           className="shrink-0 rounded-lg bg-indigo-500 px-4 py-2 text-[14px] font-semibold text-white hover:bg-indigo-400 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-300"
         >
-          Open classroom
+          {unit.video_id ? "Watch & study" : "Open classroom"}
         </Link>
       ) : (
         /*

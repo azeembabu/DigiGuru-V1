@@ -32,7 +32,7 @@ use uuid::Uuid;
 use dg_core::{BlockId, Capability, DocumentId, PublicError};
 use dg_db::models::{documents, uploads};
 
-use crate::extractors::{AuthenticatedActor, UploadBody};
+use crate::extractors::{AuthenticatedActor, JsonBody, UploadBody};
 use crate::state::AppState;
 
 /// Where uploaded PDFs land in this pass.
@@ -199,6 +199,10 @@ pub struct DocumentResponse {
     pub job_status: Option<String>,
     /// The latest attempt's failure reason, `null` unless it failed.
     pub last_error: Option<String>,
+    /// The unit's introductory video, or `null` — the normal shape — when it
+    /// has none and the classroom opens straight onto the discussion.
+    /// Always the canonical watch URL, whatever form was submitted.
+    pub video_url: Option<String>,
 }
 
 impl From<documents::DocumentSummary> for DocumentResponse {
@@ -215,6 +219,7 @@ impl From<documents::DocumentSummary> for DocumentResponse {
             created_at: d.created_at,
             job_status: d.job_status,
             last_error: d.last_error,
+            video_url: d.video_url,
         }
     }
 }
@@ -261,6 +266,88 @@ pub async fn get_document(
     actor.require_scoped(Capability::UploadDocuments, program_id)?;
 
     Ok(Json(document.into()))
+}
+
+/// What gets stored for a submitted link: the canonical watch URL, or `None`.
+///
+/// Split out of the handler so the decision is testable without a database.
+/// Two spellings of "no video" collapse to one: an explicit `null` and a field
+/// the admin emptied are the same state to a student, so they are the same
+/// state here.
+fn normalise_video_url(submitted: Option<&str>) -> Result<Option<String>, PublicError> {
+    match submitted.map(str::trim) {
+        None | Some("") => Ok(None),
+        Some(raw) => dg_core::canonical_youtube_url(raw).map(Some).ok_or_else(|| {
+            PublicError::validation(
+                "video_url",
+                "That is not a YouTube video link. Paste a link like                  https://www.youtube.com/watch?v=… or https://youtu.be/… .",
+            )
+        }),
+    }
+}
+
+/// Body of `PATCH /api/v1/admin/documents/{id}/video`.
+///
+/// `video_url` is required but nullable: `null` (or an empty string) clears the
+/// video, and a missing field is a malformed request rather than a no-op —
+/// "leave it alone" is not something this route needs to express, and silently
+/// accepting it would make a typo in the field name look like a successful save.
+#[derive(Debug, Deserialize)]
+pub struct SetVideoRequest {
+    pub video_url: Option<String>,
+}
+
+/// `PATCH /api/v1/admin/documents/{id}/video` — set or clear a unit's
+/// introductory video.
+///
+/// Capability `UploadDocuments`, scoped `document -> block -> course ->
+/// program_id`, and — as on both `GET`s — the owning program is resolved
+/// **before** the capability check, so a sub-admin outside the scope cannot
+/// tell an existing unit from a missing one.
+///
+/// What is stored is the canonical watch URL derived from the id
+/// (`dg_core::canonical_youtube_url`), never the string as pasted: a share link
+/// carries a playlist, a start offset and tracking parameters, none of which
+/// belong in front of a student, and the player only ever needs the id.
+pub async fn set_video(
+    AuthenticatedActor(actor): AuthenticatedActor,
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+    JsonBody(payload): JsonBody<SetVideoRequest>,
+) -> Result<Json<DocumentResponse>, PublicError> {
+    let document_id = DocumentId::from(id);
+    let document = documents::find_summary_by_id(&state.pool, document_id)
+        .await
+        .map_err(PublicError::from)?
+        .ok_or(PublicError::NotFound)?;
+
+    let program_id = uploads::program_id_for_block(&state.pool, document.block_id)
+        .await
+        .map_err(PublicError::from)?
+        .ok_or(PublicError::Internal)?;
+
+    actor.require_scoped(Capability::UploadDocuments, program_id)?;
+
+    let canonical = normalise_video_url(payload.video_url.as_deref())?;
+
+    if !documents::set_video_url(&state.pool, document_id, canonical.as_deref())
+        .await
+        .map_err(PublicError::from)?
+    {
+        // The row existed a moment ago, so a zero-row update means it was
+        // removed in between; `404` is the truthful answer, not `500`.
+        return Err(PublicError::NotFound);
+    }
+
+    // Re-read rather than patching the struct in hand: this response is the
+    // same `DocumentResponse` the list and detail routes return, and building
+    // it from anything but the stored row is how the two start to disagree.
+    let updated = documents::find_summary_by_id(&state.pool, document_id)
+        .await
+        .map_err(PublicError::from)?
+        .ok_or(PublicError::NotFound)?;
+
+    Ok(Json(updated.into()))
 }
 
 #[cfg(test)]
@@ -328,4 +415,40 @@ mod tests {
         let err = authorize(&actor, program_id).expect_err("students never read documents");
         assert_eq!(err.code(), "FORBIDDEN");
     }
+
+    #[test]
+    fn an_empty_or_absent_link_clears_the_video() {
+        use super::normalise_video_url;
+        // The two ways an admin says "no video" — a cleared field and a field
+        // that was never sent — must not be distinguishable downstream.
+        assert_eq!(normalise_video_url(None).expect("accepted"), None);
+        assert_eq!(normalise_video_url(Some("")).expect("accepted"), None);
+        assert_eq!(normalise_video_url(Some("   ")).expect("accepted"), None);
+    }
+
+    #[test]
+    fn a_share_link_is_stored_stripped_of_everything_but_the_video() {
+        use super::normalise_video_url;
+        let stored = normalise_video_url(Some("https://youtu.be/dQw4w9WgXcQ?si=abc&t=90"))
+            .expect("accepted");
+        assert_eq!(
+            stored.as_deref(),
+            Some("https://www.youtube.com/watch?v=dQw4w9WgXcQ"),
+            "tracking parameters and start offsets must not be stored"
+        );
+    }
+
+    #[test]
+    fn a_playlist_or_non_youtube_link_is_a_validation_error_not_a_stored_row() {
+        use super::normalise_video_url;
+        for bad in [
+            "https://www.youtube.com/playlist?list=PL1234567890",
+            "https://vimeo.com/123456789",
+            "have a look at this one",
+        ] {
+            let err = normalise_video_url(Some(bad)).expect_err("rejected");
+            assert_eq!(err.code(), "VALIDATION_ERROR", "accepted {bad}");
+        }
+    }
+
 }

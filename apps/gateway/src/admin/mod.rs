@@ -126,6 +126,11 @@ pub fn router(max_upload_bytes: usize) -> Router<AppState> {
             "/documents/{id}",
             get(documents::get_document).delete(removal::delete_unit),
         )
+        // A separate path segment rather than a `PATCH /documents/{id}`: the
+        // rest of a document row is written by the ingestion pipeline, not by
+        // an admin, so the one editable field gets its own route instead of a
+        // general document patch that would invite the others to be added to it.
+        .route("/documents/{id}/video", patch(documents::set_video))
         // Exams hang off a block, like documents do; scope is resolved
         // `exam -> block -> course -> program_id`.
         .route("/exams", post(exams::create_exam))

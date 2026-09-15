@@ -124,6 +124,13 @@ export type AdminDocument = {
    */
   job_status: JobStatus | null;
   last_error: string | null;
+  /**
+   * The unit's introductory video, or `null` when it has none — which is the
+   * normal shape, and what makes the classroom open straight onto the
+   * interactive discussion. Always the canonical watch URL: the gateway
+   * normalises whatever was pasted before storing it.
+   */
+  video_url: string | null;
 };
 
 export type AdminStats = {

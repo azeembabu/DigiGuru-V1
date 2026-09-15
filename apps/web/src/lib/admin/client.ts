@@ -277,6 +277,24 @@ export function getDocument(id: string): Promise<AdminDocument> {
 }
 
 /**
+ * Set or clear the unit's introductory video.
+ *
+ * `null` clears it. The gateway normalises the link to a canonical watch URL
+ * and rejects anything that is not a single YouTube video, so what comes back
+ * is not necessarily the string that was sent — render the response, not the
+ * input.
+ */
+export function setDocumentVideo(
+  id: string,
+  videoUrl: string | null,
+): Promise<AdminDocument> {
+  return apiFetch<AdminDocument>(`/admin/documents/${id}/video`, {
+    method: "PATCH",
+    ...json({ video_url: videoUrl }),
+  });
+}
+
+/**
  * Upload is the one endpoint that is not JSON: the gateway takes raw PDF bytes
  * as the request body with the title in the query string, not multipart
  * (`apps/gateway/src/admin/documents.rs`). So it overrides `Content-Type`

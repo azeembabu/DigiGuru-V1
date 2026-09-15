@@ -72,6 +72,16 @@ pub struct StudentUnitResponse {
     /// Drives the progress indicator; `is_ready` stays the single field a
     /// client checks to decide whether the classroom may be opened.
     pub status: String,
+    /// The eleven-character YouTube id of the unit's introductory video, or
+    /// `null` when an admin has set none.
+    ///
+    /// The **id**, not the URL an admin pasted: it is what the player needs,
+    /// and deriving it once here means every client renders the same embed
+    /// rather than each re-implementing YouTube's several link forms. `null`
+    /// is what makes the classroom skip the video page entirely and open the
+    /// interactive discussion directly — the normal case, and the one every
+    /// unit uploaded before videos existed is in.
+    pub video_id: Option<String>,
 }
 
 pub async fn list_courses(
@@ -166,6 +176,11 @@ pub async fn list_units(
                 page_count: row.page_count,
                 is_ready: row.is_ready,
                 status: row.status,
+                // A stored URL that no longer parses reads as "no video"
+                // rather than failing the unit list: a student who cannot
+                // reach their material because of a bad link is a worse
+                // outcome than one who simply does not see a video.
+                video_id: row.video_url.as_deref().and_then(dg_core::youtube_id),
             })
             .collect(),
     ))

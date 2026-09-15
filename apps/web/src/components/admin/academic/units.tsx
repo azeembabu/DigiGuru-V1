@@ -5,6 +5,7 @@ import { StatusPill, statusTone } from "@/components/admin/primitives";
 import { Blank, formatDate } from "@/components/admin/academic/shared";
 import type { AdminDocument, DocumentStatus } from "@/lib/admin/types";
 import { RemoveDialog } from "./RemoveDialog";
+import { UnitVideoForm } from "./UnitVideoForm";
 import { useEffect, useState } from "react";
 import { AdminButton } from "@/components/admin/controls";
 import { IngestProgress, isInFlight } from "@/components/shared/IngestProgress";
@@ -105,6 +106,21 @@ export function unitColumns(options: { showUploaded: boolean }): Column<AdminDoc
   }
 
   columns.push({
+    key: "video",
+    header: "Video",
+    className: "w-[110px]",
+    // Whether a unit has a video is not decoration: it is the branch the
+    // student's classroom takes. A unit with one opens the video page first;
+    // a unit without one goes straight to the discussion.
+    cell: (row) =>
+      row.video_url ? (
+        <StatusPill tone="success">Set</StatusPill>
+      ) : (
+        <span className="text-gray-400">None</span>
+      ),
+  });
+
+  columns.push({
     key: "detail",
     header: "Availability",
     className: "max-w-[320px]",
@@ -127,6 +143,7 @@ export function UnitsTable({
   showUploaded = false,
   onRemoved,
   onRefresh,
+  onVideoSaved,
 }: {
   units: AdminDocument[];
   loading?: boolean;
@@ -134,8 +151,14 @@ export function UnitsTable({
   onRemoved?: (message: string) => void;
   /** Called while any unit is still ingesting, to re-read the list. */
   onRefresh?: () => void;
+  /**
+   * Enables the video editor. Optional for the same reason `onRemoved` is: a
+   * view that cannot handle the reload should not offer the action.
+   */
+  onVideoSaved?: (message: string) => void;
 }) {
   const [removing, setRemoving] = useState<{ id: string; name: string } | null>(null);
+  const [editingVideo, setEditingVideo] = useState<AdminDocument | null>(null);
 
   // An admin who has just uploaded a PDF is watching this table to see it go
   // live. Ingestion takes minutes and finishes server-side, so without this the
@@ -147,26 +170,39 @@ export function UnitsTable({
     return () => clearInterval(id);
   }, [anyInFlight, onRefresh]);
 
-  const columns = onRemoved
-    ? [
-        ...unitColumns({ showUploaded }),
-        {
-          key: "remove",
-          header: "",
-          align: "right" as const,
-          className: "w-[110px]",
-          cell: (row: AdminDocument) => (
-            <AdminButton
-              type="button"
-              variant="outline-light"
-              onClick={() => setRemoving({ id: row.id, name: row.title })}
-            >
-              Remove
-            </AdminButton>
-          ),
-        },
-      ]
-    : unitColumns({ showUploaded });
+  const columns: Column<AdminDocument>[] = [...unitColumns({ showUploaded })];
+
+  if (onVideoSaved) {
+    columns.push({
+      key: "set-video",
+      header: "",
+      align: "right" as const,
+      className: "w-[120px]",
+      cell: (row) => (
+        <AdminButton type="button" variant="outline-light" onClick={() => setEditingVideo(row)}>
+          {row.video_url ? "Edit video" : "Add video"}
+        </AdminButton>
+      ),
+    });
+  }
+
+  if (onRemoved) {
+    columns.push({
+      key: "remove",
+      header: "",
+      align: "right" as const,
+      className: "w-[110px]",
+      cell: (row) => (
+        <AdminButton
+          type="button"
+          variant="outline-light"
+          onClick={() => setRemoving({ id: row.id, name: row.title })}
+        >
+          Remove
+        </AdminButton>
+      ),
+    });
+  }
 
   return (
     <>
@@ -178,6 +214,16 @@ export function UnitsTable({
         empty="No units in this block yet."
         emptyHint="Until a PDF is embedded, the tutor has nothing it is allowed to teach from."
       />
+      {editingVideo && onVideoSaved ? (
+        <UnitVideoForm
+          unit={editingVideo}
+          onClose={() => setEditingVideo(null)}
+          onSaved={(message) => {
+            setEditingVideo(null);
+            onVideoSaved(message);
+          }}
+        />
+      ) : null}
       {removing ? (
         <RemoveDialog
           kind="unit"
