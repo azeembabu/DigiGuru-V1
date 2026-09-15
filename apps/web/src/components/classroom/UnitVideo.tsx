@@ -154,6 +154,12 @@ function VideoStage({
   const [position, setPosition] = useState(0);
   const [duration, setDuration] = useState(0);
   const [muted, setMuted] = useState(false);
+  // Whether the video has ever played. Distinct from `playing`: the unstarted
+  // frame is YouTube's own poster — title, red play button and a "Watch on
+  // YouTube" pill — and needs covering outright, while a mid-video pause shows
+  // only the title header and can be masked.
+  const [hasStarted, setHasStarted] = useState(false);
+  const [posterFallback, setPosterFallback] = useState(false);
   const [scrubbing, setScrubbing] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
 
@@ -189,6 +195,7 @@ function VideoStage({
         if (next === PlayerState.PLAYING) {
           setEnded(false);
           setCountdown(null);
+          setHasStarted(true);
         }
       },
       onError: (code) => {
@@ -358,12 +365,52 @@ function VideoStage({
             </div>
           ) : null}
 
+          {/*
+            Our own poster, over YouTube's.
+
+            An unstarted embed is not a still frame: YouTube paints the video
+            title, the channel avatar, a large red play button and a "Watch on
+            YouTube" pill over it, and no player parameter suppresses any of
+            them. So the whole frame is covered with the same thumbnail and our
+            own play control — the student sees the video, not the product it
+            happens to be hosted on. Once it has started, this is gone and only
+            the corner watermark remains, which YouTube's terms do not allow
+            removing anyway.
+          */}
+          {!hasStarted && !ended && playerError === null ? (
+            /* eslint-disable-next-line @next/next/no-img-element -- a YouTube
+               thumbnail is a remote URL on a host the app does not configure for
+               the image optimiser; proxying every poster through the app would
+               buy nothing. */
+            <img
+              src={`https://i.ytimg.com/vi/${videoId}/${posterFallback ? "hqdefault" : "maxresdefault"}.jpg`}
+              alt=""
+              aria-hidden
+              // `maxresdefault` does not exist for every video; `hqdefault`
+              // always does.
+              onError={() => setPosterFallback(true)}
+              className="pointer-events-none absolute inset-0 h-full w-full object-cover"
+            />
+          ) : null}
+
+          {/*
+            A paused video shows the title header and share button across the
+            top instead. `showinfo` was retired, so it is masked with a band in
+            our own colour — deep enough to cover the header, shallow enough to
+            read as a vignette rather than a crop.
+          */}
+          {ready && hasStarted && !playing && playerError === null ? (
+            <div className="pointer-events-none absolute inset-x-0 top-0 h-20 bg-gradient-to-b from-ink-950 via-ink-950/90 to-transparent" />
+          ) : null}
+
           {/* Big centre play button, hidden once the video is running. */}
           {ready && !playing && !ended && playerError === null ? (
             <button
               type="button"
               onClick={togglePlay}
-              className="absolute inset-0 grid place-items-center bg-ink-950/40 transition hover:bg-ink-950/30 focus-visible:outline-none"
+              className={`absolute inset-0 grid place-items-center transition focus-visible:outline-none ${
+                hasStarted ? "bg-ink-950/40 hover:bg-ink-950/30" : "bg-ink-950/45 hover:bg-ink-950/35"
+              }`}
               aria-label="Play the video"
             >
               <span className="grid h-16 w-16 place-items-center rounded-full bg-white/95 shadow-xl sm:h-20 sm:w-20">
@@ -372,9 +419,15 @@ function VideoStage({
             </button>
           ) : null}
 
-          {/* The completion screen, which also covers YouTube's end card. */}
+          {/*
+            The completion screen. Fully opaque, not a tint: when a video ends
+            YouTube paints its own end card underneath — the title, the channel
+            avatar, a "More videos" grid and the logo — and at 90% every one of
+            them was legible through this. Opacity here is branding leaking
+            back in at the exact moment the student is being handed on.
+          */}
           {ended ? (
-            <div className="absolute inset-0 grid place-items-center bg-ink-950/90 px-4 text-center">
+            <div className="absolute inset-0 grid place-items-center bg-ink-950 px-4 text-center">
               <div>
                 <p className="font-display text-[20px] font-bold text-white sm:text-[24px]">
                   Video finished
@@ -396,6 +449,7 @@ function VideoStage({
                     onClick={() => {
                       setCountdown(null);
                       setEnded(false);
+                      setHasStarted(true);
                       seek(0);
                       playerRef.current?.playVideo();
                     }}
@@ -409,7 +463,7 @@ function VideoStage({
           ) : null}
 
           {playerError !== null ? (
-            <div className="absolute inset-0 grid place-items-center bg-ink-950/90 px-4 text-center">
+            <div className="absolute inset-0 grid place-items-center bg-ink-950 px-4 text-center">
               <div>
                 <p className="mx-auto max-w-sm text-[14px] leading-relaxed text-rose-300">
                   {playerError}
